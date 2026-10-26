@@ -1,0 +1,1 @@
+[{"name":"group_rank"},{"name":"group_zscore"},{"name":"group_neutralize"},{"name":"vec_avg"},{"name":"vec_sum"},{"name":"ts_delta"},{"name":"ts_mean"},{"name":"ts_sum"},{"name":"ts_zscore"},{"name":"ts_rank"},{"name":"ts_decay_linear"},{"name":"rank"},{"name":"zscore"},{"name":"signed_power"},{"name":"trade_when"},{"name":"add"},{"name":"multiply"}]

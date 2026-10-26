@@ -1,0 +1,1 @@
+[{"dataset":{"id":"risk60"},"id":"rsk60_offer","type":"VECTOR"},{"dataset":{"id":"risk60"},"id":"lending_fee_bid_rate","type":"VECTOR"},{"dataset":{"id":"risk60"},"id":"rsk60_crowding","type":"VECTOR"},{"dataset":{"id":"risk60"},"id":"rsk60_last","type":"VECTOR"},{"dataset":{"id":"pv47"},"id":"pv47_spret","type":"MATRIX"}]

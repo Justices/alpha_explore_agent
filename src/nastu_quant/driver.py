@@ -1,0 +1,241 @@
+"""nastu_quant BRAIN driver: persistent process, whitelist-only platform access.
+
+Implements AGENT_DESIGN.md §4.1 / §6.1 / §9 (adapted from the legacy
+workspace brain_driver.py with three changes):
+
+  1. Session cookie lives INSIDE the project state dir
+     (env NASTU_QUANT_STATE_DIR, default ~/workspace/nastu_quant/state),
+     file session_cookie.json (0600). needs_auth marker alongside it.
+  2. Auth cascade (FR-01): cookie -> credential file -> needs_auth.
+     The credential file lives OUTSIDE the project; its path comes from
+     env NASTU_QUANT_CREDENTIAL_FILE and it holds JSON
+     {"email": ..., "password": ...}. The driver reads it in place;
+     it is never copied, logged, or echoed. The `reauth` command takes
+     NO credential parameters: it re-reads the credential file itself,
+     so credentials never travel through the command protocol.
+  3. platform_functions location is overridable via
+     env NASTU_QUANT_PF_PATH (default: the brain_env install).
+
+submit_alpha is deliberately NOT exposed (FR-02 red line: submission
+must be impossible at the capability layer, not just by convention).
+
+Line-delimited JSON protocol: {"cmd": ..., params...} -> {"ok": bool, ...}
+"""
+import sys
+import json
+import asyncio
+import os
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+STATE_DIR = Path(os.environ.get(
+    "NASTU_QUANT_STATE_DIR",
+    str(Path.home() / "workspace" / "nastu_quant" / "state"),
+))
+COOKIE_FILE = STATE_DIR / "session_cookie.json"
+NEEDS_AUTH_MARKER = STATE_DIR / "needs_auth"
+CREDENTIAL_FILE = os.environ.get("NASTU_QUANT_CREDENTIAL_FILE", "")
+PF_PATH = os.environ.get(
+    "NASTU_QUANT_PF_PATH",
+    "/home/hatch/workspace/brain_env/lib/python3.12/site-packages"
+    "/cnhkmcp/untracked/platform_functions.py",
+)
+STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def load_pf():
+    spec = spec_from_file_location("_wspf", PF_PATH)
+    mod = module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def save_cookie(pf):
+    """Persist current session cookies to the in-project cookie file (0600)."""
+    try:
+        client = pf.brain_client
+        cookies = client.session.cookies
+        wq_cookies = [
+            {"name": c.name, "value": c.value, "domain": c.domain, "path": c.path}
+            for c in cookies
+            if "worldquantbrain" in (c.domain or "")
+        ]
+        if not wq_cookies:
+            return False
+        COOKIE_FILE.write_text(json.dumps({"cookies": wq_cookies}), encoding="utf-8")
+        os.chmod(COOKIE_FILE, 0o600)
+        NEEDS_AUTH_MARKER.unlink(missing_ok=True)
+        return True
+    except Exception:
+        return False
+
+
+def try_cookie(pf, loop):
+    """Attempt to restore the session from the cookie file. True if valid."""
+    try:
+        if not COOKIE_FILE.exists():
+            return False
+        data = json.loads(COOKIE_FILE.read_text(encoding="utf-8"))
+        client = pf.brain_client
+        client.session.cookies.clear()
+        for c in data.get("cookies", []):
+            client.session.cookies.set(
+                c["name"], c["value"], domain=c.get("domain", ""), path=c.get("path", "/")
+            )
+        ok = loop.run_until_complete(client.is_authenticated())
+        return bool(ok)
+    except Exception:
+        return False
+
+
+def read_credential_file():
+    """Read {email, password} from the external credential file, or None.
+
+    The file is read in place via the env-injected path; its contents are
+    never copied into the project, logged, or returned to callers.
+    """
+    if not CREDENTIAL_FILE:
+        return None
+    try:
+        data = json.loads(Path(CREDENTIAL_FILE).read_text(encoding="utf-8"))
+        email, password = data.get("email", ""), data.get("password", "")
+        if email and password:
+            return {"email": email, "password": password}
+    except Exception:
+        return None
+    return None
+
+
+def main():
+    pf = load_pf()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
+    def call_sync(fn, params):
+        res = fn(**params)
+        if asyncio.iscoroutine(res):
+            res = loop.run_until_complete(res)
+        return res
+
+    def authenticate(creds):
+        call_sync(pf.authenticate, {"email": creds["email"], "password": creds["password"]})
+        save_cookie(pf)
+
+    authenticated_via = None
+
+    # Level 1: cookie file (FR-01).
+    if try_cookie(pf, loop):
+        authenticated_via = "cookie"
+    else:
+        # Level 2: credential file (FR-01). Never stdin in the new system:
+        # unattended runs must fail closed with needs_auth, not block.
+        creds = read_credential_file()
+        if creds is None:
+            NEEDS_AUTH_MARKER.write_text(
+                "cookie invalid and credential file unavailable\n")
+            sys.stdout.write(json.dumps({
+                "ok": False, "stage": "auth",
+                "error": "needs_auth: cookie invalid, credential file unavailable",
+            }) + "\n")
+            sys.stdout.flush()
+            return
+        try:
+            authenticate(creds)
+        except Exception as e:
+            msg = str(e)
+            NEEDS_AUTH_MARKER.write_text("credential file authentication failed\n")
+            sys.stdout.write(json.dumps({
+                "ok": False, "stage": "auth", "error": msg[:600],
+                "throttled": "429" in msg or "THROTTLED" in msg,
+                "persona": "persona" in msg.lower(),
+            }) + "\n")
+            sys.stdout.flush()
+            return
+        authenticated_via = "credential_file"
+
+    sys.stdout.write(json.dumps({"ok": True, "stage": "authenticated",
+                                 "via": authenticated_via}) + "\n")
+    sys.stdout.flush()
+
+    allowed = {
+        "get_datafields": pf.get_datafields,
+        "get_datasets": pf.get_datasets,
+        "get_operators": pf.get_operators,
+        "create_simulation": pf.create_simulation,
+        "create_multi_simulation": pf.create_multi_simulation,
+        "get_alpha_details": pf.get_alpha_details,
+        "get_alpha_pnl": pf.get_alpha_pnl,
+        "get_alpha_yearly_stats": pf.get_alpha_yearly_stats,
+        "check_correlation": pf.check_correlation,
+        "get_submission_check": pf.get_submission_check,
+        "get_user_alphas": pf.get_user_alphas,
+        "set_alpha_properties": pf.set_alpha_properties,
+        "reauth": None,  # special: re-read credential file, no params
+    }
+
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            cmd = json.loads(line)
+        except Exception as e:
+            sys.stdout.write(json.dumps({"ok": False, "error": "parse: " + str(e)[:200]}) + "\n")
+            sys.stdout.flush()
+            continue
+        if cmd.get("cmd") == "shutdown":
+            sys.stdout.write(json.dumps({"ok": True, "stage": "shutdown"}) + "\n")
+            sys.stdout.flush()
+            break
+        if cmd.get("cmd") == "reauth":
+            # Session refresh: re-read the credential file (FR-01 level 2).
+            # No credentials are accepted through the command protocol.
+            creds = read_credential_file()
+            if creds is None:
+                NEEDS_AUTH_MARKER.write_text("reauth: credential file unavailable\n")
+                sys.stdout.write(json.dumps({
+                    "ok": False, "error": "needs_auth: credential file unavailable"}) + "\n")
+                sys.stdout.flush()
+                continue
+            try:
+                authenticate(creds)
+            except Exception as e:
+                NEEDS_AUTH_MARKER.write_text("reauth failed\n")
+                sys.stdout.write(json.dumps({"ok": False, "error": str(e)[:600]}) + "\n")
+            else:
+                sys.stdout.write(json.dumps({"ok": True, "stage": "reauthenticated"}) + "\n")
+            sys.stdout.flush()
+            continue
+        fn = allowed.get(cmd.get("cmd"))
+        if fn is None:
+            out = {"ok": False, "error": "unknown or disallowed cmd"}
+        else:
+            params = {k: v for k, v in cmd.items() if k not in ("cmd", "save_to")}
+            try:
+                res = call_sync(fn, params)
+            except Exception as e:
+                err = str(e)[:800]
+                # If the session died mid-work, flag it so the supervisor
+                # runs the FR-01 cascade instead of retrying blindly.
+                if "401" in err or "unauthorized" in err.lower():
+                    NEEDS_AUTH_MARKER.write_text("session expired during command\n")
+                out = {"ok": False, "error": err}
+            else:
+                save_to = cmd.get("save_to")
+                if save_to:
+                    try:
+                        Path(save_to).write_text(json.dumps(res, default=str), encoding="utf-8")
+                        out = {"ok": True, "saved": save_to}
+                    except Exception as e:
+                        out = {"ok": False, "error": "save: " + str(e)[:200]}
+                else:
+                    out = {"ok": True, "result": res}
+        try:
+            sys.stdout.write(json.dumps(out, default=str) + "\n")
+        except Exception as e:
+            sys.stdout.write(json.dumps({"ok": False, "error": "serialize: " + str(e)[:200]}) + "\n")
+        sys.stdout.flush()
+
+
+if __name__ == "__main__":
+    main()
