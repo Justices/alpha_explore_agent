@@ -10,6 +10,15 @@ import hashlib
 import json
 
 
+SETTING_KEYS = {
+    "instrument_type": "instrumentType",
+    "unit_handling": "unitHandling",
+    "nan_handling": "nanHandling",
+    "test_period": "testPeriod",
+    "max_trade": "maxTrade",
+}
+
+
 def reconciliation_key(expression: str, settings: dict) -> str:
     payload = json.dumps(
         {"expr": expression.strip(), "settings": settings},
@@ -36,13 +45,19 @@ def match_alphas(prereg_expressions, settings: dict, user_alphas):
     by_key = {}
     for alpha in user_alphas or []:
         expr = extract_expression(alpha)
-        if expr:
-            by_key[reconciliation_key(expr, settings)] = alpha
+        observed_settings = alpha.get("settings")
+        if not expr or not isinstance(observed_settings, dict):
+            continue
+        if any(observed_settings.get(SETTING_KEYS.get(key, key)) != value
+               for key, value in settings.items()):
+            continue
+        key = reconciliation_key(expr, settings)
+        by_key.setdefault(key, []).append(alpha)
     matched, missing = {}, []
     for expr in prereg_expressions:
-        hit = by_key.get(reconciliation_key(expr, settings))
-        if hit is not None:
-            matched[expr] = hit
+        hits = by_key.get(reconciliation_key(expr, settings), [])
+        if len(hits) == 1:
+            matched[expr] = hits[0]
         else:
             missing.append(expr)
     return matched, missing

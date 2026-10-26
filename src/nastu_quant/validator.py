@@ -175,6 +175,14 @@ def subtree_has_field(node, field_names):
                for n, _ in walk(node))
 
 
+def raw_field(node, field_names):
+    if node.kind == "ident":
+        return node.value in field_names
+    return (node.kind == "call" and node.value.startswith("vec_")
+            and len(node.args) == 1 and not node.kwargs
+            and raw_field(node.args[0], field_names))
+
+
 # ---------------------------------------------------------------- catalogs
 def extract_rows(data):
     if isinstance(data, list):
@@ -243,7 +251,10 @@ def validate(expr, dataset, catalog, operators,
 
     nodes = list(walk(root))
     calls = [n for n, _ in nodes if n.kind == "call"]
-    op_count = len(calls)
+    op_count = sum(
+        n.kind in {"call", "binary", "ternary"}
+        or (n.kind == "unary" and n.children[0].kind != "num")
+        for n, _ in nodes)
 
     # operator inventory + banned operators
     for c in calls:
@@ -273,22 +284,33 @@ def validate(expr, dataset, catalog, operators,
     # splicing / diff-ratio arithmetic
     field_set = set(field_names)
     for n, _ in nodes:
-        if n.kind != "binary":
+        if n.kind == "binary":
+            op, left, right = n.value, *n.children
+        elif n.kind == "call" and n.value in {"subtract", "divide"} and len(n.args) == 2:
+            op, left, right = ("-" if n.value == "subtract" else "/"), *n.args
+        else:
             continue
-        left, right = n.children
-        if n.value in ("+", "*"):
+        if op in ("+", "*"):
             err("E_SPLICE_OP",
-                f"binary '{n.value}' is prohibited (branch splicing)")
-        elif n.value in ("-", "/"):
-            if subtree_has_field(left, field_set) and \
-               subtree_has_field(right, field_set):
-                if allow_field_diff_ratio and diff_ratio_reason.strip():
+                f"binary '{op}' is prohibited (branch splicing)")
+        elif op in ("-", "/"):
+            left_field = subtree_has_field(left, field_set)
+            right_field = subtree_has_field(right, field_set)
+            if left_field != right_field:
+                err("E_CONSTANT_ARITHMETIC",
+                    f"signal-constant '{op}' is prohibited")
+            elif left_field and right_field:
+                if op == "-" and not (raw_field(left, field_set) and
+                                       raw_field(right, field_set)):
+                    err("E_PROCESSED_SUBTRACTION",
+                        "subtraction of processed signal branches is prohibited")
+                elif allow_field_diff_ratio and diff_ratio_reason.strip():
                     warn("W_DIFF_RATIO_JUSTIFIED",
-                         f"field-field '{n.value}' allowed with recorded "
+                         f"field-field '{op}' allowed with recorded "
                          f"justification: {diff_ratio_reason}")
                 else:
                     err("E_FIELD_DIFF_RATIO",
-                        f"field-field '{n.value}' requires a pre-registered "
+                        f"field-field '{op}' requires a pre-registered "
                         "justification (--allow-field-diff-ratio --reason)")
 
     # VECTOR adaptation: first call ancestor of a VECTOR field must be vec_*

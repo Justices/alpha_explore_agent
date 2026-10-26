@@ -94,6 +94,22 @@ class TestRejections(unittest.TestCase):
         self.assertNotEqual(res["verdict"], "REJECT")
         self.assertTrue(res["warnings"], "pass-with-reason must leave a warning")
 
+    def test_numeric_arithmetic_is_rejected(self):
+        res = check("group_rank(vec_avg(rsk60_offer) / 2, market)")
+        self.assertEqual(res["verdict"], "REJECT")
+        self.assertIn("E_CONSTANT_ARITHMETIC", codes(res))
+
+    def test_processed_branch_subtraction_cannot_use_raw_field_exception(self):
+        expr = "group_rank(ts_mean(vec_avg(rsk60_offer), 20) - ts_mean(vec_avg(lending_fee_bid_rate), 20), market)"
+        res = check(expr, allow_field_diff_ratio=True,
+                    diff_ratio_reason="spread")
+        self.assertEqual(res["verdict"], "REJECT")
+        self.assertIn("E_PROCESSED_SUBTRACTION", codes(res))
+
+    def test_infix_and_unary_operators_count_toward_budget(self):
+        res = check("group_rank(-vec_avg(rsk60_offer), market)")
+        self.assertEqual(res["operator_count"], 3)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -223,3 +223,6 @@ __marimo__/
 session_cookie.json
 needs_auth
 *.tmp
+*.xml
+.idea
+.claude

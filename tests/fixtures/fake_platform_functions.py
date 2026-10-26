@@ -30,10 +30,17 @@ class _Session:
     def __init__(self):
         self.cookies = _Jar()
 
+    def get(self, url, **kwargs):
+        class Response:
+            def json(self):
+                return {"count": 3, "results": [{"id": "field_c"}], "next": None}
+        return Response()
+
 
 class _Client:
     def __init__(self):
         self.session = _Session()
+        self.base_url = "https://api.worldquantbrain.com"
 
     async def is_authenticated(self):
         return any(c.name == "t" for c in self.session.cookies)
@@ -56,8 +63,14 @@ def get_datasets(**kw):
     return [{"id": "risk60"}, {"id": "pv47"}]
 
 
+def get_platform_setting_options(**kw):
+    return {"instrument_options": [{"InstrumentType": "EQUITY", "Region": "GLB",
+             "Delay": 1, "Universe": ["TOP3000"], "Neutralization": ["MARKET"]}]}
+
+
 def get_datafields(**kw):
-    return []
+    return {"count": 3, "results": [{"id": "field_a"}, {"id": "field_b"}],
+            "next": "https://api.worldquantbrain.com/data-fields?offset=2"}
 
 
 def get_operators(**kw):
@@ -69,6 +82,7 @@ def create_simulation(**kw):
 
 
 def create_multi_simulation(**kw):
+    print("platform progress should not enter JSON protocol")
     return {"id": "sim-multi"}
 
 

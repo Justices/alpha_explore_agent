@@ -22,11 +22,15 @@ must be impossible at the capability layer, not just by convention).
 Line-delimited JSON protocol: {"cmd": ..., params...} -> {"ok": bool, ...}
 """
 import sys
+import sysconfig
 import json
 import asyncio
 import os
+import io
+from contextlib import redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from pagination import collect_pages
 
 STATE_DIR = Path(os.environ.get(
     "NASTU_QUANT_STATE_DIR",
@@ -37,8 +41,8 @@ NEEDS_AUTH_MARKER = STATE_DIR / "needs_auth"
 CREDENTIAL_FILE = os.environ.get("NASTU_QUANT_CREDENTIAL_FILE", "")
 PF_PATH = os.environ.get(
     "NASTU_QUANT_PF_PATH",
-    "/home/hatch/workspace/brain_env/lib/python3.12/site-packages"
-    "/cnhkmcp/untracked/platform_functions.py",
+    str(Path(sysconfig.get_paths()["purelib"]) / "cnhkmcp" / "untracked"
+        / "platform_functions.py"),
 )
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -112,9 +116,12 @@ def main():
     asyncio.set_event_loop(loop)
 
     def call_sync(fn, params):
-        res = fn(**params)
-        if asyncio.iscoroutine(res):
-            res = loop.run_until_complete(res)
+        # Some platform functions print progress while polling. Keep stdout
+        # reserved for one JSON response per request.
+        with redirect_stdout(io.StringIO()):
+            res = fn(**params)
+            if asyncio.iscoroutine(res):
+                res = loop.run_until_complete(res)
         return res
 
     def authenticate(creds):
@@ -158,6 +165,7 @@ def main():
     sys.stdout.flush()
 
     allowed = {
+        "get_platform_setting_options": pf.get_platform_setting_options,
         "get_datafields": pf.get_datafields,
         "get_datasets": pf.get_datasets,
         "get_operators": pf.get_operators,
@@ -213,6 +221,12 @@ def main():
             params = {k: v for k, v in cmd.items() if k not in ("cmd", "save_to")}
             try:
                 res = call_sync(fn, params)
+                if cmd.get("cmd") in {"get_datasets", "get_datafields"} and isinstance(res, dict):
+                    res = collect_pages(
+                        res,
+                        lambda url: pf.brain_client.session.get(url, timeout=40).json(),
+                        pf.brain_client.base_url,
+                    )
             except Exception as e:
                 err = str(e)[:800]
                 # If the session died mid-work, flag it so the supervisor

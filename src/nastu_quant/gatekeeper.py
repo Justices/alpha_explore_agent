@@ -6,6 +6,7 @@ checked from state RA_PASSED. The Gateway calls
 `assert_correlation_allowed` before forwarding any check_correlation
 command — a second, independent layer (acceptance A2).
 """
+import math
 
 ALPHA_STATES = {
     "CREATED", "SIMULATED", "CLASSIFIED", "BELOW_THRESHOLD",
@@ -46,10 +47,11 @@ def transition(alpha: dict, dst: str) -> dict:
 
 def assert_correlation_allowed(alpha: dict) -> None:
     """Precondition for any correlation check: RA must have passed."""
-    if alpha.get("state") != "RA_PASSED":
+    if (alpha.get("state") != "RA_PASSED" or alpha.get("ra_fail_count") != 0
+            or alpha.get("ra_readable") is not True):
         raise GateOrderError(
             f"correlation check forbidden in state {alpha.get('state')}: "
-            "RA Gate must pass first (FR-10)")
+            "readable RA evidence with zero failures is required")
 
 
 def sharpe_gate(sharpe: float, cfg: dict) -> bool:
@@ -62,19 +64,217 @@ def ra_gate(ra_fail_count: int) -> bool:
 
 
 def correlation_verdict(prod_corr, self_corr, pairwise_corrs, cfg: dict):
-    """Candidate correlation verdict with STRICT less-than thresholds
-    (FR-10 as tightened 2026-10-23: prod/self < 0.70, pairwise < 0.40).
-
-    Returns (ok, reasons). A value exactly equal to a threshold FAILS.
-    """
+    """Current research rule: prod/self <= limit, pairwise < limit."""
     g = cfg["gate"]
     reasons = []
-    if prod_corr is None or not prod_corr < g["prod_corr_max"]:
-        reasons.append(f"prod_corr {prod_corr} not < {g['prod_corr_max']}")
-    if self_corr is None or not self_corr < g["self_corr_max"]:
-        reasons.append(f"self_corr {self_corr} not < {g['self_corr_max']}")
+    if prod_corr is None or not prod_corr <= g["prod_corr_max"]:
+        reasons.append(f"prod_corr {prod_corr} not <= {g['prod_corr_max']}")
+    if self_corr is None or not self_corr <= g["self_corr_max"]:
+        reasons.append(f"self_corr {self_corr} not <= {g['self_corr_max']}")
     for other_id, value in (pairwise_corrs or {}).items():
         if value is None or not value < g["pairwise_corr_max"]:
             reasons.append(
                 f"pairwise vs {other_id}: {value} not < {g['pairwise_corr_max']}")
     return (not reasons, reasons)
+
+
+RA_CHECK_NAMES = frozenset({
+    "HIGH_TURNOVER", "LOW_TURNOVER", "LOW_FITNESS", "LOW_RETURNS", "LOW_SHARPE",
+    "LOW_GLB_AMER_SHARPE", "LOW_GLB_APAC_SHARPE", "LOW_GLB_EMEA_SHARPE",
+    "LOW_ASI_JPN_SHARPE", "IS_LADDER_SHARPE", "LOW_2Y_SHARPE",
+    "LOW_SUB_UNIVERSE_SHARPE", "LOW_ROBUST_UNIVERSE_SHARPE",
+    "LOW_AFTER_COST_ILLIQUID_UNIVERSE_SHARPE",
+    "LOW_INVESTABILITY_CONSTRAINED_SHARPE", "LOW_ROBUST_UNIVERSE_RETURNS",
+    "CONCENTRATED_WEIGHT",
+})
+SUPPORTED_REGIONS = frozenset({"ASI", "CHN", "DEU", "EUR", "GBR", "GLB",
+                               "HKG", "IND", "KOR", "USA"})
+
+
+def _finite(value):
+    if isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _checks(detail, check_payload):
+    source = (detail.get("is") or {}).get("checks")
+    if source is None and isinstance(check_payload, dict):
+        source = check_payload.get("checks")
+    if not isinstance(source, list):
+        return None
+    rows = [row for row in source if isinstance(row, dict)
+            and row.get("name") in RA_CHECK_NAMES]
+    return rows or None
+
+
+def _two_year(is_data, rows):
+    values = []
+    if "sharpe_2y" in is_data:
+        values.append(_finite(is_data["sharpe_2y"]))
+    values.extend(_finite(row.get("value")) for row in rows or []
+                  if row.get("name") == "LOW_2Y_SHARPE")
+    if not values or any(value is None for value in values):
+        return None
+    return values[0] if all(value == values[0] for value in values) else None
+
+
+def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict,
+                       correlations=None, pairwise=None,
+                       expected_pairwise_ids=None) -> dict:
+    """Conservative settled Regular gate. Missing evidence never passes."""
+    is_data = detail.get("is") if isinstance(detail, dict) else None
+    is_data = is_data if isinstance(is_data, dict) else {}
+    rows = _checks(detail, check_payload)
+    gate = cfg["gate"]
+    failures, pending = [], []
+    sharpe = _finite(is_data.get("sharpe"))
+    region = (region or "").upper()
+    if region not in SUPPORTED_REGIONS:
+        pending.append("region_threshold_unavailable")
+    elif sharpe is None:
+        pending.append("sharpe_unavailable")
+    elif region == "CHN":
+        if sharpe < gate["china_sharpe_min"]:
+            failures.append("sharpe")
+    elif sharpe <= gate["sharpe_min"]:
+        failures.append("sharpe")
+
+    for label, value, limit in (
+        ("fitness", _finite(is_data.get("fitness")), gate["fitness_min"]),
+        ("two_year_sharpe", _two_year(is_data, rows), gate["two_year_sharpe_min"]),
+        ("margin", _finite(is_data.get("margin")), gate["margin_min"]),
+    ):
+        if value is None:
+            pending.append(label + "_unavailable")
+        elif value <= limit:
+            failures.append(label)
+    turnover = _finite(is_data.get("turnover"))
+    if turnover is None:
+        pending.append("turnover_unavailable")
+    elif not gate["turnover_min"] <= turnover <= gate["turnover_max"]:
+        failures.append("turnover")
+    if "riskNeutralized" in is_data:
+        risk = is_data["riskNeutralized"]
+        if not isinstance(risk, dict):
+            pending.append("risk_neutralized_unavailable")
+        else:
+            for key, limit in (("sharpe", 1.0), ("fitness", 0.7),
+                               ("margin", gate["margin_min"])):
+                value = _finite(risk.get(key))
+                if value is None:
+                    pending.append("risk_neutralized_" + key + "_unavailable")
+                elif value <= limit:
+                    failures.append("risk_neutralized_" + key)
+
+    ra_failures = []
+    ra_pending = []
+    if rows is None:
+        pending.append("ra_checks_unavailable")
+    else:
+        for row in rows:
+            result = str(row.get("result") or "").upper()
+            if result in {"FAIL", "WARNING"}:
+                ra_failures.append(row["name"])
+            elif result == "PENDING":
+                ra_pending.append(row["name"])
+            elif result != "PASS":
+                pending.append("ra_status_unreadable:" + row["name"])
+    failures.extend("ra:" + name for name in ra_failures)
+    pending.extend("ra_pending:" + name for name in ra_pending)
+    correlation_allowed = (sharpe is not None and region in SUPPORTED_REGIONS
+                           and "sharpe" not in failures and rows is not None
+                           and not ra_failures
+                           and not any(item.startswith("ra_status_unreadable")
+                                       for item in pending))
+    if not correlation_allowed:
+        status = ("BELOW_THRESHOLD" if "sharpe" in failures else
+                  "RA_FAILED" if ra_failures else "EVIDENCE_PENDING")
+        return {"status": status, "correlation_allowed": False,
+                "ra_fail_count": len(ra_failures), "failures": failures,
+                "pending": pending}
+
+    correlations = correlations or {}
+    prod = _finite(correlations.get("prod"))
+    self_corr = _finite(correlations.get("self"))
+    expected = expected_pairwise_ids or []
+    pairwise = pairwise or {}
+    for name, value in (("prod", prod), ("self", self_corr)):
+        if value is None:
+            pending.append(name + "_correlation_unavailable")
+        elif abs(value) > gate[name + "_corr_max"]:
+            failures.append(name + "_correlation")
+    for alpha_id in expected:
+        value = _finite(pairwise.get(alpha_id))
+        if value is None:
+            pending.append("pairwise_unavailable:" + alpha_id)
+        elif abs(value) >= gate["pairwise_corr_max"]:
+            failures.append("pairwise:" + alpha_id)
+    if any(item.startswith("pairwise:") for item in failures):
+        status = "PAIRWISE_CONFLICT"
+    elif ra_pending:
+        status = "CHECKS_PENDING"
+    elif any(item.endswith("correlation") for item in failures):
+        status = "CORR_REJECTED"
+    elif failures:
+        status = "METRICS_FAILED"
+    elif pending:
+        status = "EVIDENCE_PENDING"
+    else:
+        status = "CANDIDATE"
+    return {"status": status, "correlation_allowed": True,
+            "ra_fail_count": 0, "failures": failures, "pending": pending}
+
+
+def parse_correlations(payload: dict, expected_pairwise_ids=None) -> dict:
+    """Read values from raw correlation evidence, not the API's pass flags."""
+    result = {"prod": None, "self": None, "pairwise": {}}
+    checks = payload.get("checks") if isinstance(payload, dict) else None
+    if not isinstance(checks, dict):
+        return result
+    prod = checks.get("production") or {}
+    prod_data = prod.get("correlation_data") if isinstance(prod, dict) else None
+    if isinstance(prod_data, dict):
+        value = _finite(prod_data.get("max"))
+        if value is None:
+            schema = prod_data.get("schema") or {}
+            value = _finite(schema.get("max")) if isinstance(schema, dict) else None
+        if value is not None and -1 <= value <= 1:
+            result["prod"] = abs(value)
+
+    self_check = checks.get("self") or {}
+    self_data = self_check.get("correlation_data") if isinstance(self_check, dict) else None
+    if not isinstance(self_data, dict):
+        return result
+    records = self_data.get("records")
+    if (not isinstance(records, list) or not records or self_data.get("next")
+            or self_data.get("count", len(records)) != len(records)):
+        return result
+    schema = self_data.get("schema") or {}
+    columns = [entry.get("name") for entry in schema.get("properties", [])
+               if isinstance(entry, dict)] if isinstance(schema, dict) else []
+    try:
+        corr_index = columns.index("correlation")
+    except ValueError:
+        return result
+    id_index = next((columns.index(name) for name in ("alphaId", "alpha", "id")
+                     if name in columns), None)
+    values = []
+    pairs = {}
+    for record in records:
+        if not isinstance(record, (list, tuple)) or len(record) <= corr_index:
+            return result
+        value = _finite(record[corr_index])
+        if value is None or not -1 <= value <= 1:
+            return result
+        values.append(abs(value))
+        if id_index is not None and len(record) > id_index:
+            pairs[str(record[id_index])] = abs(value)
+    result["self"] = max(values)
+    result["pairwise"] = {alpha_id: pairs[alpha_id]
+                          for alpha_id in expected_pairwise_ids or [] if alpha_id in pairs}
+    return result

@@ -10,6 +10,7 @@ from pathlib import Path
 from .gatekeeper import assert_correlation_allowed
 
 WHITELIST = {
+    "get_platform_setting_options",
     "get_datasets", "get_datafields", "get_operators",
     "create_simulation", "create_multi_simulation",
     "get_alpha_details", "get_alpha_pnl", "get_alpha_yearly_stats",
@@ -56,13 +57,17 @@ class Gateway:
     def call(self, cmd: str, **params) -> dict:
         if cmd not in WHITELIST:
             raise GatewayError(f"command not in whitelist: {cmd}")
-        if cmd == "check_correlation" and self.alpha_lookup is not None:
+        if cmd == "check_correlation":
+            if self.alpha_lookup is None:
+                raise GatewayError("correlation check refused: alpha state lookup unavailable")
             alpha_id = params.get("alpha_id") or params.get("alphaId")
             alpha = self.alpha_lookup(alpha_id) if alpha_id else None
             if alpha is None:
                 raise GatewayError(
                     "correlation check refused: alpha state unknown")
             assert_correlation_allowed(alpha)  # raises GateOrderError
+        if self.proc is None or self.proc.poll() is not None:
+            raise GatewayError("driver is not running")
         resp = self._send({"cmd": cmd, **params})
         if not resp.get("ok"):
             raise GatewayError(f"{cmd} failed: {resp.get('error')}")

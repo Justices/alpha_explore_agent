@@ -14,25 +14,33 @@ from .state_store import atomic_write_json, read_json
 
 DEFAULT_CONFIG = {
     "scope": {
-        "region": "GLB",
-        "universe": "TOP3000",
-        "delay": 1,
-        "decay": 0,
-        "neutralization": "MARKET",
-        "truncation": 0.08,
-        "pasteurization": "ON",
-        "is_start": "2014-01-01",
-        "is_end": "2023-12-31",
+        "region": None,
+        "universe": None,
+        "delay": None,
+        "decay": None,
+        "neutralization": None,
+        "truncation": None,
+        "pasteurization": None,
+        "is_start": None,
+        "is_end": None,
     },
     "gate": {
         "sharpe_min": 1.58,
-        "prod_corr_max": 0.70,       # strict less-than (FR-10, tightened)
-        "self_corr_max": 0.70,       # strict less-than
+        "china_sharpe_min": 2.08,
+        "fitness_min": 1.0,
+        "two_year_sharpe_min": 1.60,
+        "margin_min": 0.0005,
+        "turnover_min": 0.05,
+        "turnover_max": 0.30,
+        "prod_corr_max": 0.70,       # current rule: inclusive
+        "self_corr_max": 0.70,       # current rule: inclusive
         "pairwise_corr_max": 0.40,   # strict less-than
     },
     "probe": {"windows": [5, 66]},
     "exec": {"multisim_wait_threshold_s": 1200},
     "auth": {"mode": "auto", "credential_env": "NASTU_QUANT_CREDENTIAL_FILE"},
+    "model": {"provider": None, "url": None, "model": None,
+              "api_key_env": "NASTU_QUANT_MODEL_API_KEY"},
 }
 
 SCOPE_KEYS = {"scope", "gate"}  # changes to these sections need approval
