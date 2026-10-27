@@ -226,3 +226,4 @@ needs_auth
 *.xml
 .idea
 .claude
+pyproject.toml

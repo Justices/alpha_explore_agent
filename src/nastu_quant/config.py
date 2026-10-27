@@ -46,6 +46,13 @@ DEFAULT_CONFIG = {
     "auth": {"mode": "auto", "credential_env": "NASTU_QUANT_CREDENTIAL_FILE"},
     "model": {"provider": None, "url": None, "model": None,
               "api_key_env": "NASTU_QUANT_MODEL_API_KEY"},
+    "knowledge": {
+        "canonical_rules_path": r"D:\quant\brain-flow\AGENTS.md",
+        "construction_advisory_path": r"C:\Users\HP\Downloads\ALPHA_CONSTRUCTION_ADVISORY.md",
+        "prior_knowledge_path": r"D:\quant\brain-flow\RESEARCH_MEMORY.md",
+        "operator_root": r"D:\quant\brain-flow\knowledge_base\operator",
+        "field_root": r"D:\quant\brain-flow\knowledge_base\data_fields",
+    },
 }
 
 SCOPE_KEYS = {"scope", "gate"}  # changes to these sections need approval

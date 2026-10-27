@@ -180,7 +180,8 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(result["dataset_id"], "risk60")
         self.assertEqual(result["alpha_ids"], ["A1", "A2"])
         self.assertEqual(self.model.tasks,
-                         ["plan_probes", "construct_batch", "attribute_results"])
+                         ["plan_probes", "construct_batch", "construct_batch",
+                          "attribute_results"])
         calls = [name for name, _ in self.gateway.calls]
         self.assertEqual(calls.count("create_multi_simulation"), 1)
         self.assertNotIn("submit_alpha", calls)
@@ -619,6 +620,50 @@ class TestResearchAgent(unittest.TestCase):
         after = sum(name == "create_multi_simulation" for name, _ in self.gateway.calls)
         self.assertEqual(before, after)
 
+    def test_completed_expressions_are_cached_across_objectives_and_restarts(self):
+        runs_root = Path(self.tmp.name) / "runs"
+        agent = ResearchAgent(self.gateway, self.model, self.config, runs_root)
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        simulation_count = sum(name == "create_multi_simulation"
+                               for name, _ in self.gateway.calls)
+        cache = getattr(agent, "backtest_cache", None)
+        self.assertIsNotNone(cache)
+        cache_path = cache.path
+        self.assertTrue(cache_path.exists())
+
+        # A new process uses the persisted index.
+        restarted = ResearchAgent(self.gateway, self.model, self.config, runs_root)
+        with self.assertRaisesRegex(ResearchError, "backtest cache hit"):
+            restarted.run_once("different lending objective", dataset_id="risk60")
+        self.assertEqual(sum(name == "create_multi_simulation"
+                             for name, _ in self.gateway.calls), simulation_count)
+
+        # If the index is lost, closed run artifacts rebuild it before a new run.
+        cache_path.unlink()
+        rebuilt = ResearchAgent(self.gateway, self.model, self.config, runs_root)
+        with self.assertRaisesRegex(ResearchError, "backtest cache hit"):
+            rebuilt.run_once("third lending objective", dataset_id="risk60")
+        self.assertEqual(sum(name == "create_multi_simulation"
+                             for name, _ in self.gateway.calls), simulation_count)
+
+    def test_bloom_maybe_hit_is_cached_and_keys_include_all_settings(self):
+        runs_root = Path(self.tmp.name) / "cache-runs"
+        agent = ResearchAgent(self.gateway, self.model, self.config, runs_root)
+        cache = getattr(agent, "backtest_cache", None)
+        self.assertIsNotNone(cache)
+        scope = {key: self.config["scope"][key]
+                 for key in ("region", "universe", "delay")}
+        settings = agent._platform_settings(self.config["scope"])
+        expression = "rank(signal_a)"
+        self.assertIsNone(cache.find(expression, "risk60", scope, settings))
+        cache.record(expression, "risk60", scope, settings)
+        self.assertTrue(cache.find(expression, "risk60", scope, settings))
+        changed_settings = {**settings, "truncation": 0.09}
+        self.assertIsNone(cache.find(expression, "risk60", scope, changed_settings))
+        self.assertIsNone(cache.find(expression, "other-dataset", scope, settings))
+        changed_scope = {**scope, "universe": "TOP1000"}
+        self.assertIsNone(cache.find(expression, "risk60", changed_scope, settings))
+
     def test_bounded_run_advances_two_distinct_batches(self):
         self.gateway.single_ids = ["A1", "A2"]
         first = deepcopy(self.model.decisions["construct_batch"])
@@ -627,7 +672,8 @@ class TestResearchAgent(unittest.TestCase):
                               "reason": "field A level"}]
         second["variants"] = [{"expression": "rank(signal_b)",
                                "reason": "field B level"}]
-        self.model.decisions["construct_batch"] = [first, second]
+        self.model.decisions["construct_batch"] = [
+            first, deepcopy(first), second, deepcopy(second)]
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
         summary = agent.run_case("slow lending signal", max_batches=2,
@@ -645,7 +691,8 @@ class TestResearchAgent(unittest.TestCase):
         second = deepcopy(first)
         first["variants"] = [{"expression": "rank(signal_a)", "reason": "first"}]
         second["variants"] = [{"expression": "rank(signal_b)", "reason": "second"}]
-        self.model.decisions["construct_batch"] = [first, second]
+        self.model.decisions["construct_batch"] = [
+            first, deepcopy(first), second, deepcopy(second)]
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
         agent.run_case("slow lending signal", max_batches=2, dataset_id="risk60")

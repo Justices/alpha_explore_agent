@@ -42,18 +42,41 @@ def match_alphas(prereg_expressions, settings: dict, user_alphas):
     Returns (matched, missing): matched maps expression -> alpha record,
     missing lists expressions with no platform counterpart (only those
     may enter the single-simulation fallback queue)."""
+    matched, missing, _ = match_alphas_detailed(
+        prereg_expressions, settings, user_alphas)
+    return matched, missing
+
+
+def match_alphas_detailed(prereg_expressions, settings: dict, user_alphas):
+    """Return matches, unresolved expressions, and omitted platform keys.
+
+    A missing setting key is recorded; an observed conflicting value vetoes
+    the record. Both camelCase platform and snake_case local keys are checked.
+    """
     by_key = {}
+    notes = {}
     for alpha in user_alphas or []:
         expr = extract_expression(alpha)
         observed_settings = alpha.get("settings")
         if not expr or not isinstance(observed_settings, dict):
             continue
-        if any((observed_settings.get(SETTING_KEYS.get(key, key),
-                                      observed_settings.get(key)) != value)
-               for key, value in settings.items()):
+        missing_keys = []
+        veto = False
+        for key, value in settings.items():
+            mapped = SETTING_KEYS.get(key, key)
+            present = [observed_settings[name] for name in {mapped, key}
+                       if name in observed_settings]
+            if not present:
+                missing_keys.append(mapped)
+            elif any(observed != value for observed in present):
+                veto = True
+                break
+        if veto:
             continue
         key = reconciliation_key(expr, settings)
         by_key.setdefault(key, []).append(alpha)
+        if missing_keys:
+            notes.setdefault(expr, missing_keys)
     matched, missing = {}, []
     for expr in prereg_expressions:
         hits = by_key.get(reconciliation_key(expr, settings), [])
@@ -61,4 +84,4 @@ def match_alphas(prereg_expressions, settings: dict, user_alphas):
             matched[expr] = hits[0]
         else:
             missing.append(expr)
-    return matched, missing
+    return matched, missing, {expr: notes[expr] for expr in matched if expr in notes}

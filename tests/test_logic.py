@@ -213,6 +213,30 @@ class TestRecovery(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertEqual(matched[expr]["id"], "A1")
 
+    def test_recovery_notes_missing_platform_setting_keys(self):
+        settings = {"region": "GLB", "delay": 1,
+                    "instrument_type": "EQUITY"}
+        expr = "rank(close)"
+        platform = [{"id": "A1", "regular": {"code": expr},
+                     "settings": {"region": "GLB", "delay": 1}}]
+        matched, missing, notes = recovery.match_alphas_detailed(
+            [expr], settings, platform)
+        self.assertEqual(missing, [])
+        self.assertEqual(matched[expr]["id"], "A1")
+        self.assertEqual(notes[expr], ["instrumentType"])
+
+    def test_recovery_vetoes_present_conflicting_setting_in_either_key_shape(self):
+        settings = {"region": "GLB", "instrument_type": "EQUITY"}
+        expr = "rank(close)"
+        for observed in ({"region": "GLB", "instrumentType": "FUTURES"},
+                         {"region": "GLB", "instrument_type": "FUTURES"}):
+            matched, missing, _ = recovery.match_alphas_detailed(
+                [expr], settings,
+                [{"id": "WRONG", "regular": {"code": expr},
+                  "settings": observed}])
+            self.assertEqual(matched, {})
+            self.assertEqual(missing, [expr])
+
 
 if __name__ == "__main__":
     unittest.main()
