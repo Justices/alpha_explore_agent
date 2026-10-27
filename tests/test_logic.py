@@ -15,7 +15,8 @@ class TestConfig(unittest.TestCase):
     def test_no_implicit_research_scope_or_effective_settings(self):
         scope = DEFAULT_CONFIG["scope"]
         for key in ("region", "universe", "delay", "decay",
-                    "neutralization", "truncation", "pasteurization"):
+                    "neutralization", "truncation", "pasteurization",
+                    "unit_handling", "nan_handling", "test_period", "max_trade"):
             self.assertIsNone(scope[key], key)
 
 
@@ -70,6 +71,37 @@ class TestGatekeeper(unittest.TestCase):
             correlations={"prod": 0.7, "self": 0.7}, expected_pairwise_ids=[])
         self.assertTrue(audit["correlation_allowed"])
         self.assertEqual(audit["status"], "CHECKS_PENDING")
+
+    def test_zero_ra_failures_allow_correlation_even_when_sharpe_fails(self):
+        detail = {"is": {"sharpe": 1.2}}
+        checks = {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]}
+        audit = gatekeeper.evaluate_candidate(detail, checks, "GLB", DEFAULT_CONFIG)
+        self.assertTrue(audit["correlation_allowed"])
+        self.assertIn("sharpe", audit["failures"])
+
+    def test_non_glb_requires_verified_operator_count_below_eight(self):
+        detail = {"is": {"sharpe": 1.8, "fitness": 1.2,
+                         "sharpe_2y": 1.7, "margin": 0.001,
+                         "turnover": 0.2}}
+        checks = {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]}
+        evidence = {"correlations": {"prod": 0.2, "self": 0.3}}
+        unknown = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
+                                                 **evidence)
+        self.assertIn("operator_count_unavailable", unknown["pending"])
+        at_limit = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
+                                                  operator_count=8, **evidence)
+        self.assertIn("operator_count", at_limit["failures"])
+        below = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
+                                               operator_count=7, **evidence)
+        self.assertEqual(below["status"], "CANDIDATE")
+
+    def test_malformed_check_row_cannot_establish_readable_ra(self):
+        detail = {"is": {"sharpe": 1.8}}
+        checks = {"checks": [{"name": "LOW_SHARPE", "result": "PASS"},
+                              {"result": "PASS"}]}
+        audit = gatekeeper.evaluate_candidate(detail, checks, "GLB", DEFAULT_CONFIG)
+        self.assertFalse(audit["correlation_allowed"])
+        self.assertIn("ra_checks_unavailable", audit["pending"])
 
     def test_complete_gate_accepts_exact_individual_limit_and_rejects_pairwise_limit(self):
         detail = {"is": {"sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,

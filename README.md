@@ -1,39 +1,96 @@
-# alpha_explore_agent — nastu_quant
+# nastu_quant: independent BRAIN research agent
 
-nastu_quant 是一个在 WorldQuant BRAIN 平台上自主探索 Alpha 的
-Agent 系统：从数据集准入、字段探针、假设与预登记，到回测执行、
-结果归因与 RA Gate 判定，构成一条门禁由代码与状态机保证、
-不依赖执行者自觉的研究流水线。Alpha 提交永远由用户人工完成，
-系统在能力层面不具备提交功能。
+This repository runs a bounded, model driven **Regular Alpha** research batch.
+The model service is replaceable through configuration. The program validates
+scope, Dataset, fields, expressions and gate evidence, records the proposed
+hypothesis before simulation, and can recover an interrupted batch without
+blindly reposting it. It has no Alpha submission or property mutation command.
 
-## 文档
+The two files in `design/` are design references. The current research rules
+come from `D:\quant\brain-flow\AGENTS.md`; `D:\quant\brain-flow\scripts`
+is a reference for existing capabilities and evidence semantics. This is a
+separate runtime in this repository and does not execute those scripts.
 
-- 需求规格说明书（已定稿 v1.0）：工作区 `AGENT_REQUIREMENTS.md`
-- 设计文档（已定稿 v1.0）：工作区 `AGENT_DESIGN.md`
+## Current boundary
 
-## 布局
+- `run-once` completes one research batch of 1–8 expressions. `run` executes
+  serial batches up to an explicit `--max-batches` limit and stops early after
+  final Candidates from three different Datasets in the active case. Diagnostic
+  probes are run only when the model asks for targeted missing evidence.
+- Scope needs an explicit Region. Dataset can be fixed in config or selected
+  from the live catalog. A configured Dataset cannot be changed by the model.
+- Candidate requires complete metrics, terminal RA checks, production/self
+  correlation, the active case's pairwise checks, and a clear model review.
+  `PENDING` or unreadable evidence remains pending. The case contender file
+  preserves pairwise conflicts for user resolution.
+- The bounded loop cannot prove economic exhaustion automatically and has no
+  user review resolution command. `auth.mode=per_batch` is rejected until an
+  explicit approval flow is implemented. An exhausted or pending branch is
+  reported rather than counted toward the three Dataset target. The CLI never
+  submits an Alpha.
+- Validation is offline. No real BRAIN simulation or model service call has
+  been performed as part of repository verification.
 
+## Configure
+
+Use Python 3.11+ with `cnhkmcp` available in the chosen interpreter. Copy
+[`config.example.json`](config.example.json) to a state directory **outside**
+the repository, for example `D:\quant\nastu_quant_state\config\nastu_quant.json`.
+Fill the explicit scope values using live supported settings. A missing Region
+blocks research. The model URL is HTTPS; `json_http` accepts a JSON request
+with `task`, `context`, and `instruction`, and must return
+`{"result": { ... decision ... }}`. `openai_compatible` uses a chat completion
+wire format and a configured model name. Implementing `complete_json(task,
+context)` is the extension point for other services.
+
+Set `NASTU_QUANT_CREDENTIAL_FILE` to an external JSON file containing the
+BRAIN email and password. Set the configured model API key environment variable
+when the service requires one. Secrets are not stored in this repository or
+passed through the driver's JSON command stream. The runtime stores a session
+cookie, batch artifacts and stop flag under the state directory.
+
+```powershell
+$env:PYTHONPATH = 'D:\quant\alpha_explore_agent\src'
+$env:NASTU_QUANT_CREDENTIAL_FILE = '<external credentials JSON path>'
+D:\quant-venv\Scripts\python.exe -m nastu_quant `
+  --state-root D:\quant\nastu_quant_state `
+  --config D:\quant\nastu_quant_state\config\nastu_quant.json `
+  run-once --objective 'State the economic research question'
 ```
-src/nastu_quant/
-├── driver.py       平台驱动：JSON-lines 协议 + 命令白名单 +
-│                   两级会话恢复（cookie → 凭证文件），无提交能力
-├── gateway.py      Gateway：白名单校验 + 相关性检查的 RA 前置校验
-├── validator.py    表达式静态验证（解析器 + 规则引擎，带拒绝码）
-├── gatekeeper.py   Alpha 状态机与门禁判定（阈值严格小于口径）
-├── recovery.py     multisim 找回对账协议（先找回，禁先重提）
-├── state_store.py  落盘状态、预登记哈希锁定、急停标志
-├── config.py       显性配置与变更留痕
-├── metering.py     逐批计量（时长/模拟数/token，不可得记 null）
-└── paths.py        状态根与 NFR-07 产物命名规则
-tests/              离线测试（假平台桩，无网络、无真实凭据）
+
+For autonomous serial batches within a fixed budget, replace the final line
+with `run --objective 'State the economic research question' --max-batches 3`.
+The case file retains prior batches and rejects repeat expressions.
+
+Use `--dataset DATASET_ID` only to fix a Dataset for this batch. If config
+already fixes `scope.dataset_id`, a different command line value is rejected.
+
+## Inspect and recover
+
+```powershell
+D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state status
+D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state stop
+D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state resume
+D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state --config D:\quant\nastu_quant_state\config\nastu_quant.json recover <batch-directory>
 ```
 
-运行时状态（配置、先验、产物、会话 cookie）位于代码仓库之外
-的 `~/workspace/nastu_quant/` 状态根，凭证文件由环境变量
-`NASTU_QUANT_CREDENTIAL_FILE` 注入路径，均不进版本控制。
+An unfinished batch blocks a fresh `run-once`. `recover` checks the saved
+intent, pre-registration hash, and local result or platform account records;
+it does not repost a possibly submitted expression. A draft with **no**
+simulation intent can be archived while preserving its files:
 
-## 测试
+```powershell
+D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state void <batch-directory> --reason 'invalid model proposal'
+```
 
-```bash
-PYTHONPATH=src python3 -m unittest discover -s tests
+Each batch stores its context, probe plan and evidence, pre-registration,
+simulation intent and raw response, read-back, gate, result and metering JSON.
+`metering.json` distinguishes submission intents and confirmed responses;
+model token usage is `null` unless actually measured.
+
+## Offline checks
+
+```powershell
+$env:PYTHONPATH = 'D:\quant\alpha_explore_agent\src'
+D:\quant-venv\Scripts\python.exe -m unittest discover -s tests
 ```

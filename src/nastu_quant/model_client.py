@@ -26,15 +26,19 @@ TASK_INSTRUCTIONS = {
     "plan_probes": (
         "Before hypothesis design, inspect nominal and usable coverage, refresh rate, "
         "units, typical level, distribution, publication timing, and tradeability. "
-        "Use only targeted diagnostic probes for material unknowns. Each probe needs "
-        "expression, question, economic_relevance, expected, failure_criterion. "
+        "Choose one to four core_fields and a required_dimensions map for each field, "
+        "including nominal_coverage and usable_observations; justify this in "
+        "requirement_reason. Use only targeted probes for material unknowns. Each probe "
+        "needs expression, question, economic_relevance, expected, failure_criterion. "
         "Diagnostic Sharpe is never Alpha performance. Return {probes, reason}."
     ),
     "construct_batch": (
         "State the economic mechanism before expressions. Translate observed field constraints "
         "into design choices; never invent missing probe evidence. Return a JSON object with "
         "hypothesis, expected_sign, structure_window_rationale, failure_criterion, "
-        "field_report, and variants. Each variant needs expression and ex-ante reason. "
+        "field_report, and variants. Field reports must cite available evidence for each "
+        "required dimension and list nonmaterial unknowns with reason and why_not_material. "
+        "Each variant needs expression and ex-ante reason. "
         "Use one Dataset, at most three fields per expression, one to eight variants; "
         "do not splice signals with + or *, use trade_when/add/multiply, or tune to prior results."
     ),
@@ -42,6 +46,19 @@ TASK_INSTRUCTIONS = {
         "Report failed checks first, then measured metrics. Compare each result with the "
         "pre-registered failure criterion and classify support, refutation, or insufficient "
         "evidence. Platform ERROR is technical, not hypothesis failure. Do not declare Candidate."
+    ),
+    "review_candidate": (
+        "Review the verified preregistration, live checks, correlations and result for "
+        "unresolved robustness or trade-offs. Return {verdict, reason, evidence_refs}; "
+        "verdict must be CLEAR, ROBUSTNESS_REVIEW, or TRADEOFF_REVIEW. Do not mark CLEAR "
+        "when evidence is missing or a warning is unresolved. Never authorize submission."
+    ),
+    "decide_next": (
+        "Use the attributed result and prior case batches to choose a new independently "
+        "justified research direction or pause. Return {action, reason}; action is "
+        "continue or pause. Do not repeat expressions, relabel an old branch to reset "
+        "its budget, or switch a user-fixed Dataset. A weak batch alone is not economic "
+        "exhaustion. Leave unresolved reviews pending and continue only valid work."
     ),
 }
 

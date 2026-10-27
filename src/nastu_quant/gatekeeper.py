@@ -102,10 +102,14 @@ def _finite(value):
 
 
 def _checks(detail, check_payload):
-    source = (detail.get("is") or {}).get("checks")
+    is_data = detail.get("is") if isinstance(detail, dict) else None
+    source = is_data.get("checks") if isinstance(is_data, dict) else None
     if source is None and isinstance(check_payload, dict):
         source = check_payload.get("checks")
     if not isinstance(source, list):
+        return None
+    if any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+           or not row["name"] for row in source):
         return None
     rows = [row for row in source if isinstance(row, dict)
             and row.get("name") in RA_CHECK_NAMES]
@@ -125,7 +129,7 @@ def _two_year(is_data, rows):
 
 def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict,
                        correlations=None, pairwise=None,
-                       expected_pairwise_ids=None) -> dict:
+                       expected_pairwise_ids=None, operator_count=None) -> dict:
     """Conservative settled Regular gate. Missing evidence never passes."""
     is_data = detail.get("is") if isinstance(detail, dict) else None
     is_data = is_data if isinstance(is_data, dict) else {}
@@ -170,6 +174,11 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
                     pending.append("risk_neutralized_" + key + "_unavailable")
                 elif value <= limit:
                     failures.append("risk_neutralized_" + key)
+    if region in SUPPORTED_REGIONS and region != "GLB":
+        if not isinstance(operator_count, int) or isinstance(operator_count, bool):
+            pending.append("operator_count_unavailable")
+        elif operator_count >= 8:
+            failures.append("operator_count")
 
     ra_failures = []
     ra_pending = []
@@ -186,9 +195,7 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
                 pending.append("ra_status_unreadable:" + row["name"])
     failures.extend("ra:" + name for name in ra_failures)
     pending.extend("ra_pending:" + name for name in ra_pending)
-    correlation_allowed = (sharpe is not None and region in SUPPORTED_REGIONS
-                           and "sharpe" not in failures and rows is not None
-                           and not ra_failures
+    correlation_allowed = (rows is not None and not ra_failures
                            and not any(item.startswith("ra_status_unreadable")
                                        for item in pending))
     if not correlation_allowed:

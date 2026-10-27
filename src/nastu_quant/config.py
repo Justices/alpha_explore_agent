@@ -15,12 +15,17 @@ from .state_store import atomic_write_json, read_json
 DEFAULT_CONFIG = {
     "scope": {
         "region": None,
+        "dataset_id": None,
         "universe": None,
         "delay": None,
         "decay": None,
         "neutralization": None,
         "truncation": None,
         "pasteurization": None,
+        "unit_handling": None,
+        "nan_handling": None,
+        "test_period": None,
+        "max_trade": None,
         "is_start": None,
         "is_end": None,
     },

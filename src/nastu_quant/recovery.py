@@ -48,7 +48,8 @@ def match_alphas(prereg_expressions, settings: dict, user_alphas):
         observed_settings = alpha.get("settings")
         if not expr or not isinstance(observed_settings, dict):
             continue
-        if any(observed_settings.get(SETTING_KEYS.get(key, key)) != value
+        if any((observed_settings.get(SETTING_KEYS.get(key, key),
+                                      observed_settings.get(key)) != value)
                for key, value in settings.items()):
             continue
         key = reconciliation_key(expr, settings)

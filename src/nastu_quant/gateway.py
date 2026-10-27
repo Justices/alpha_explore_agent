@@ -14,8 +14,7 @@ WHITELIST = {
     "get_datasets", "get_datafields", "get_operators",
     "create_simulation", "create_multi_simulation",
     "get_alpha_details", "get_alpha_pnl", "get_alpha_yearly_stats",
-    "check_correlation", "get_submission_check", "get_user_alphas",
-    "set_alpha_properties",
+    "check_correlation", "get_user_alphas",
 }
 INTERNAL_COMMANDS = {"reauth", "shutdown"}
 

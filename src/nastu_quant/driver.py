@@ -175,9 +175,7 @@ def main():
         "get_alpha_pnl": pf.get_alpha_pnl,
         "get_alpha_yearly_stats": pf.get_alpha_yearly_stats,
         "check_correlation": pf.check_correlation,
-        "get_submission_check": pf.get_submission_check,
         "get_user_alphas": pf.get_user_alphas,
-        "set_alpha_properties": pf.set_alpha_properties,
         "reauth": None,  # special: re-read credential file, no params
     }
 

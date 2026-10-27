@@ -1,0 +1,35 @@
+{
+  "scope": {
+    "region": null,
+    "dataset_id": null,
+    "universe": null,
+    "delay": null,
+    "decay": null,
+    "neutralization": null,
+    "truncation": null,
+    "pasteurization": null,
+    "unit_handling": "VERIFY",
+    "nan_handling": "OFF",
+    "test_period": "P0Y0M",
+    "max_trade": "OFF"
+  },
+  "gate": {
+    "sharpe_min": 1.58,
+    "china_sharpe_min": 2.08,
+    "fitness_min": 1.0,
+    "two_year_sharpe_min": 1.6,
+    "margin_min": 0.0005,
+    "turnover_min": 0.05,
+    "turnover_max": 0.3,
+    "prod_corr_max": 0.7,
+    "self_corr_max": 0.7,
+    "pairwise_corr_max": 0.4
+  },
+  "auth": {"mode": "auto"},
+  "model": {
+    "provider": "json_http",
+    "url": null,
+    "model": null,
+    "api_key_env": null
+  }
+}

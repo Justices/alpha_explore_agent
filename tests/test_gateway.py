@@ -19,6 +19,11 @@ class TestGateway(unittest.TestCase):
             gateway.call("check_correlation", alpha_id="A1")
         self.assertIn("RA", str(caught.exception))
 
+    def test_composite_submission_check_is_not_exposed(self):
+        gateway = Gateway()
+        with self.assertRaises(GatewayError):
+            gateway.call("get_submission_check", alpha_id="A1")
+
 
 if __name__ == "__main__":
     unittest.main()
