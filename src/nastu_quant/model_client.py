@@ -1,11 +1,12 @@
 """Replaceable JSON decision service for the research agent.
 
-The agent depends only on ``complete_json(task, context)``. Two wire
+The agent depends only on ``complete_json(task, context)``. Three wire
 adapters are supplied; additional providers can implement that method.
 """
 import json
 import hashlib
 import os
+import re
 import shutil
 import time
 from datetime import datetime
@@ -23,8 +24,10 @@ class ModelError(RuntimeError):
 TASK_INSTRUCTIONS = {
     "select_scope": (
         "Region is user-supplied and must never change. Choose supported Delay, Universe "
-        "and Neutralization only from the provided live platform combinations. Preserve "
-        "every supplied scope value. Return {delay, universe, neutralization, reason}."
+        "and Neutralization only from the provided live platform combinations. Choose "
+        "unsupplied decay, truncation, and pasteurization from the live settings schema "
+        "with an economic rationale. Preserve every supplied scope value. Return "
+        "{delay, universe, neutralization, decay, truncation, pasteurization, reason}."
     ),
     "select_dataset": (
         "Choose one dataset_id from the live exact-scope catalog. Explain its economic "
@@ -101,12 +104,24 @@ def _post_json(url: str, headers: dict, payload: dict) -> dict:
         return json.load(response)
 
 
+def _decision_from_text(message):
+    try:
+        return json.loads(message)
+    except json.JSONDecodeError:
+        blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", message,
+                            flags=re.IGNORECASE | re.DOTALL)
+        if len(blocks) != 1:
+            raise
+        return json.loads(blocks[0])
+
+
 class ConfiguredModelClient:
     def __init__(self, config: dict, transport=None, environ=None):
         self.config = config
         self.transport = transport or _post_json
         self.environ = os.environ if environ is None else environ
         self.last_usage = None
+        self.last_response_text = None
 
     def complete_json(self, task: str, context: dict) -> dict:
         provider = self.config.get("provider")
@@ -119,11 +134,15 @@ class ConfiguredModelClient:
             key = self.environ.get(key_env)
             if not key:
                 raise ModelError(f"model credential environment variable unavailable: {key_env}")
-            headers["Authorization"] = f"Bearer {key}"
-        elif provider == "openai_compatible":
-            raise ModelError("openai_compatible service requires api_key_env")
+            if provider == "anthropic_compatible":
+                headers["x-api-key"] = key
+                headers["anthropic-version"] = "2023-06-01"
+            else:
+                headers["Authorization"] = f"Bearer {key}"
+        elif provider in {"openai_compatible", "anthropic_compatible"}:
+            raise ModelError(f"{provider} service requires api_key_env")
 
-        if provider == "openai_compatible":
+        if provider in {"openai_compatible", "anthropic_compatible"}:
             model = self.config.get("model")
             if not model:
                 raise ModelError("model name is required")
@@ -134,8 +153,13 @@ class ConfiguredModelClient:
                      "instruction": TASK_INSTRUCTIONS.get(task, "Return one JSON object only.")
                                    + " " + KNOWLEDGE_POLICY},
                     ensure_ascii=False)}],
-                "response_format": {"type": "json_object"},
             }
+            if provider == "openai_compatible":
+                payload["response_format"] = {"type": "json_object"}
+            else:
+                payload["max_tokens"] = 8192
+                if not url.rstrip("/").endswith("/v1/messages"):
+                    url = url.rstrip("/") + "/v1/messages"
         elif provider == "json_http":
             payload = {"task": task, "context": context,
                        "instruction": TASK_INSTRUCTIONS.get(task, "Return one JSON object only.")
@@ -144,11 +168,18 @@ class ConfiguredModelClient:
             raise ModelError(f"unsupported model provider: {provider}")
 
         self.last_usage = None
+        self.last_response_text = None
         try:
             response = self.transport(url, headers, payload)
             self.last_usage = (response.get("usage") if isinstance(response, dict) else None)
             if provider == "openai_compatible":
                 result = json.loads(response["choices"][0]["message"]["content"])
+            elif provider == "anthropic_compatible":
+                content = response["content"]
+                message = "".join(block["text"] for block in content
+                                  if block.get("type") == "text")
+                self.last_response_text = message
+                result = _decision_from_text(message)
             else:
                 result = response["result"]
         except (KeyError, IndexError, ValueError, TypeError) as exc:
@@ -369,6 +400,9 @@ class DecisionRecorder:
             response_payload = {"status": "error", "error_type": type(exc).__name__,
                                 "error": str(exc), "token_in": token_in,
                                 "token_out": token_out}
+            service_text = getattr(self.model, "last_response_text", None)
+            if isinstance(service_text, str):
+                response_payload["service_text"] = service_text[:10000]
             error = exc
             return_value = None
         latency_ms = round((time.perf_counter() - started) * 1000, 3)

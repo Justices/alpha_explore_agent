@@ -11,11 +11,13 @@ from .gatekeeper import assert_correlation_allowed
 
 WHITELIST = {
     "get_platform_setting_options",
-    "get_datasets", "get_datafields", "get_operators",
+    "get_simulation_settings_schema",
+    "get_datasets", "get_dataset_details", "get_datafields", "get_operators",
     "create_simulation", "create_multi_simulation",
     "get_alpha_details", "get_alpha_pnl", "get_alpha_yearly_stats",
     "check_correlation", "get_user_alphas",
 }
+READ_ONLY_COMMANDS = WHITELIST - {"create_simulation", "create_multi_simulation"}
 INTERNAL_COMMANDS = {"reauth", "shutdown"}
 
 
@@ -68,6 +70,14 @@ class Gateway:
         if self.proc is None or self.proc.poll() is not None:
             raise GatewayError("driver is not running")
         resp = self._send({"cmd": cmd, **params})
+        error = str(resp.get("error", ""))
+        if not resp.get("ok") and ("401" in error or "unauthorized" in error.lower()):
+            self.reauth()
+            if cmd in READ_ONLY_COMMANDS:
+                resp = self._send({"cmd": cmd, **params})
+            else:
+                raise GatewayError(
+                    f"{cmd} authentication expired; reconcile saved simulation intent before retry")
         if not resp.get("ok"):
             raise GatewayError(f"{cmd} failed: {resp.get('error')}")
         return resp.get("result", resp)

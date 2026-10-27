@@ -44,6 +44,7 @@ class FakeGateway:
         self.omit_field_dataset = False
         self.omit_field_description = False
         self.single_probe_counts = False
+        self.dataset_detail_scope_mismatch = False
 
     def call(self, cmd, **params):
         self.calls.append((cmd, params))
@@ -53,8 +54,22 @@ class FakeGateway:
                      "Universe": ["TOP3000"], "Neutralization": (
                          ["MARKET", "NONE"] if self.allow_probe_neutralization
                          else ["MARKET"])}]}
+        if cmd == "get_simulation_settings_schema":
+            return {"decay": {"type": "integer", "minValue": 0, "maxValue": 512},
+                    "truncation": {"type": "float", "minValue": 0, "maxValue": 1},
+                    "pasteurization": {"type": "choice", "choices": [
+                        {"value": "ON"}, {"value": "OFF"}]},
+                    "unitHandling": {"type": "choice", "choices": [{"value": "VERIFY"}]},
+                    "nanHandling": {"type": "choice", "choices": [
+                        {"value": "ON"}, {"value": "OFF"}]},
+                    "maxTrade": {"type": "choice", "choices": [
+                        {"value": "ON"}, {"value": "OFF"}]}}
         if cmd == "get_datasets":
             return [{"id": "risk60"}]
+        if cmd == "get_dataset_details":
+            return {"id": params["dataset_id"], "data": [{
+                "region": "USA" if self.dataset_detail_scope_mismatch else "GLB",
+                "delay": 1, "universe": "TOP3000"}]}
         if cmd == "get_datafields":
             rows = [
                 {"id": "signal_a", "type": "MATRIX", "dataset": {"id": "risk60"},
@@ -194,6 +209,40 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(metering["platform_batches"], 1)
         self.assertEqual(metering["alpha_expressions"], 2)
         self.assertIsNone(metering["model_tokens"])
+
+    def test_fixed_dataset_detail_must_match_exact_live_scope(self):
+        self.gateway.dataset_detail_scope_mismatch = True
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name))
+        with self.assertRaisesRegex(ResearchError, "Dataset.*exact scope"):
+            agent.run_once("slow lending signal", dataset_id="risk60")
+        calls = [name for name, _ in self.gateway.calls]
+        self.assertIn("get_dataset_details", calls)
+        self.assertNotIn("get_datafields", calls)
+        self.assertNotIn("create_multi_simulation", calls)
+
+    def test_missing_effective_settings_are_selected_and_live_validated(self):
+        for key in ("decay", "truncation", "pasteurization"):
+            self.config["scope"][key] = None
+        self.model.decisions["select_scope"].update({
+            "decay": 3, "truncation": 0.08, "pasteurization": "ON",
+            "reason": "slow fundamental changes merit modest decay and broad weights"})
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name))
+        scope = agent._scope("fundamental forecast")
+        self.assertEqual((scope["decay"], scope["truncation"],
+                          scope["pasteurization"]), (3, 0.08, "ON"))
+        self.assertIn("get_simulation_settings_schema",
+                      [name for name, _ in self.gateway.calls])
+
+    def test_out_of_range_model_setting_blocks_dataset_access(self):
+        self.config["scope"]["truncation"] = None
+        self.model.decisions["select_scope"]["truncation"] = 1.2
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name))
+        with self.assertRaisesRegex(ResearchError, "truncation.*out of range"):
+            agent.run_once("fundamental forecast", dataset_id="risk60")
+        self.assertNotIn("get_datasets", [name for name, _ in self.gateway.calls])
 
     def test_invalid_expression_blocks_simulation(self):
         self.model.decisions["construct_batch"]["variants"][0]["expression"] = "rank(unknown_field)"

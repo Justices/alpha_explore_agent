@@ -7,7 +7,7 @@ class PaginationError(RuntimeError):
 
 
 def collect_pages(first_page: dict, fetch_next, base_url: str,
-                  max_pages: int = 100) -> dict:
+                  max_pages: int = 100, next_url_for_offset=None) -> dict:
     if not isinstance(first_page, dict) or not isinstance(first_page.get("results"), list):
         raise PaginationError("catalog page has no readable results")
     origin = urlsplit(base_url)
@@ -20,8 +20,13 @@ def collect_pages(first_page: dict, fetch_next, base_url: str,
             raise PaginationError("catalog page has unreadable results")
         rows.extend(part)
         next_url = page.get("next")
+        count = first_page.get("count")
+        if not next_url and isinstance(count, int) and len(rows) < count:
+            if not part:
+                raise PaginationError("catalog page is empty before declared count")
+            if next_url_for_offset is not None:
+                next_url = next_url_for_offset(len(rows))
         if not next_url:
-            count = first_page.get("count")
             if count is not None and (not isinstance(count, int) or count != len(rows)):
                 raise PaginationError("catalog count does not match fetched rows")
             return {**first_page, "results": rows, "count": len(rows),

@@ -1,4 +1,17 @@
-# nastu_quant — Alpha 探索 Agent 需求规格说明书
+# nastu_quant — Alpha 探索 Agent 原始需求规格说明书
+
+> **当前口径（2026-10-27）**：本文是最初的需求输入，保留历史决策供追溯，
+> 不再是研究规则的唯一依据。研究执行以
+> `D:\quant\brain-flow\AGENTS.md` 的当前版本为准；用户已明确选择
+> 独立 Python 模型程序，通过配置切换服务。下文固定 GLB/TOP3000/D1、
+> Muse harness、六项必做模拟、非 CHN Sharpe `>=1.58`、
+> production/self correlation `<0.70` 等旧口径均已失效。
+> 当前规则为显式 Region、其余 Scope 按有效设置核验、诊断按缺口进行、
+> 非 CHN Sharpe `>1.58`、production/self correlation `<=0.70`；
+> 开放式探索目标为三个不同 Dataset 的最终可复核 Candidate。
+> 当前代码与尚未完成的功能以仓库 `README.md` 为准，不能把本文的目标要求
+> 误认为已实现。当前试运行 Scope 为 GLB / D1 / TOPDIV3000 / analyst69，
+> 该固定 Dataset 试运行不计作三 Dataset 开放式探索的完成。
 
 | 项 | 内容 |
 |---|---|
@@ -16,7 +29,7 @@
 本文档定义 nastu_quant —— 一个在 WorldQuant BRAIN 平台上自主探索
 Alpha 的 Agent 系统 —— 应满足的全部需求，包括它必须完成的研究
 流程、必须遵守的门禁与纪律、与用户和平台的交互方式，以及判定
-实现是否合格的验收标准。本文档是后续设计与实现的唯一依据；
+实现是否合格的历史验收标准。现行研究规则按文首当前口径执行；
 同时，文档中关于运行效果的口径为对外材料（包括设计大赛参赛帖）
 提供真实、可核查的素材标准。
 

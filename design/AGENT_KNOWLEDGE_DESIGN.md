@@ -1,4 +1,10 @@
-# nastu_quant 知识层设计：检索、会话与失败诊断优化
+# nastu_quant 知识层原始设计：检索、会话与失败诊断优化
+
+> **实现状态更新（2026-10-27）**：本文“现状”描述取自旧提交快照，
+> 不代表当前代码。`KnowledgeService`、L1/L2/L3 检索、campaign 状态、
+> 模型决策日志、`diagnosis.json` 与补救证据链现已实现；知识库仍需真实
+> 批次证据积累。当前代码与未完成项请看 `README.md`。研究规则仍以
+> `D:\quant\brain-flow\AGENTS.md` 为准。
 
 | 项 | 内容 |
 |---|---|

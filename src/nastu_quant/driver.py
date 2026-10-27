@@ -27,9 +27,11 @@ import json
 import asyncio
 import os
 import io
+import re
 from contextlib import redirect_stdout
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+from urllib.parse import urlencode
 from pagination import collect_pages
 
 STATE_DIR = Path(os.environ.get(
@@ -124,6 +126,20 @@ def main():
                 res = loop.run_until_complete(res)
         return res
 
+    def get_dataset_details(dataset_id):
+        if not isinstance(dataset_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", dataset_id):
+            raise ValueError("invalid Dataset ID")
+        response = pf.brain_client.session.get(
+            f"{pf.brain_client.base_url}/data-sets/{dataset_id}", timeout=40)
+        response.raise_for_status()
+        return response.json()
+
+    def get_simulation_settings_schema():
+        response = pf.brain_client.session.options(
+            f"{pf.brain_client.base_url}/simulations", timeout=40)
+        response.raise_for_status()
+        return response.json()["actions"]["POST"]["settings"]["children"]
+
     def authenticate(creds):
         call_sync(pf.authenticate, {"email": creds["email"], "password": creds["password"]})
         save_cookie(pf)
@@ -166,8 +182,10 @@ def main():
 
     allowed = {
         "get_platform_setting_options": pf.get_platform_setting_options,
+        "get_simulation_settings_schema": get_simulation_settings_schema,
         "get_datafields": pf.get_datafields,
         "get_datasets": pf.get_datasets,
+        "get_dataset_details": get_dataset_details,
         "get_operators": pf.get_operators,
         "create_simulation": pf.create_simulation,
         "create_multi_simulation": pf.create_multi_simulation,
@@ -220,10 +238,33 @@ def main():
             try:
                 res = call_sync(fn, params)
                 if cmd.get("cmd") in {"get_datasets", "get_datafields"} and isinstance(res, dict):
+                    page_size = len(res.get("results") or [])
+                    query = {
+                        "instrumentType": params.get("instrument_type", "EQUITY"),
+                        "region": params.get("region", "USA"),
+                        "delay": params.get("delay", 1),
+                        "universe": params.get("universe", "TOP3000"),
+                        "limit": page_size,
+                    }
+                    if cmd.get("cmd") == "get_datafields":
+                        if params.get("dataset_id"):
+                            query["dataset.id"] = params["dataset_id"]
+                        if params.get("data_type") and params["data_type"] != "ALL":
+                            query["type"] = params["data_type"]
+                    else:
+                        query["theme"] = params.get("theme", "false")
+                    if params.get("search"):
+                        query["search"] = params["search"]
+                    endpoint = ("data-fields" if cmd.get("cmd") == "get_datafields"
+                                else "data-sets")
+                    def next_url(offset):
+                        return (f"{pf.brain_client.base_url}/{endpoint}?"
+                                + urlencode({**query, "offset": offset}))
                     res = collect_pages(
                         res,
                         lambda url: pf.brain_client.session.get(url, timeout=40).json(),
                         pf.brain_client.base_url,
+                        next_url_for_offset=next_url,
                     )
             except Exception as e:
                 err = str(e)[:800]

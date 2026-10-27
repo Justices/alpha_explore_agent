@@ -100,6 +100,25 @@ class TestDriver(unittest.TestCase):
                          ["field_a", "field_b", "field_c"])
         self.assertTrue(resps[1]["result"]["complete"])
 
+    def test_dataset_detail_uses_authenticated_single_dataset_endpoint(self):
+        resps = run_driver(self.state, self.cred, [
+            {"cmd": "get_dataset_details", "dataset_id": "analyst14"},
+            {"cmd": "get_dataset_details", "dataset_id": "../alphas"},
+            {"cmd": "shutdown"},
+        ])
+        self.assertEqual(resps[1]["result"]["id"], "analyst14")
+        self.assertEqual(resps[1]["result"]["universe"], "TOP3000")
+        self.assertFalse(resps[2]["ok"])
+
+    def test_simulation_settings_schema_comes_from_live_options(self):
+        resps = run_driver(self.state, self.cred, [
+            {"cmd": "get_simulation_settings_schema"}, {"cmd": "shutdown"},
+        ])
+        schema = resps[1]["result"]
+        self.assertEqual(schema["decay"]["max_value"], 50)
+        self.assertEqual(schema["truncation"]["max_value"], 1)
+        self.assertEqual(schema["pasteurization"]["choices"][0]["value"], "ON")
+
     def test_default_platform_module_resolves_in_selected_interpreter(self):
         installed = Path(sysconfig.get_paths()["purelib"]) / "cnhkmcp" / "untracked" / "platform_functions.py"
         if not installed.exists():

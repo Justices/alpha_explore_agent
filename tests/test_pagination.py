@@ -23,6 +23,22 @@ class TestPagination(unittest.TestCase):
                           lambda url: self.fail("unexpected page fetch"),
                           "https://api.worldquantbrain.com")
 
+    def test_uses_verified_offset_when_api_omits_next_link(self):
+        fetched = []
+
+        def fetch(url):
+            fetched.append(url)
+            return {"count": 3, "results": [{"id": "c"}]}
+
+        result = collect_pages(
+            {"count": 3, "results": [{"id": "a"}, {"id": "b"}]}, fetch,
+            "https://api.worldquantbrain.com",
+            next_url_for_offset=lambda offset:
+                f"https://api.worldquantbrain.com/data-fields?limit=2&offset={offset}")
+        self.assertEqual([row["id"] for row in result["results"]], ["a", "b", "c"])
+        self.assertEqual(fetched, [
+            "https://api.worldquantbrain.com/data-fields?limit=2&offset=2"])
+
     def test_rejects_cross_origin_next_link(self):
         with self.assertRaises(PaginationError):
             collect_pages({"count": 2, "results": [{"id": "a"}],

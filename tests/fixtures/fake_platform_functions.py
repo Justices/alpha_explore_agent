@@ -32,8 +32,29 @@ class _Session:
 
     def get(self, url, **kwargs):
         class Response:
+            def raise_for_status(self):
+                return None
+
             def json(self):
+                if url.endswith("/data-sets/analyst14"):
+                    return {"id": "analyst14", "name": "Estimates",
+                            "region": "GLB", "delay": 1, "universe": "TOP3000"}
                 return {"count": 3, "results": [{"id": "field_c"}], "next": None}
+        return Response()
+
+    def options(self, url, **kwargs):
+        class Response:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"actions": {"POST": {"settings": {"children": {
+                    "decay": {"type": "integer", "min_value": 0, "max_value": 50},
+                    "truncation": {"type": "decimal", "min_value": 0,
+                                   "max_value": 1},
+                    "pasteurization": {"type": "choice", "choices": [
+                        {"value": "ON"}, {"value": "OFF"}]},
+                }}}}}
         return Response()
 
 
@@ -70,7 +91,7 @@ def get_platform_setting_options(**kw):
 
 def get_datafields(**kw):
     return {"count": 3, "results": [{"id": "field_a"}, {"id": "field_b"}],
-            "next": "https://api.worldquantbrain.com/data-fields?offset=2"}
+            "next": None}
 
 
 def get_operators(**kw):

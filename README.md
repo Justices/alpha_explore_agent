@@ -6,10 +6,17 @@ scope, Dataset, fields, expressions and gate evidence, records the proposed
 hypothesis before simulation, and can recover an interrupted batch without
 blindly reposting it. It has no Alpha submission or property mutation command.
 
-The two files in `design/` are design references. The current research rules
+The files in `design/` are historical design references. The current research rules
 come from `D:\quant\brain-flow\AGENTS.md`; `D:\quant\brain-flow\scripts`
 is a reference for existing capabilities and evidence semantics. This is a
 separate runtime in this repository and does not execute those scripts.
+
+Dataset admission reads the exact-scope `/data-sets` catalog and then the
+selected `/data-sets/{dataset_id}` detail. The detail's `data` list must contain
+the chosen Region, Delay and Universe before fields are admitted. The catalog
+query must not use a Dataset ID as a `search` term; the live API returned HTTP
+400 for that combination in the GLB/analyst69 preflight. Fixed Dataset IDs are
+matched against the complete catalog locally.
 
 ## Current boundary
 
@@ -69,8 +76,23 @@ Fill the explicit scope values using live supported settings. A missing Region
 blocks research. The model URL is HTTPS; `json_http` accepts a JSON request
 with `task`, `context`, and `instruction`, and must return
 `{"result": { ... decision ... }}`. `openai_compatible` uses a chat completion
-wire format and a configured model name. Implementing `complete_json(task,
+wire format and a configured model name. `anthropic_compatible` accepts an
+Anthropic Messages base URL (the client appends `/v1/messages`), sends the key
+through `x-api-key`, and reads JSON from response text blocks. A response may
+contain a single fenced JSON block with surrounding explanation; ambiguous or
+invalid decisions are rejected and their text is saved in the local model call
+error record for diagnosis. Implementing `complete_json(task,
 context)` is the extension point for other services.
+
+The current bounded pilot configuration is
+[`D:\quant\nastu_quant_state\config\nastu_quant.json`](D:\quant\nastu_quant_state\config\nastu_quant.json):
+GLB / D1 / TOPDIV3000 / analyst69, Anthropic-compatible BigModel endpoint,
+model `glm-5.3`, API key environment variable `BIGMODEL_API_KEY`. The exact
+Dataset and 779 fields were observed in the live GLB/D1/TOPDIV3000 catalog.
+The pilot credentials are supplied only to the launched process; neither key
+nor password is written to this repository. A fixed Dataset pilot cannot by
+itself satisfy the three-Dataset exploration target. Consult the saved batch
+artifacts before claiming any live backtest or Candidate result.
 
 Set `NASTU_QUANT_CREDENTIAL_FILE` to an external JSON file containing the
 BRAIN email and password. Set the configured model API key environment variable
@@ -107,6 +129,11 @@ An unfinished batch blocks a fresh `run-once`. `recover` checks the saved
 intent, pre-registration hash, and local result or platform account records;
 it does not repost a possibly submitted expression. A draft with **no**
 simulation intent can be archived while preserving its files:
+
+If a read-only platform call reports expired authentication, Gateway performs
+one credential-file reauthentication and retries that read once. A simulation
+call is never reposted after an authentication error; its saved intent must be
+reconciled first.
 
 ```powershell
 D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state void <batch-directory> --reason 'invalid model proposal'

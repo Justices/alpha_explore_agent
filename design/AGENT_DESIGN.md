@@ -1,4 +1,14 @@
-# nastu_quant — Alpha 探索 Agent 设计文档
+# nastu_quant — Alpha 探索 Agent 原始设计文档
+
+> **当前口径（2026-10-27）**：本文保留最初的 Muse harness 与组件化设计，
+> 是参考输入，不描述当前程序的实际架构。用户已选择独立 Python 模型程序；
+> 运行时入口是 `python -m nastu_quant`，模型服务由 JSON 配置选择，
+> 状态根由 `--state-root` 指定并位于代码仓库之外。当前代码在
+> `src/nastu_quant/`，研究规则以 `D:\quant\brain-flow\AGENTS.md` 为准。
+> 下文固定 Scope、严格 `<0.70` 的单项相关阈值、YAML 配置、
+> `set_alpha_properties` 白名单、Reporter/TrafficWatch 等描述属于旧设计；
+> 当前实现范围与未完成项以 `README.md` 为准。当前固定 Dataset 试运行
+> 为 GLB / D1 / TOPDIV3000 / analyst69。
 
 | 项 | 内容 |
 |---|---|

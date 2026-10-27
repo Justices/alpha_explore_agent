@@ -255,11 +255,22 @@ class ResearchAgent:
         if not isinstance(combos, list) or not combos:
             raise ResearchError("live platform setting options unavailable")
         effective = dict(scope)
-        if any(effective.get(key) is None for key in ("universe", "delay", "neutralization")):
+        schema = self.gateway.call("get_simulation_settings_schema")
+        if not isinstance(schema, dict):
+            raise ResearchError("live simulation settings schema unavailable")
+        selected_keys = ("universe", "delay", "neutralization", "decay",
+                         "truncation", "pasteurization")
+        if any(effective.get(key) is None for key in selected_keys):
             selected = self._decide("select_scope", {
                 "objective": objective, "supplied_scope": scope,
-                "supported_combinations": combos})
-            for key in ("universe", "delay", "neutralization"):
+                "supported_combinations": combos,
+                "supported_settings_schema": {
+                    key: schema.get(key) for key in
+                    ("decay", "truncation", "pasteurization")}})
+            if not isinstance(selected.get("reason"), str) or not selected["reason"].strip():
+                raise ResearchError("effective setting selection needs an economic reason")
+            effective["_settings_reason"] = selected["reason"]
+            for key in selected_keys:
                 if effective.get(key) is None:
                     effective[key] = selected.get(key)
         selected_row = next((row for row in combos if isinstance(row, dict)
@@ -272,6 +283,25 @@ class ResearchAgent:
         if selected_row is None:
             raise ResearchError("effective scope is not a live supported combination")
         effective["_supported_neutralizations"] = selected_row["Neutralization"]
+        for key in ("decay", "truncation"):
+            rule = schema.get(key)
+            value = effective.get(key)
+            expected = int if key == "decay" else (int, float)
+            if (not isinstance(rule, dict) or not isinstance(value, expected)
+                    or isinstance(value, bool)
+                    or not isinstance(rule.get("minValue"), (int, float))
+                    or not isinstance(rule.get("maxValue"), (int, float))
+                    or not rule["minValue"] <= value <= rule["maxValue"]):
+                raise ResearchError(f"{key} out of range for live simulation settings")
+        for key, platform_key in (("pasteurization", "pasteurization"),
+                                  ("unit_handling", "unitHandling"),
+                                  ("nan_handling", "nanHandling"),
+                                  ("max_trade", "maxTrade")):
+            rule = schema.get(platform_key)
+            choices = (rule.get("choices") if isinstance(rule, dict) else None)
+            if (not isinstance(choices, list) or effective.get(key) not in
+                    {row.get("value") for row in choices if isinstance(row, dict)}):
+                raise ResearchError(f"{key} is not a live supported setting")
         for key in ("decay", "truncation", "pasteurization",
                     "unit_handling", "nan_handling", "test_period", "max_trade"):
             if effective.get(key) is None:
@@ -939,6 +969,15 @@ class ResearchAgent:
                     "fixed Dataset")}
             if dataset_id not in available:
                 raise ResearchError(f"Dataset not available in exact scope: {dataset_id}")
+            detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
+            exact_data = [row for row in detail.get("data", [])
+                          if isinstance(row, dict)
+                          and row.get("region") == scope["region"]
+                          and row.get("delay") == scope["delay"]
+                          and row.get("universe") == scope["universe"]]
+            if detail.get("id") != dataset_id or not exact_data:
+                raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
+            dataset_selection["detail_scope"] = exact_data[0]
             self.campaigns.update(
                 campaign_id, current_dataset=dataset_id, dataset_state="selected",
                 selection_mode=dataset_selection["mode"],
