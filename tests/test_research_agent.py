@@ -195,11 +195,20 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(intent["status"], "SUBMITTING")
         with self.assertRaises(ResearchError):
             agent.run_once("slow lending signal", dataset_id="risk60")
+        # Platform records carry settings in the platform's own
+        # (camelCase) key shape, not the intent's snake_case shape.
+        platform_keys = {"instrument_type": "instrumentType",
+                         "unit_handling": "unitHandling",
+                         "nan_handling": "nanHandling",
+                         "test_period": "testPeriod",
+                         "max_trade": "maxTrade"}
+        platform_settings = {platform_keys.get(k, k): v
+                             for k, v in intent["settings"].items()}
         self.gateway.recent_alphas = [
             {"id": "A1", "regular": {"code": "rank(signal_a)"},
-             "settings": intent["settings"]},
+             "settings": platform_settings},
             {"id": "A2", "regular": {"code": "rank(signal_b)"},
-             "settings": intent["settings"]},
+             "settings": platform_settings},
         ]
         recovered = agent.recover(batch)
         self.assertEqual(recovered["alpha_ids"], ["A1", "A2"])

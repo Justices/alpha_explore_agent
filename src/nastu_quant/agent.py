@@ -10,7 +10,7 @@ import re
 
 from .state_store import atomic_write_json, lock_prereg, verify_prereg
 from .validator import validate
-from .recovery import match_alphas
+from .recovery import match_alphas, match_alphas_detailed
 from .gatekeeper import evaluate_candidate, parse_correlations
 import json
 
@@ -204,10 +204,14 @@ class ResearchAgent:
                 break
         else:
             raise ResearchError("account listing incomplete; recovery remains pending")
-        matched, missing = match_alphas(expressions, intent["settings"], recent)
+        matched, missing, match_notes = match_alphas_detailed(
+            expressions, intent["settings"], recent)
         atomic_write_json(batch_dir / "recovery.json", {
             "matched": {expr: row.get("id") for expr, row in matched.items()},
-            "missing": missing})
+            "missing": missing,
+            "settings_missing_keys": {
+                expr: match_notes[expr] for expr in matched
+                if expr in match_notes}})
         if missing:
             raise ResearchError("platform reconciliation incomplete; no simulation reposted")
         alpha_ids = [matched[expr]["id"] for expr in expressions]
