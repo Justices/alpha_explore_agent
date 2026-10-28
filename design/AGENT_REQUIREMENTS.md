@@ -1,9 +1,9 @@
 # nastu_quant — Alpha 探索 Agent 原始需求规格说明书
 
-> **当前口径（2026-10-27）**：本文是最初的需求输入，保留历史决策供追溯，
-> 不再是研究规则的唯一依据。研究执行以
-> `D:\quant\brain-flow\AGENTS.md` 的当前版本为准；用户已明确选择
-> 独立 Python 模型程序，通过配置切换服务。下文固定 GLB/TOP3000/D1、
+> **当前口径（2026-10-28）**：本文是本项目的需求输入，保留历史决策供追溯；
+> 本项目研究规则以仓库根目录 `AGENTS.md` 为准。用户已明确选择
+> 独立 Python 模型程序，通过配置切换服务；BRAIN 操作复用
+> `BRAIN_FLOW_HOME/scripts`。下文固定 GLB/TOP3000/D1、
 > Muse harness、六项必做模拟、非 CHN Sharpe `>=1.58`、
 > production/self correlation `<0.70` 等旧口径均已失效。
 > 当前规则为显式 Region、其余 Scope 按有效设置核验、诊断按缺口进行、

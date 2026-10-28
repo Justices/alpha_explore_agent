@@ -3,22 +3,30 @@ process. Enforces the command whitelist client-side and the RA-Gate
 precondition for correlation checks before anything reaches the driver.
 """
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 from .gatekeeper import assert_correlation_allowed
+from .paths import expand_path
 
 WHITELIST = {
     "get_platform_setting_options",
     "get_simulation_settings_schema",
     "get_datasets", "get_dataset_details", "get_datafields", "get_operators",
-    "create_simulation", "create_multi_simulation",
+    "set_case", "validate_simulation_settings", "simulate_batch",
+    "resume_simulation_batch", "audit_alphas",
     "get_alpha_details", "get_alpha_pnl", "get_alpha_yearly_stats",
     "check_correlation", "get_user_alphas",
 }
-READ_ONLY_COMMANDS = WHITELIST - {"create_simulation", "create_multi_simulation"}
-INTERNAL_COMMANDS = {"reauth", "shutdown"}
+READ_ONLY_COMMANDS = {
+    "get_platform_setting_options", "get_simulation_settings_schema",
+    "get_datasets", "get_dataset_details", "get_datafields", "get_operators",
+    "validate_simulation_settings", "get_alpha_details", "get_alpha_pnl",
+    "get_alpha_yearly_stats", "check_correlation", "get_user_alphas",
+    "audit_alphas",
+}
 
 
 class GatewayError(RuntimeError):
@@ -35,13 +43,28 @@ class Gateway:
         self.auth_info = None
 
     def start(self) -> dict:
+        interpreter = os.environ.get("BRAIN_PYTHON")
+        if not interpreter:
+            raise GatewayError("BRAIN_PYTHON must point to the brain-flow interpreter")
+        interpreter_path = expand_path(interpreter).resolve()
+        if not interpreter_path.is_absolute() or not interpreter_path.is_file():
+            raise GatewayError("BRAIN_PYTHON must identify an existing absolute interpreter")
+        source_root = Path(__file__).resolve().parents[1]
+        brain_flow_home = os.environ.get("BRAIN_FLOW_HOME")
+        python_path = [str(source_root)]
+        if brain_flow_home:
+            python_path.insert(0, str(expand_path(brain_flow_home).resolve() / "scripts"))
+        if os.environ.get("PYTHONPATH"):
+            python_path.append(os.environ["PYTHONPATH"])
+        env = os.environ.copy()
+        env["PYTHONPATH"] = os.pathsep.join(python_path)
         self.proc = subprocess.Popen(
-            [sys.executable, str(self.driver_path)],
+            [str(interpreter_path), str(self.driver_path)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            text=True, bufsize=1)
+            text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
         self.auth_info = self._read_response()
         if not self.auth_info.get("ok"):
-            raise GatewayError(f"driver auth failed: {self.auth_info}")
+            raise GatewayError(f"brain-flow runtime unavailable: {self.auth_info}")
         return self.auth_info
 
     def _read_response(self) -> dict:
@@ -70,25 +93,9 @@ class Gateway:
         if self.proc is None or self.proc.poll() is not None:
             raise GatewayError("driver is not running")
         resp = self._send({"cmd": cmd, **params})
-        error = str(resp.get("error", ""))
-        if not resp.get("ok") and ("401" in error or "unauthorized" in error.lower()):
-            self.reauth()
-            if cmd in READ_ONLY_COMMANDS:
-                resp = self._send({"cmd": cmd, **params})
-            else:
-                raise GatewayError(
-                    f"{cmd} authentication expired; reconcile saved simulation intent before retry")
         if not resp.get("ok"):
             raise GatewayError(f"{cmd} failed: {resp.get('error')}")
         return resp.get("result", resp)
-
-    def reauth(self) -> dict:
-        """Ask the driver to re-run the FR-01 cascade's level 2
-        (it re-reads the credential file itself; no secrets pass here)."""
-        resp = self._send({"cmd": "reauth"})
-        if not resp.get("ok"):
-            raise GatewayError(f"reauth failed: {resp.get('error')}")
-        return resp
 
     def shutdown(self) -> None:
         if self.proc and self.proc.poll() is None:

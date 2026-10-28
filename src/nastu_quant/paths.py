@@ -1,19 +1,46 @@
 """Path and naming rules (AGENT_DESIGN.md §5.1 / §5.2, NFR-07).
 
-State root lives OUTSIDE this code repository (default
-~/workspace/nastu_quant) so runtime state — above all the session
-cookie — is never committed to version control.
+Runtime state lives in the operating system's per-user state directory by
+default, outside this repository. ``NASTU_QUANT_HOME`` can override it.
 """
 import os
 import re
-from datetime import datetime
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-TZ = ZoneInfo("Asia/Shanghai")
+try:
+    TZ = ZoneInfo("Asia/Shanghai")
+except ZoneInfoNotFoundError:  # Windows Python may not ship an IANA time-zone database.
+    TZ = timezone(timedelta(hours=8), name="Asia/Shanghai")
 
-STATE_ROOT = Path(os.environ.get(
-    "NASTU_QUANT_HOME", str(Path.home() / "workspace" / "nastu_quant")))
+
+def expand_path(value) -> Path:
+    """Expand a user path consistently on Windows, macOS, and Linux."""
+    raw = os.path.expandvars(os.fspath(value))
+    # Also accept Windows-style %NAME% values in config files used on POSIX.
+    raw = re.sub(r"%([A-Za-z_][A-Za-z0-9_]*)%",
+                 lambda match: os.environ.get(match.group(1), match.group(0)), raw)
+    return Path(raw).expanduser()
+
+
+def default_state_root() -> Path:
+    """Return a per-user state location following each OS's conventions."""
+    configured = os.environ.get("NASTU_QUANT_HOME")
+    if configured:
+        return expand_path(configured).resolve()
+
+    if os.name == "nt":
+        base = os.environ.get("LOCALAPPDATA") or (Path.home() / "AppData" / "Local")
+    elif sys.platform == "darwin":
+        base = Path.home() / "Library" / "Application Support"
+    else:
+        base = os.environ.get("XDG_STATE_HOME") or (Path.home() / ".local" / "state")
+    return (expand_path(base) / "nastu_quant").resolve()
+
+
+STATE_ROOT = default_state_root()
 
 PRODUCT_TYPES = {
     "probe_report", "prereg", "verdicts",

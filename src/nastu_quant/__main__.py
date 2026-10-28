@@ -4,21 +4,22 @@ import json
 import os
 import re
 import sys
-from pathlib import Path
-
 from .agent import ResearchAgent
 from .gateway import Gateway
 from .model_client import ConfiguredModelClient
 from .campaign import SingleWriterLock, WriterLockError
 from .knowledge import KnowledgeService
+from .paths import default_state_root, expand_path
+
+
+def _path_argument(value):
+    return expand_path(value)
 
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="nastu_quant")
-    parser.add_argument("--state-root", type=Path,
-                        default=Path(os.environ.get("NASTU_QUANT_HOME",
-                                                    Path.home() / "workspace" / "nastu_quant")))
-    parser.add_argument("--config", type=Path)
+    parser.add_argument("--state-root", type=_path_argument, default=default_state_root())
+    parser.add_argument("--config", type=_path_argument)
     sub = parser.add_subparsers(dest="command", required=True)
     run = sub.add_parser("run-once", help="execute one admitted research batch")
     run.add_argument("--objective", required=True)
@@ -34,9 +35,9 @@ def main(argv=None):
     series.add_argument("--remedy-id")
     series.add_argument("--allow-remedy-round-overrun", action="store_true")
     recovery = sub.add_parser("recover", help="reconcile an unfinished batch")
-    recovery.add_argument("batch_dir", type=Path)
+    recovery.add_argument("batch_dir", type=_path_argument)
     void = sub.add_parser("void", help="archive an unsubmitted draft")
-    void.add_argument("batch_dir", type=Path)
+    void.add_argument("batch_dir", type=_path_argument)
     void.add_argument("--reason", required=True)
     validity = sub.add_parser("evidence-validity",
                               help="mark an indexed evidence item with an explicit validity")
@@ -59,7 +60,7 @@ def main(argv=None):
     note_put = note_sub.add_parser("put", help="add or explicitly replace an exact note")
     note_put.add_argument("--kind", choices=("operator", "field"), required=True)
     note_put.add_argument("--key", required=True)
-    note_put.add_argument("--content-file", type=Path, required=True)
+    note_put.add_argument("--content-file", type=_path_argument, required=True)
     note_put.add_argument("--source", required=True)
     note_put.add_argument("--date", default="unknown")
     note_put.add_argument("--validity", choices=("valid", "void", "falsified", "pending"),
@@ -70,7 +71,7 @@ def main(argv=None):
     remedy = knowledge_sub.add_parser("remedy", help="register and review remedies")
     remedy_sub = remedy.add_subparsers(dest="remedy_command", required=True)
     remedy_add = remedy_sub.add_parser("add", help="register a remedy as pending review")
-    remedy_add.add_argument("--file", type=Path, required=True)
+    remedy_add.add_argument("--file", type=_path_argument, required=True)
     remedy_add.add_argument("--operator", default="user")
     remedy_review = remedy_sub.add_parser("review", help="review a registered remedy")
     remedy_review.add_argument("--id", required=True)
@@ -228,6 +229,20 @@ def main(argv=None):
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
     os.environ["NASTU_QUANT_STATE_DIR"] = str(root / "state")
+    knowledge_cfg = cfg.get("knowledge") or {}
+    configured_flow_root = knowledge_cfg.get("brain_flow_root")
+    if configured_flow_root:
+        os.environ["BRAIN_FLOW_HOME"] = str(expand_path(configured_flow_root).resolve())
+    elif os.environ.get("BRAIN_FLOW_HOME"):
+        os.environ["BRAIN_FLOW_HOME"] = str(expand_path(os.environ["BRAIN_FLOW_HOME"]).resolve())
+    if os.environ.get("BRAIN_PYTHON"):
+        os.environ["BRAIN_PYTHON"] = str(expand_path(os.environ["BRAIN_PYTHON"]).resolve())
+    credential_env = (cfg.get("auth") or {}).get("credential_env", "BRAIN_CREDENTIALS_FILE")
+    if not os.environ.get("BRAIN_CREDENTIALS_FILE") and credential_env:
+        configured_credentials = os.environ.get(credential_env)
+        if configured_credentials:
+            os.environ["BRAIN_CREDENTIALS_FILE"] = str(
+                expand_path(configured_credentials).resolve())
     gateway = Gateway()
     agent = ResearchAgent(gateway, model, cfg, root / "runs",
                           stop_flag=stop_flag)

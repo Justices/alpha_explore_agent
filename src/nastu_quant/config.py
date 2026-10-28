@@ -43,15 +43,15 @@ DEFAULT_CONFIG = {
     },
     "probe": {"windows": [5, 66]},
     "exec": {"multisim_wait_threshold_s": 1200},
-    "auth": {"mode": "auto", "credential_env": "NASTU_QUANT_CREDENTIAL_FILE"},
+    "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
     "model": {"provider": None, "url": None, "model": None,
               "api_key_env": "NASTU_QUANT_MODEL_API_KEY"},
     "knowledge": {
-        "canonical_rules_path": r"D:\quant\brain-flow\AGENTS.md",
-        "construction_advisory_path": r"C:\Users\HP\Downloads\ALPHA_CONSTRUCTION_ADVISORY.md",
-        "prior_knowledge_path": r"D:\quant\brain-flow\RESEARCH_MEMORY.md",
-        "operator_root": r"D:\quant\brain-flow\knowledge_base\operator",
-        "field_root": r"D:\quant\brain-flow\knowledge_base\data_fields",
+        "brain_flow_root": None,
+        "construction_advisory_path": None,
+        "prior_knowledge_path": None,
+        "operator_root": None,
+        "field_root": None,
     },
 }
 

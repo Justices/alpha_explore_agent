@@ -15,6 +15,7 @@ import os
 from pathlib import Path
 import re
 
+from .paths import expand_path
 from .state_store import atomic_write_json, verify_prereg
 
 
@@ -26,39 +27,32 @@ VALIDITY = {"valid", "void", "falsified", "pending"}
 CORE_TAGS = ("dataset_id", "mechanism", "failure_signature", "field_generation")
 
 RULE_MAP = {
-    "select_scope": [("canonical", "## 2. Research Scope")],
-    "select_dataset": [("canonical", "## 2. Research Scope"),
-                       ("canonical", "## 3. Canonical workflow")],
-    "plan_probes": [("canonical", "### Field exploration before expression design (Regular, including PPA)")],
+    "select_scope": [("canonical", "Research scope and evidence"),
+                     ("canonical", "Model and platform responsibilities")],
+    "select_dataset": [("canonical", "Research scope and evidence"),
+                       ("canonical", "Model and platform responsibilities")],
+    "plan_probes": [("canonical", "Research scope and evidence"),
+                    ("canonical", "Model and platform responsibilities")],
     "construct_batch": [
-        ("canonical", "## 3. Canonical workflow"),
-        ("canonical", "## 4. Field iron laws"),
-        ("canonical", "## 5. Expression and operator iron laws"),
-        ("canonical", "## 6. Batch execution and preliminary classifications"),
-        ("canonical", "## 9. Optimization Hypothesis Gate"),
-        ("canonical", "## 10. Optimization budgets and tuning"),
+        ("canonical", "Model and platform responsibilities"),
+        ("canonical", "Research scope and evidence"),
         ("advisory", "## 一、回测设置"),
         ("advisory", "## 二、模型的选择"),
         ("advisory", "## 三、时序窗口与日期的选择依赖"),
         ("advisory", "## 四、Alpha 优化方法论"),
     ],
     "attribute_results": [
-        ("canonical", "## 3. Canonical workflow"),
-        ("canonical", "## 9. Optimization Hypothesis Gate"),
-        ("canonical", "## 10. Optimization budgets and tuning"),
-        ("canonical", "## 11. Robustness evidence and references"),
+        ("canonical", "Model and platform responsibilities"),
+        ("canonical", "Research scope and evidence"),
         ("advisory", "## 四、Alpha 优化方法论"),
     ],
     "diagnose_failures": [
-        ("canonical", "## 9. Optimization Hypothesis Gate"),
-        ("canonical", "## 10. Optimization budgets and tuning"),
-        ("canonical", "## 11. Robustness evidence and references"),
-        ("canonical", "## 12. Non-blocking reviews"),
+        ("canonical", "Research scope and evidence"),
+        ("canonical", "Model and platform responsibilities"),
     ],
-    "review_candidate": [("canonical", "## 12. Non-blocking reviews")],
-    "decide_next": [("canonical", "## 3. Canonical workflow"),
-                    ("canonical", "## 9. Optimization Hypothesis Gate"),
-                    ("canonical", "## 10. Optimization budgets and tuning")],
+    "review_candidate": [("canonical", "Research scope and evidence")],
+    "decide_next": [("canonical", "Research scope and evidence"),
+                    ("canonical", "Model and platform responsibilities")],
 }
 
 
@@ -114,24 +108,43 @@ class KnowledgeService:
         cfg = config or {}
         self.cfg = cfg.get("knowledge", {})
         self.knowledge_root = self.state_root / "knowledge"
-        self.canonical_path = Path(self.cfg.get(
-            "canonical_rules_path", r"D:\quant\brain-flow\AGENTS.md"))
-        self.advisory_path = Path(self.cfg.get(
-            "construction_advisory_path",
-            r"C:\Users\HP\Downloads\ALPHA_CONSTRUCTION_ADVISORY.md"))
-        self.prior_knowledge_path = Path(self.cfg.get(
-            "prior_knowledge_path", r"D:\quant\brain-flow\RESEARCH_MEMORY.md"))
-        self.operator_root = Path(self.cfg.get(
-            "operator_root", r"D:\quant\brain-flow\knowledge_base\operator"))
-        self.field_root = Path(self.cfg.get(
-            "field_root", r"D:\quant\brain-flow\knowledge_base\data_fields"))
+        self.project_root = Path(__file__).resolve().parents[2]
+        configured_root = self.cfg.get("brain_flow_root") or os.environ.get("BRAIN_FLOW_HOME")
+        self.brain_flow_root = self._resolve_path(configured_root) if configured_root else None
+        self.canonical_path = self.project_root / "AGENTS.md"
+        self.advisory_path = self._knowledge_path("construction_advisory_path")
+        self.prior_knowledge_path = self._knowledge_path(
+            "prior_knowledge_path", "RESEARCH_MEMORY.md")
+        self.operator_root = self._knowledge_path(
+            "operator_root", "knowledge_base", "operator")
+        self.field_root = self._knowledge_path(
+            "field_root", "knowledge_base", "data_fields")
         self.operator_notes_path = self.knowledge_root / "operator_notes.json"
         self.field_notes_path = self.knowledge_root / "field_notes.json"
         self.remedies_path = self.knowledge_root / "remedies.json"
         self.index_path = self.knowledge_root / "evidence_index.json"
         self.validity_path = self.knowledge_root / "evidence_validity.json"
 
-    def _read_source(self, path: Path, *, required: bool):
+    def _resolve_path(self, value):
+        path = expand_path(value)
+        if not path.is_absolute():
+            path = self.state_root / path
+        return path.resolve()
+
+    def _knowledge_path(self, key, *root_parts):
+        configured = self.cfg.get(key)
+        if configured:
+            return self._resolve_path(configured)
+        if self.brain_flow_root is not None and root_parts:
+            return self.brain_flow_root.joinpath(*root_parts)
+        return None
+
+    def _read_source(self, path: Path | None, *, required: bool):
+        if path is None:
+            if required:
+                raise KnowledgeError(
+                    "this project's AGENTS.md is unavailable; restore it in the project root")
+            return None
         try:
             raw = path.read_bytes()
         except OSError as exc:
@@ -187,7 +200,9 @@ class KnowledgeService:
             if (isinstance(entry, dict) and entry.get("content") and entry.get("source")
                     and entry.get("validity", "valid") == "valid"):
                 return {**entry, "name": name, "validity": entry.get("validity", "valid")}
-        for path in sorted(self.operator_root.rglob("*.json")) if self.operator_root.exists() else []:
+        operator_json = (sorted(self.operator_root.rglob("*.json"))
+                         if self.operator_root and self.operator_root.exists() else [])
+        for path in operator_json:
             source = self._read_source(path, required=False)
             if source is None:
                 continue
@@ -211,7 +226,9 @@ class KnowledgeService:
                                 "source_kind": "operator_reference",
                                 "sha256": source["sha256"]}
         # Search exact identifier mentions, not prose about a broad operator family.
-        for path in sorted(self.operator_root.rglob("*.md")) if self.operator_root.exists() else []:
+        operator_markdown = (sorted(self.operator_root.rglob("*.md"))
+                             if self.operator_root and self.operator_root.exists() else [])
+        for path in operator_markdown:
             source = self._read_source(path, required=False)
             if source is None:
                 continue
@@ -240,7 +257,9 @@ class KnowledgeService:
                         "validity": note.get("validity", "valid")}
         # Snapshots contribute identifiers and types only. Their platform facts
         # are deliberately excluded from model evidence and never override live API.
-        for path in sorted(self.field_root.rglob("*.json")) if self.field_root.exists() else []:
+        field_snapshots = (sorted(self.field_root.rglob("*.json"))
+                           if self.field_root and self.field_root.exists() else [])
+        for path in field_snapshots:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8-sig"))
             except (OSError, ValueError):
@@ -274,8 +293,9 @@ class KnowledgeService:
         source = self._read_source(self.prior_knowledge_path, required=False)
         if source is None:
             return []
-        known_datasets = {path.stem for path in self.field_root.rglob("*.json")
-                          if path.is_file() and not path.stem.startswith("_")}
+        known_datasets = ({path.stem for path in self.field_root.rglob("*.json")
+                           if path.is_file() and not path.stem.startswith("_")}
+                          if self.field_root and self.field_root.exists() else set())
         lines = source["text"].splitlines()
         headings = []
         for index, line in enumerate(lines):

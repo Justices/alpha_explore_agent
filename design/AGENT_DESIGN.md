@@ -1,10 +1,13 @@
 # nastu_quant — Alpha 探索 Agent 原始设计文档
 
-> **当前口径（2026-10-27）**：本文保留最初的 Muse harness 与组件化设计，
-> 是参考输入，不描述当前程序的实际架构。用户已选择独立 Python 模型程序；
-> 运行时入口是 `python -m nastu_quant`，模型服务由 JSON 配置选择，
-> 状态根由 `--state-root` 指定并位于代码仓库之外。当前代码在
-> `src/nastu_quant/`，研究规则以 `D:\quant\brain-flow\AGENTS.md` 为准。
+> **当前口径（2026-10-28）**：本文保留早期 Muse harness 与组件化设计，
+> 只作为参考输入。实际研究规则以仓库根目录 `AGENTS.md` 为准，运行时入口为
+> `python -m nastu_quant`，BigModel 等模型服务通过 JSON 配置选择。BRAIN 目录、
+> 字段、算子、模拟、恢复和最终审计接入 `BRAIN_FLOW_HOME/scripts`；必要只读
+> 回退经 `brain_session.py`。本项目不维护第二份 BRAIN 登录状态，也不直接
+> 调用平台模拟创建接口。旧固定 scope、cookie/AuthManager、Alpha 属性标记、
+> YAML 配置、Reporter/TrafficWatch 等条目不代表当前行为；当前实现范围以
+> `AGENTS.md` 和 `README.md` 为准。
 > 下文固定 Scope、严格 `<0.70` 的单项相关阈值、YAML 配置、
 > `set_alpha_properties` 白名单、Reporter/TrafficWatch 等描述属于旧设计；
 > 当前实现范围与未完成项以 `README.md` 为准。当前固定 Dataset 试运行
@@ -189,32 +192,31 @@ CREATED ──► SIMULATED ──► CLASSIFIED ──► BELOW_THRESHOLD（终
 
 ### 4.1 Gateway 与 driver 协议
 
-沿用现行 brain_driver.py 的协议形态：
+Gateway 与本项目的 adapter driver 使用 stdin/stdout 逐行 JSON 协议；driver
+只负责把请求转给 `BRAIN_FLOW_HOME/scripts` 或共享只读会话，不持有第二套
+BRAIN 认证与 Cookie 状态：
 
 - 传输：子进程 stdin/stdout，逐行 JSON；请求
   `{"cmd": <命令>, ...参数}`，响应 `{"ok": bool, ...}`；
-- 长命令（create_multi_simulation 等）阻塞期间，Gateway
-  以批次状态 RUNNING 落盘等待，不并发发送其他命令；
-- driver 进程异常退出时，Gateway 报错给 Orchestrator，
-  由恢复流程重启进程并先做会话恢复，再对账（§6.3）。
+- Dataset、field 和 operator 目录通过 brain-flow 的现有脚本获取；
+- 表达式准入、模拟、模拟恢复和最终 Alpha 审计分别使用
+  `simulate_batch.py`、同一脚本的 `--resume` 和 `audit_alphas.py`；
+- 没有脚本入口的必要只读查询，经 `brain_session.py` 共享会话执行；
+- driver 或脚本异常时，Gateway 将失败交给 Orchestrator，由 §6.3
+  恢复流程处理；任何不确定的提交状态都不得直接重发。
 
 ### 4.2 白名单命令表（FR-02 的设计产出）
 
 | 命令 | 用途 | 备注 |
 |---|---|---|
-| get_datasets | 数据集 live 核验与目录 | 准入第一步 |
-| get_datafields | 字段目录 | |
-| get_operators | 算子清单 | Validator 数据源之一 |
-| create_simulation | 单条模拟（探针/回退） | 参数名 regular |
-| create_multi_simulation | 批量模拟 | 参数名 alpha_expressions |
-| get_alpha_details | 指标提取 | |
-| get_alpha_pnl | PnL（归因辅助） | |
-| get_alpha_yearly_stats | 分年度指标 | |
-| get_submission_check | RA 检查项 | Gatekeeper 专用 |
-| check_correlation | 相关性检查 | Gateway 状态前置校验（§3.3） |
-| get_user_alphas | 账户盘点/找回对账 | |
-| set_alpha_properties | 给本系统 Alpha 打批次标记 | TrafficWatch 使用 |
-| reauth | 会话重连（内部命令） | 由 AuthManager 触发，凭据不经主控 |
+| get_datasets / get_datafields / get_operators | 现有 brain-flow 脚本目录查询 | 输出落在 brain-flow `runs/<case_key>/sessions/<run_id>/` |
+| validate_simulation_settings | 检查本项目设置能否被脚本原样表达 | 不发平台请求 |
+| simulate_batch | 调用 `simulate_batch.py` 准入并执行 | 不直连平台创建接口 |
+| resume_simulation_batch | 调用 `simulate_batch.py --resume` | 只续接已保存的模拟 URL |
+| audit_alphas | 调用 `audit_alphas.py --case-spec` | `--no-tag`，不改 Alpha 属性 |
+| get_platform_setting_options / get_simulation_settings_schema | 只读平台设置查询 | 通过 `brain_session.py` |
+| get_dataset_details / get_alpha_details / get_alpha_pnl / get_alpha_yearly_stats / check_correlation / get_user_alphas | 必要的只读回退与账户对账 | 通过 `brain_session.py` |
+| set_case / shutdown | adapter 内部状态与关闭 | 不访问平台写接口 |
 | shutdown | 关闭 driver（内部命令） | |
 
 **不存在的命令**：submit 类能力不在表中、driver 不实现、
@@ -297,32 +299,19 @@ results_raw、results。
 
 ## 6. 关键机制设计
 
-### 6.1 认证两级恢复（FR-01）
+### 6.1 认证与共享会话（FR-01）
 
-```
-会话失效被感知（API 401 / driver 报告未认证）
-  1. AuthManager 读 state/session_cookie.json 注入 driver 重试
-  2. cookie 无效 → 读环境变量路径指向的凭证文件，
-     经 driver 的 reauth 内部通道认证（凭据只在
-     AuthManager 与 driver 之间传递，不进主控上下文、
-     不进日志），成功后回写 cookie 文件（0600）
-  3. 两级失败 → Orchestrator 挂起研究、状态落盘，
-     Reporter 报告 needs_auth 并等待用户处理
-```
-
-改造点：现行 driver 的 reauth 走 stdin 凭据；新实现改为
-AuthManager 将凭证文件内容经同一内部通道送入 driver，
-文件本身不复制。cookie 存放位置由 `~/.cache/` 迁入
-项目内 state/（§5.1），权限保持 0600。会话共享由 cookie
-文件实现：任何组件需会话时都经 Gateway，天然共用同一
-driver 与同一 cookie。
+BRAIN 登录和 Cookie 生命周期由 `brain-flow/scripts/brain_session.py`
+独占管理。本项目通过 `BRAIN_CREDENTIALS_FILE` 提供凭证文件路径；凭证
+内容不进入本项目的 JSON-lines 消息、状态文件或日志。认证失败时研究挂起；
+不得通过重新发起模拟来恢复会话。
 
 ### 6.2 表达式验证集成（FR-07）
 
-- Validator 以库形态复用 alpha_validator.py 的
-  tokenize/Parser/validate：输入表达式、数据集 ID、字段
-  目录（来自 Gateway 的 get_datafields 落盘缓存）与算子
-  清单，输出裁决（PASS/WARNING/REJECT + 拒绝码）。
+- 本地验证用于早期筛除；最终语法、算子和字段准入由
+  `simulate_batch.py` 在发起前重新执行并写 admission receipt。
+- Dataset 与字段证据由现有 `fetch_datasets.py` 和
+  `inspect_fields.py` 生成；同一 case/run 的字段缓存由模拟脚本复核。
 - 字段差/比放行：ResearchDesigner 在预登记中登记理由，
   Validator 以「理由非空且已登记」为放行条件，输出
   WARNING 并把理由写入 verdicts.json。
@@ -332,21 +321,11 @@ driver 与同一 cookie。
 
 ### 6.3 找回协议（FR-08）
 
-触发条件：multisim 提交后超过配置的等待阈值仍无返回，
-或返回的子模拟数少于提交数。
-
-1. Gateway 以 get_user_alphas 按提交时间窗拉取账户近期
-   Alpha；
-2. 以「表达式文本 + 回测设置哈希」为对账键，与本批
-   预登记表达式逐条匹配；
-3. 匹配到的 Alpha 直接登记进批次台账，转入归因；
-4. 确认不存在的表达式才进入单条回退队列逐条提交；
-5. 全过程写入批次 metering 与 gate 之外的执行日志段
-   （记入 results_raw 的 retrieval 节），保证可审计、
-   零重复（对账键唯一性由预登记表达式清单保证）。
-
-driver 进程在此期间被杀的情形：先按 §2.3 重建进程与
-会话，再执行本协议，不先重提。
+1. 调用 `simulate_batch.py --resume <saved URL>` 续接同一个单模拟或
+   MultiSim parent；相同输入和 admission receipt 必须保留；
+2. 如果 runner URL 未能持久化，才用 `get_user_alphas` 做有界只读对账；
+3. 账户记录不完整或无法唯一匹配时，批次保持 unresolved；不得单条回退重发；
+4. runner 日志、URL、输入、结果与 read-back 证据均落在 case/run 目录。
 
 ### 6.4 预登记锁定（FR-06）
 
@@ -394,8 +373,8 @@ Reporter 的批次汇报直接由 metering 记录生成，保证
 
 | 接口 | 调用方 → 被调方 | 契约要点 |
 |---|---|---|
-| 会话保障 | 任意组件 → Gateway | 调用前 Gateway 确保会话有效；失效触发 AuthManager 恢复流程，恢复失败以 needs_auth 错误上抛，调用方挂起而非重试 |
-| 平台命令 | Gateway → driver | §4.1 协议；命令必须在白名单内，Gateway 先校验后转发 |
+| 会话保障 | 任意组件 → Gateway / brain-flow script | BRAIN 登录与 Cookie 由 `brain_session.py` 管理；恢复失败时调用方挂起 |
+| 平台命令 | Gateway → adapter → script/session owner | §4.1 协议；模拟只能通过 `simulate_batch.py`，只读缺口通过共享 session |
 | 准入 | Orchestrator → Admission | 返回 ADMIT/REJECT + 证据文件路径；REJECT 时主链终止于该数据集 |
 | 探针 | Orchestrator → ProbeRunner | 返回探针报告路径 + 约束清单 + 准入判定；约束清单是 ResearchDesigner 的强制输入 |
 | 预登记 | Orchestrator → ResearchDesigner | 起草 → 锁定（返回哈希）；锁定后仅提供只读与作废接口 |
@@ -421,7 +400,7 @@ Reporter 的批次汇报直接由 metering 记录生成，保证
 | probe.windows | [5, 66] | 留痕即可 |
 | exec.multisim_wait_threshold | 按平台常态设定 | 留痕即可 |
 | auth.mode | auto（默认） | 用户操作（见 6.5） |
-| auth.credential_env | NASTU_QUANT_CREDENTIAL_FILE | 用户批准 |
+| auth.credential_env | BRAIN_CREDENTIALS_FILE | 用户配置 |
 
 任一批次启动时，把当时配置快照写入批次文件组
 （并入 gate.json 的 config 节），保证历史批次参数可
@@ -431,8 +410,9 @@ Reporter 的批次汇报直接由 metering 记录生成，保证
 
 | 对象 | 保留 | 改造 |
 |---|---|---|
-| brain_driver.py | JSON-lines 协议、命令字典、JWT 保存逻辑 | ① cookie 路径迁入项目内 state/；② reauth 改为接收 AuthManager 经内部通道送入的凭证（来源为外部凭证文件）；③ 其余不变 |
-| alpha_validator.py | 解析器、规则引擎、CLI 的 check/batch 形态 | 以库形态被 Validator 组件调用；catalog 改为从 Gateway 落盘缓存读取 |
+| brain-flow scripts | Dataset/field/operator 目录、表达式准入、模拟、恢复与最终审计 | 通过 `BRAIN_FLOW_HOME` 和绝对 `BRAIN_PYTHON` 调用；不修改依赖仓库代码 |
+| project adapter driver | JSON-lines 协议、命令白名单 | 不持有 BRAIN Cookie；只读缺口调用 `brain_session.py`，模拟只调用 `simulate_batch.py` |
+| alpha_validator.py | 本地解析器、规则引擎 | 仅早期筛查；执行前的准入由 `simulate_batch.py` 复核 |
 | AGENT_WORKFLOW_DESIGN.md | 角色与流程的早期构想 | 被本文取代，仅作历史参考 |
 | runs/ 现行批次目录 | Batch 1–21 的既有产物 | 不迁移、不改名（历史归档）；新规范自 nastu_quant/runs 起执行 |
 

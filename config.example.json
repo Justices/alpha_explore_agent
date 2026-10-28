@@ -25,7 +25,14 @@
     "self_corr_max": 0.7,
     "pairwise_corr_max": 0.4
   },
-  "auth": {"mode": "auto"},
+  "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
+  "knowledge": {
+    "brain_flow_root": null,
+    "construction_advisory_path": null,
+    "prior_knowledge_path": null,
+    "operator_root": null,
+    "field_root": null
+  },
   "model": {
     "provider": "json_http",
     "url": null,

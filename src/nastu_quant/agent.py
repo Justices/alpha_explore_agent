@@ -40,10 +40,18 @@ def _rows(payload):
     if isinstance(payload, list):
         return payload
     if isinstance(payload, dict):
-        for key in ("results", "result"):
+        for key in ("results", "result", "operators"):
             if key in payload:
                 return _rows(payload[key])
     raise ResearchError("catalog response is not a readable list")
+
+
+def _field_summaries(fields):
+    """Keep field discovery contexts focused while preserving the full saved catalog."""
+    keys = ("id", "type", "description", "coverage", "dateCoverage",
+            "userCount", "alphaCount", "fieldCount", "valueScore")
+    return [{key: row[key] for key in keys if key in row}
+            for row in fields if isinstance(row, dict)]
 
 
 def _catalog(rows, dataset_id):
@@ -375,19 +383,42 @@ class ResearchAgent:
         self._record_completed_expressions(
             expressions, context["dataset_id"], context["scope"], settings)
 
-    def _simulate(self, expressions, settings):
+    @staticmethod
+    def _has_complete_runner_research(research):
+        required = ("idea", "data_rationale", "operator_rationale",
+                    "field_relationship", "settings_rationale",
+                    "expected_behavior", "failure_criterion")
+        return (isinstance(research, dict) and all(
+            isinstance(research.get(key), str) and research[key].strip()
+            for key in required))
+
+    @staticmethod
+    def _normalize_runner_result(result):
+        rows = result.get("results") if isinstance(result, dict) else None
+        if not isinstance(rows, list):
+            raise ResearchError("simulate_batch.py returned no result rows")
+        normalized = []
+        for row in rows:
+            if not isinstance(row, dict):
+                normalized.append(row)
+                continue
+            item = dict(row)
+            if not isinstance(item.get("details"), dict):
+                item["details"] = {"is": item.get("is")}
+            normalized.append(item)
+        return {"alpha_results": normalized,
+                "runner": result.get("runner") if isinstance(result, dict) else None}
+
+    def _simulate(self, variants, settings, dataset_id, batch_dir, label):
         if self.stop_flag and self.stop_flag.exists():
             raise ResearchError("stop flag is set; no new simulation posted")
-        if len(expressions) == 1:
-            raw = self.gateway.call("create_simulation", regular=expressions[0],
-                                    **settings)
-            if isinstance(raw, dict) and raw.get("id") and not raw.get("alpha_id"):
-                return {"alpha_id": raw["id"],
-                        "details": {key: value for key, value in raw.items()
-                                    if key != "note"}}
-            return raw
-        return self.gateway.call("create_multi_simulation",
-                                 alpha_expressions=expressions, **settings)
+        for variant in variants:
+            if not self._has_complete_runner_research(variant.get("research")):
+                raise ResearchError("canonical simulation requires complete per-variant research evidence")
+        result = self.gateway.call(
+            "simulate_batch", variants=variants, settings=settings,
+            dataset_id=dataset_id, batch_id=Path(batch_dir).name, label=label)
+        return self._normalize_runner_result(result)
 
     def _unfinished_batch(self):
         if not self.runs_root.exists():
@@ -474,6 +505,95 @@ class ResearchAgent:
                                   dataset_state="draft_voided", status="draft_voided",
                                   candidate_ledger_ref=str(case_path))
         return record
+
+    def _apply_canonical_audit(self, batch_dir, prereg, alpha_ids, readback, gate):
+        raw_path = Path(batch_dir) / "simulation_raw.json"
+        try:
+            runner = json.loads(raw_path.read_text(encoding="utf-8")).get("runner")
+            if not isinstance(runner, dict):
+                raise ResearchError("canonical runner evidence is missing")
+            results_path = Path(runner["output"]).resolve()
+            receipt_path = results_path.with_suffix(".admission.json")
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            variants = receipt.get("variants")
+            if not isinstance(variants, list):
+                raise ResearchError("canonical admission receipt has no variants")
+            entries = {}
+            for index, alpha_id in enumerate(alpha_ids):
+                expression = prereg["variants"][index]["expression"]
+                matches = [row for row in variants
+                           if isinstance(row, dict) and row.get("expression") == expression]
+                if len(matches) != 1:
+                    raise ResearchError("canonical receipt variant does not bind uniquely")
+                review = readback[alpha_id].get("review") or {}
+                review_reason = review.get("reason")
+                if not isinstance(review_reason, str) or not review_reason.strip():
+                    review_reason = "No completed model review evidence was recorded."
+                review_clear = (review.get("verdict") == "CLEAR"
+                                and isinstance(review.get("evidence_refs"), list)
+                                and bool(review["evidence_refs"]))
+                review_status = "clear" if review_clear else "pending"
+                reviews = {
+                    "robustness": {"status": review_status, "evidence": review_reason},
+                    "tradeoff": {"status": review_status, "evidence": review_reason},
+                }
+                entries[alpha_id] = {
+                    "dataset": prereg["dataset_id"], "subtype": "REGULAR",
+                    "receipt": str(receipt_path), "results": str(results_path),
+                    "variant": matches[0].get("name"),
+                    "field_cache_root": runner.get("field_cache_root"),
+                    "reviews": reviews,
+                }
+            audited = self.gateway.call(
+                "audit_alphas", case_key=runner["case_key"],
+                run_id=runner["run_id"], batch_id=Path(batch_dir).name,
+                alpha_ids=alpha_ids, entries=entries)
+            rows = audited.get("results") if isinstance(audited, dict) else None
+            audit_path = audited.get("audit_path") if isinstance(audited, dict) else None
+            by_id = {row.get("alpha_id"): row for row in rows
+                     if isinstance(row, dict) and row.get("alpha_id")} if isinstance(rows, list) else {}
+        except Exception as exc:
+            atomic_write_json(Path(batch_dir) / "canonical_audit_error.json", {
+                "status": "UNAVAILABLE", "error_type": type(exc).__name__,
+                "reason": str(exc)[:2000],
+                "at": datetime.now().astimezone().isoformat()})
+            by_id = {}
+            audit_path = None
+
+        for alpha_id, verdict in gate.items():
+            result = by_id.get(alpha_id)
+            if not isinstance(result, dict):
+                verdict.setdefault("pending", []).append("canonical_audit_unavailable")
+                verdict["pending"] = sorted(set(verdict["pending"]))
+                if verdict.get("status") == "CANDIDATE":
+                    verdict["status"] = "PENDING_FULL_AUDIT"
+                verdict["canonical_audit"] = {"status": "unavailable",
+                                               "audit_path": audit_path}
+                continue
+            audit_summary = {
+                "candidate_eligible": result.get("candidate_eligible"),
+                "candidate_status": result.get("candidate_status"),
+                "gate_failures": result.get("gate_failures", []),
+                "gate_pending": result.get("gate_pending", []),
+                "audit_path": audit_path,
+            }
+            verdict["canonical_audit"] = audit_summary
+            if verdict.get("status") == "CANDIDATE" and result.get("candidate_eligible") is not True:
+                failures = result.get("gate_failures") or []
+                pending = result.get("gate_pending") or []
+                verdict["failures"] = sorted(set(verdict.get("failures", []) +
+                                                  [f"canonical_audit:{item}" for item in failures]))
+                verdict["pending"] = sorted(set(verdict.get("pending", []) +
+                                                 [f"canonical_audit:{item}" for item in pending]))
+                verdict["status"] = "FAILED" if failures else "PENDING_FULL_AUDIT"
+            elif result.get("candidate_eligible") is not True:
+                verdict["failures"] = sorted(set(verdict.get("failures", []) +
+                                                  [f"canonical_audit:{item}" for item in
+                                                   result.get("gate_failures", [])]))
+                verdict["pending"] = sorted(set(verdict.get("pending", []) +
+                                                 [f"canonical_audit:{item}" for item in
+                                                  result.get("gate_pending", [])]))
+        return by_id
 
     def _complete(self, batch_dir, prereg, alpha_ids, digest,
                   simulation_settings=None):
@@ -568,6 +688,10 @@ class ResearchAgent:
             current = contenders.get(alpha_id, {}).get("status")
             if current in {"PAIRWISE_CONFLICT", "PAIRWISE_PENDING"}:
                 verdict["status"] = current
+        self._apply_canonical_audit(batch_dir, prereg, alpha_ids, readback, gate)
+        for alpha_id, verdict in gate.items():
+            if alpha_id in contenders:
+                contenders[alpha_id]["status"] = verdict["status"]
         case["contenders"] = contenders
         atomic_write_json(batch_dir / "gate.json", gate)
         proposal = prereg["proposal"]
@@ -798,22 +922,25 @@ class ResearchAgent:
             return result
         expressions = intent["expressions"]
         raw_path = batch_dir / "simulation_raw.json"
-        if raw_path.exists():
-            raw = json.loads(raw_path.read_text(encoding="utf-8"))
+        raw = (json.loads(raw_path.read_text(encoding="utf-8"))
+               if raw_path.exists() else None)
+        rows = raw.get("alpha_results") if isinstance(raw, dict) else None
+        if len(expressions) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
+            rows = [raw]
+        if not isinstance(rows, list) or len(rows) != len(expressions):
+            raw = self._resume_canonical_batch(intent, batch_dir, raw_path, "production")
             rows = raw.get("alpha_results") if isinstance(raw, dict) else None
-            if len(expressions) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
-                rows = [raw]
-            if isinstance(rows, list) and len(rows) == len(expressions):
-                alpha_ids = [row.get("alpha_id") for row in rows
-                             if isinstance(row, dict) and row.get("alpha_id")]
-                if len(alpha_ids) == len(expressions) and len(set(alpha_ids)) == len(alpha_ids):
-                    prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
-                    self._record_completed_expressions(
-                        expressions, prereg["dataset_id"], prereg["scope"],
-                        intent["settings"])
-                    return self._complete(batch_dir, prereg, alpha_ids,
-                                          intent["prereg_sha256"],
-                                          intent.get("settings"))
+        if isinstance(rows, list) and len(rows) == len(expressions):
+            alpha_ids = [row.get("alpha_id") for row in rows
+                         if isinstance(row, dict) and row.get("alpha_id")]
+            if len(alpha_ids) == len(expressions) and len(set(alpha_ids)) == len(alpha_ids):
+                prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
+                self._record_completed_expressions(
+                    expressions, prereg["dataset_id"], prereg["scope"],
+                    intent["settings"])
+                return self._complete(batch_dir, prereg, alpha_ids,
+                                      intent["prereg_sha256"],
+                                      intent.get("settings"))
         recent = self._recent_alphas()
         matched, missing, match_notes = match_alphas_detailed(
             expressions, intent["settings"], recent)
@@ -841,16 +968,40 @@ class ResearchAgent:
                 return recent
         raise ResearchError("account listing incomplete; recovery remains pending")
 
+    def _resume_canonical_batch(self, intent, batch_dir, raw_path, label):
+        runner = intent.get("runner") if isinstance(intent, dict) else None
+        if not isinstance(runner, dict):
+            return None
+        try:
+            raw = self._normalize_runner_result(
+                self.gateway.call("resume_simulation_batch", **runner))
+            atomic_write_json(raw_path, raw)
+            atomic_write_json(Path(batch_dir) / f"{label}_runner_recovery.json", {
+                "status": "RESUMED", "runner": runner,
+                "result_rows": len(raw["alpha_results"]),
+                "recovered_at": datetime.now().astimezone().isoformat()})
+            return raw
+        except Exception as exc:
+            atomic_write_json(Path(batch_dir) / f"{label}_runner_recovery.json", {
+                "status": "UNRESOLVED", "runner": runner,
+                "reason": f"{type(exc).__name__}: {str(exc)[:1000]}",
+                "recovered_at": datetime.now().astimezone().isoformat()})
+            return None
+
     def _recover_probes(self, batch_dir):
         context_path = batch_dir / "batch_context.json"
         plan_path = batch_dir / "probe_plan.json"
         if not context_path.exists():
             raise ResearchError("probe recovery context is incomplete")
         context = json.loads(context_path.read_text(encoding="utf-8"))
+        if context.get("brain_flow_case_key") and context.get("brain_flow_run_id"):
+            self.gateway.call("set_case", case_key=context["brain_flow_case_key"],
+                              run_id=context["brain_flow_run_id"])
         if not plan_path.exists():
             plan = self._decide("plan_probes", {
                 "objective": context["objective"], "scope": context["scope"],
-                "dataset_id": context["dataset_id"], "fields": context["fields"]},
+                "dataset_id": context["dataset_id"],
+                "fields": _field_summaries(context["fields"])},
                 batch_dir=batch_dir)
             atomic_write_json(plan_path, plan)
         else:
@@ -880,6 +1031,9 @@ class ResearchAgent:
             if len(group) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
                 rows = [raw]
             if not isinstance(rows, list) or len(rows) != len(group):
+                raw = self._resume_canonical_batch(intent, batch_dir, raw_path, label)
+                rows = raw.get("alpha_results") if isinstance(raw, dict) else None
+            if not isinstance(rows, list) or len(rows) != len(group):
                 if recent is None:
                     recent = self._recent_alphas()
                 matched, missing, match_notes = match_alphas_detailed(
@@ -905,7 +1059,7 @@ class ResearchAgent:
                                      expected_settings)
             atomic_write_json(intent_path, {
                 "status": "READ_BACK", "expressions": expressions,
-                "settings": expected_settings})
+                "settings": expected_settings, "runner": intent.get("runner")})
         return self.run_once(context["objective"], resume_batch_dir=batch_dir,
                              recovered_probe_results=results, cached_context=context)
 
@@ -941,6 +1095,14 @@ class ResearchAgent:
             prior_case = self._read_case(objective, scope)
             case_path = self._case_path(objective, scope)
             campaign_id = case_path.stem
+            self.gateway.call("validate_simulation_settings",
+                              settings=self._platform_settings(scope))
+            self.gateway.call("validate_simulation_settings",
+                              settings=self._platform_settings(scope, probe=True))
+            brain_flow_case_key = campaign_id
+            brain_flow_run_id = self.recorder.session_id
+            self.gateway.call("set_case", case_key=brain_flow_case_key,
+                              run_id=brain_flow_run_id)
             self.campaigns.update(
                 campaign_id, objective=objective,
                 scope={key: scope[key] for key in ("region", "universe", "delay")},
@@ -1001,6 +1163,8 @@ class ResearchAgent:
             batch_dir.mkdir(parents=True)
             atomic_write_json(batch_dir / "batch_context.json", {
                 "objective": objective, "scope": scope, "dataset_id": dataset_id,
+                "brain_flow_case_key": brain_flow_case_key,
+                "brain_flow_run_id": brain_flow_run_id,
                 "dataset_selection": dataset_selection,
                 "fields": fields, "operators": sorted(operators),
                 "operator_catalog": operator_rows,
@@ -1011,7 +1175,8 @@ class ResearchAgent:
                                   dataset_state="active", status="active")
             probe_plan = self._decide("plan_probes", {
                 "objective": objective, "scope": scope, "dataset_id": dataset_id,
-                "fields": fields, "prior_batches": prior_case.get("batches", [])},
+                "fields": _field_summaries(fields),
+                "prior_batches": prior_case.get("batches", [])},
                 batch_dir=batch_dir)
         else:
             batch_dir = Path(resume_batch_dir).resolve()
@@ -1031,6 +1196,13 @@ class ResearchAgent:
             self.recorder.bind_batch(batch_dir)
             self._write_batch_knowledge_packs(batch_dir)
             campaign_id = self._case_path(objective, scope).stem
+            brain_flow_case_key = cached_context.get("brain_flow_case_key")
+            brain_flow_run_id = cached_context.get("brain_flow_run_id")
+            if (not isinstance(brain_flow_case_key, str) or not brain_flow_case_key
+                    or not isinstance(brain_flow_run_id, str) or not brain_flow_run_id):
+                raise ResearchError("saved batch lacks its canonical brain-flow case reference")
+            self.gateway.call("set_case", case_key=brain_flow_case_key,
+                              run_id=brain_flow_run_id)
             self.campaigns.update(
                 campaign_id, objective=objective,
                 scope={key: scope[key] for key in ("region", "universe", "delay")},
@@ -1077,6 +1249,8 @@ class ResearchAgent:
                     ("field_id", "expression", "question", "measures", "economic_relevance",
                      "expected", "failure_criterion")):
                     raise ResearchError("each diagnostic probe needs a question and ex-ante criterion")
+                if not self._has_complete_runner_research(probe.get("research")):
+                    raise ResearchError("each diagnostic probe needs complete canonical runner research evidence")
                 if (probe["field_id"] not in core_fields or not isinstance(probe["measures"], list)
                         or any(item not in FIELD_EVIDENCE_KEYS for item in probe["measures"])):
                     raise ResearchError("probe field or measured property is outside the admitted pool")
@@ -1094,11 +1268,23 @@ class ResearchAgent:
                 group = probes[offset:offset + 8]
                 expressions = [probe["expression"] for probe in group]
                 label = f"probe_{offset // 8 + 1}"
+                runner_ref = {"case_key": brain_flow_case_key,
+                              "run_id": brain_flow_run_id,
+                              "batch_id": batch_dir.name, "label": label}
+                if not runner_ref["case_key"] or not runner_ref["run_id"]:
+                    raise ResearchError("diagnostic batch lacks its canonical brain-flow case reference")
+                simulation_variants = [
+                    {"name": f"probe_{offset + index + 1}",
+                     "expression": probe["expression"], "dataset": dataset_id,
+                     "research": probe["research"]}
+                    for index, probe in enumerate(group)]
                 atomic_write_json(batch_dir / f"{label}_intent.json", {
                     "status": "SUBMITTING", "expressions": expressions,
-                    "settings": self._platform_settings(scope, probe=True)})
-                raw_probe = self._simulate(expressions,
-                                           self._platform_settings(scope, probe=True))
+                    "settings": self._platform_settings(scope, probe=True),
+                    "runner": runner_ref})
+                raw_probe = self._simulate(
+                    simulation_variants, self._platform_settings(scope, probe=True),
+                    dataset_id, batch_dir, label)
                 atomic_write_json(batch_dir / f"{label}_raw.json", raw_probe)
                 if not isinstance(raw_probe, dict) or raw_probe.get("error"):
                     raise ResearchError("diagnostic simulation unresolved; do not resubmit")
@@ -1119,7 +1305,7 @@ class ResearchAgent:
                     probe_settings)
                 atomic_write_json(batch_dir / f"{label}_intent.json", {
                     "status": "READ_BACK", "expressions": expressions,
-                    "settings": probe_settings})
+                    "settings": probe_settings, "runner": runner_ref})
         sources = {field_id: {dimension: set() for dimension in FIELD_EVIDENCE_KEYS}
                    for field_id in core_fields}
         probe_observations = []
@@ -1186,7 +1372,9 @@ class ResearchAgent:
 
         construction_context = {
             "objective": objective, "scope": scope, "dataset_id": dataset_id,
-            "fields": fields, "probe_plan": probe_plan,
+            "fields": _field_summaries([field_rows[field_id] for field_id in core_fields
+                                         if field_id in field_rows]),
+            "probe_plan": probe_plan,
             "core_fields": core_fields,
             "operator_catalog": operator_catalog,
             "remedy_reference": remedy_reference,
@@ -1233,19 +1421,23 @@ class ResearchAgent:
             raise ResearchError("batch must contain one to eight variants")
         if not all(isinstance(proposal.get(key), str) and proposal[key].strip()
                    for key in ("hypothesis", "expected_sign",
-                               "structure_window_rationale", "failure_criterion")):
-            raise ResearchError("pre-backtest mechanism, direction, field constraints and failure criterion are required")
+                               "structure_window_rationale", "data_rationale",
+                               "operator_rationale", "field_relationship",
+                               "settings_rationale", "failure_criterion")):
+            raise ResearchError("canonical runner research rationales and failure criterion are required")
         reports = proposal.get("field_report")
         if not isinstance(reports, list):
             raise ResearchError("structured field report is required")
         report_by_field = {row.get("field_id"): row for row in reports
                            if isinstance(row, dict) and row.get("field_id")}
         expressions = []
+        runner_variants = []
         operator_counts = {}
         validation_results = {}
         for variant in variants:
             expr = variant.get("expression") if isinstance(variant, dict) else None
-            if not isinstance(expr, str) or not variant.get("reason"):
+            if (not isinstance(expr, str) or not isinstance(variant.get("reason"), str)
+                    or not variant["reason"].strip()):
                 raise ResearchError("each variant needs an expression and ex-ante reason")
             verdict = validate(expr, dataset_id, catalog, operators)
             if verdict["verdict"] != "PASS":
@@ -1273,6 +1465,20 @@ class ResearchAgent:
                                 or not gap.get("why_not_material")):
                             raise ResearchError(f"unresolved field gap not explained: {field_id}/{dimension}")
             expressions.append(expr)
+            runner_variants.append({
+                "name": f"variant_{len(runner_variants) + 1}",
+                "expression": expr, "dataset": dataset_id,
+                "research": {
+                    "idea": (proposal["hypothesis"].strip() + " Variant rationale: "
+                             + variant["reason"].strip()),
+                    "data_rationale": proposal["data_rationale"].strip(),
+                    "operator_rationale": proposal["operator_rationale"].strip(),
+                    "field_relationship": proposal["field_relationship"].strip(),
+                    "settings_rationale": proposal["settings_rationale"].strip(),
+                    "expected_behavior": proposal["expected_sign"].strip(),
+                    "failure_criterion": proposal["failure_criterion"].strip(),
+                },
+            })
             operator_counts[expr] = verdict["operator_count"]
         if len(set(expressions)) != len(expressions):
             reason = "duplicate expressions in batch"
@@ -1329,9 +1535,13 @@ class ResearchAgent:
             raise ResearchError("pre-registration changed before simulation")
         atomic_write_json(batch_dir / "simulation_intent.json", {
             "status": "SUBMITTING", "prereg_sha256": digest,
-            "expressions": expressions, "settings": simulation_settings})
+            "expressions": expressions, "settings": simulation_settings,
+            "runner": {"case_key": brain_flow_case_key,
+                       "run_id": brain_flow_run_id,
+                       "batch_id": batch_dir.name, "label": "production"}})
 
-        raw = self._simulate(expressions, simulation_settings)
+        raw = self._simulate(runner_variants, simulation_settings,
+                             dataset_id, batch_dir, "production")
         atomic_write_json(batch_dir / "simulation_raw.json", raw)
         if not isinstance(raw, dict) or raw.get("error"):
             raise ResearchError("simulation unresolved; inspect intent and reconcile before retrying")

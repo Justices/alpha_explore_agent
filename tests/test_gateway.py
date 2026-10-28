@@ -8,29 +8,30 @@ from nastu_quant.gateway import Gateway, GatewayError
 
 
 class TestGateway(unittest.TestCase):
-    def test_expired_session_reauthenticates_and_retries_read_only_call(self):
+    def test_read_only_session_failure_is_returned_without_gateway_retry(self):
         gateway = Gateway()
         gateway.proc = type("Process", (), {"poll": lambda self: None})()
         sent = []
-        responses = iter([{"ok": False, "error": "401 Unauthorized"},
-                          {"ok": True, "stage": "reauthenticated"},
-                          {"ok": True, "result": {"count": 1}}])
-        gateway._send = lambda payload: sent.append(payload) or next(responses)
-        self.assertEqual(gateway.call("get_datasets", region="GLB"), {"count": 1})
-        self.assertEqual([item["cmd"] for item in sent],
-                         ["get_datasets", "reauth", "get_datasets"])
+        gateway._send = lambda payload: sent.append(payload) or {
+            "ok": False, "error": "401 Unauthorized"}
+        with self.assertRaisesRegex(GatewayError, "401 Unauthorized"):
+            gateway.call("get_datasets", region="GLB")
+        self.assertEqual([item["cmd"] for item in sent], ["get_datasets"])
 
     def test_expired_session_never_reposts_simulation(self):
         gateway = Gateway()
         gateway.proc = type("Process", (), {"poll": lambda self: None})()
         sent = []
-        responses = iter([{"ok": False, "error": "401 Unauthorized"},
-                          {"ok": True, "stage": "reauthenticated"}])
-        gateway._send = lambda payload: sent.append(payload) or next(responses)
-        with self.assertRaisesRegex(GatewayError, "reconcile"):
+        gateway._send = lambda payload: sent.append(payload) or {
+            "ok": False, "error": "401 Unauthorized"}
+        with self.assertRaisesRegex(GatewayError, "401 Unauthorized"):
+            gateway.call("simulate_batch", variants=[{"expression": "rank(x)"}])
+        self.assertEqual([item["cmd"] for item in sent], ["simulate_batch"])
+
+    def test_direct_simulation_creation_is_not_exposed(self):
+        gateway = Gateway()
+        with self.assertRaisesRegex(GatewayError, "not in whitelist"):
             gateway.call("create_simulation", expression="rank(x)")
-        self.assertEqual([item["cmd"] for item in sent],
-                         ["create_simulation", "reauth"])
 
     def test_correlation_fails_closed_without_alpha_state(self):
         gateway = Gateway()

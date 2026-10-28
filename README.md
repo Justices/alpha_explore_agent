@@ -6,10 +6,10 @@ scope, Dataset, fields, expressions and gate evidence, records the proposed
 hypothesis before simulation, and can recover an interrupted batch without
 blindly reposting it. It has no Alpha submission or property mutation command.
 
-The files in `design/` are historical design references. The current research rules
-come from `D:\quant\brain-flow\AGENTS.md`; `D:\quant\brain-flow\scripts`
-is a reference for existing capabilities and evidence semantics. This is a
-separate runtime in this repository and does not execute those scripts.
+The project's rules are in [`AGENTS.md`](AGENTS.md). The files in `design/`
+are product requirements and historical design references. Configure
+`BRAIN_FLOW_HOME` to locate the existing `brain-flow/scripts` integration;
+its `AGENTS.md` is not this project's rule source.
 
 Dataset admission reads the exact-scope `/data-sets` catalog and then the
 selected `/data-sets/{dataset_id}` detail. The detail's `data` list must contain
@@ -17,6 +17,14 @@ the chosen Region, Delay and Universe before fields are admitted. The catalog
 query must not use a Dataset ID as a `search` term; the live API returned HTTP
 400 for that combination in the GLB/analyst69 preflight. Fixed Dataset IDs are
 matched against the complete catalog locally.
+
+The runtime reads Dataset, field and operator catalogs through the existing
+`fetch_datasets.py`, `inspect_fields.py` and `fetch_brain_operators.py` entry
+points. Other platform reads use the shared `brain_session.py` owner. All
+simulation submissions and resumptions go through `simulate_batch.py`; this
+project has no direct BRAIN simulation-create command. The agent passes the
+chosen Pasteurization and `test_period` in each variant's `settings`, which the
+runner merges into the effective settings used for admission and execution.
 
 ## Current boundary
 
@@ -26,10 +34,14 @@ matched against the complete catalog locally.
   probes are run only when the model asks for targeted missing evidence.
 - Scope needs an explicit Region. Dataset can be fixed in config or selected
   from the live catalog. A configured Dataset cannot be changed by the model.
-- Candidate requires complete metrics, terminal RA checks, production/self
-  correlation, the active case's pairwise checks, and a clear model review.
+- Candidate requires the local configured gates plus a successful complete
+  `audit_alphas.py` case audit, terminal RA checks, production/self correlation,
+  active-case pairwise checks, and clear robustness/tradeoff reviews.
   `PENDING` or unreadable evidence remains pending. The case contender file
   preserves pairwise conflicts for user resolution.
+- The current audit integration also applies the external script's own metric
+  and correlation thresholds. This can conflict with this project's configured
+  thresholds and must be reconciled before Candidate decisions are complete.
 - The bounded loop cannot prove economic exhaustion automatically and has no
   user review resolution command. `auth.mode=per_batch` is rejected until an
   explicit approval flow is implemented. An exhausted or pending branch is
@@ -46,7 +58,7 @@ matched against the complete catalog locally.
   filter is updated. A missing cache or a legacy cache is rebuilt from completed
   local batch artifacts at startup.
 - Each model decision receives a deterministic knowledge pack. L1 sections are
-  mapped by task from the current `brain-flow/AGENTS.md`; construction advice
+  mapped by task from this repository's `AGENTS.md`; construction advice
   is marked advisory. L2 uses exact operator/field records only. L3 indexes
   curated `RESEARCH_MEMORY.md` priors, closed local gate evidence, and saved
   probe reports with dataset/mechanism/signature/field tags and deterministic
@@ -69,11 +81,17 @@ matched against the complete catalog locally.
 
 ## Configure
 
-Use Python 3.11+ with `cnhkmcp` available in the chosen interpreter. Copy
-[`config.example.json`](config.example.json) to a state directory **outside**
-the repository, for example `D:\quant\nastu_quant_state\config\nastu_quant.json`.
-Fill the explicit scope values using live supported settings. A missing Region
-blocks research. The model URL is HTTPS; `json_http` accepts a JSON request
+Use Python 3.11+ with `cnhkmcp` available in the selected interpreter. Copy
+[`config.example.json`](config.example.json) to `<state-root>/config/nastu_quant.json`,
+outside the repository. The default state root follows OS conventions:
+`%LOCALAPPDATA%/nastu_quant` on Windows, `~/Library/Application Support/nastu_quant`
+on macOS, and `${XDG_STATE_HOME:-~/.local/state}/nastu_quant` on Linux. Set
+`NASTU_QUANT_HOME` to choose another location. Set `BRAIN_FLOW_HOME` to the
+brain-flow repository root. Project rules always come from this repository's
+root `AGENTS.md`; only advisory knowledge paths are configurable. Relative
+knowledge paths are resolved from the state root. Fill the explicit
+scope values using live supported settings. A missing Region blocks research.
+The model URL is HTTPS; `json_http` accepts a JSON request
 with `task`, `context`, and `instruction`, and must return
 `{"result": { ... decision ... }}`. `openai_compatible` uses a chat completion
 wire format and a configured model name. `anthropic_compatible` accepts an
@@ -84,33 +102,40 @@ invalid decisions are rejected and their text is saved in the local model call
 error record for diagnosis. Implementing `complete_json(task,
 context)` is the extension point for other services.
 
-The current bounded pilot configuration is
-[`D:\quant\nastu_quant_state\config\nastu_quant.json`](D:\quant\nastu_quant_state\config\nastu_quant.json):
-GLB / D1 / TOPDIV3000 / analyst69, Anthropic-compatible BigModel endpoint,
-model `glm-5.3`, API key environment variable `BIGMODEL_API_KEY`. The exact
-Dataset and 779 fields were observed in the live GLB/D1/TOPDIV3000 catalog.
-The pilot credentials are supplied only to the launched process; neither key
-nor password is written to this repository. A fixed Dataset pilot cannot by
-itself satisfy the three-Dataset exploration target. Consult the saved batch
-artifacts before claiming any live backtest or Candidate result.
-
-Set `NASTU_QUANT_CREDENTIAL_FILE` to an external JSON file containing the
+Set `BRAIN_CREDENTIALS_FILE` to the external JSON file used by
+`brain-flow/scripts/brain_session.py`, containing the
 BRAIN email and password. Set the configured model API key environment variable
 when the service requires one. Secrets are not stored in this repository or
-passed through the driver's JSON command stream. The runtime stores a session
-cookie, batch artifacts and stop flag under the state directory.
+passed through the agent's JSON command stream. BRAIN session state remains
+owned by `brain_session.py`.
+
+Set `BRAIN_PYTHON` to the absolute path of the selected environment's Python
+interpreter. Install this project into that environment with `-m pip install -e .`.
+The same CLI works on Windows, macOS, and Linux; only shell environment syntax
+differs. For example:
 
 ```powershell
-$env:PYTHONPATH = 'D:\quant\alpha_explore_agent\src'
-$env:NASTU_QUANT_CREDENTIAL_FILE = '<external credentials JSON path>'
-D:\quant-venv\Scripts\python.exe -m nastu_quant `
-  --state-root D:\quant\nastu_quant_state `
-  --config D:\quant\nastu_quant_state\config\nastu_quant.json `
-  run-once --objective 'State the economic research question'
+$env:BRAIN_PYTHON = '<path to the selected Python interpreter>'
+$env:NASTU_QUANT_HOME = '<path to the state directory>'
+$env:BRAIN_FLOW_HOME = '<path to the brain-flow repository>'
+$env:BRAIN_CREDENTIALS_FILE = '<external credentials JSON path>'
+& $env:BRAIN_PYTHON -m pip install -e .
+function nq { & $env:BRAIN_PYTHON -m nastu_quant --state-root $env:NASTU_QUANT_HOME @args }
+nq run-once --objective 'State the economic research question'
+```
+
+```sh
+export BRAIN_PYTHON='<path to the selected Python interpreter>'
+export NASTU_QUANT_HOME='<path to the state directory>'
+export BRAIN_FLOW_HOME='<path to the brain-flow repository>'
+export BRAIN_CREDENTIALS_FILE='<external credentials JSON path>'
+"$BRAIN_PYTHON" -m pip install -e .
+nq() { "$BRAIN_PYTHON" -m nastu_quant --state-root "$NASTU_QUANT_HOME" "$@"; }
+nq run-once --objective 'State the economic research question'
 ```
 
 For autonomous serial batches within a fixed budget, replace the final line
-with `run --objective 'State the economic research question' --max-batches 3`.
+with `nq run --objective 'State the economic research question' --max-batches 3`.
 The case file retains prior batches and rejects repeat expressions.
 
 Use `--dataset DATASET_ID` only to fix a Dataset for this batch. If config
@@ -118,25 +143,27 @@ already fixes `scope.dataset_id`, a different command line value is rejected.
 
 ## Inspect and recover
 
-```powershell
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state status
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state stop
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state resume
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state --config D:\quant\nastu_quant_state\config\nastu_quant.json recover <batch-directory>
+```sh
+nq status
+nq stop
+nq resume
+nq recover "$BATCH_DIRECTORY"
 ```
 
-An unfinished batch blocks a fresh `run-once`. `recover` checks the saved
-intent, pre-registration hash, and local result or platform account records;
-it does not repost a possibly submitted expression. A draft with **no**
-simulation intent can be archived while preserving its files:
+Set `BATCH_DIRECTORY` to the saved batch directory before recovery.
 
-If a read-only platform call reports expired authentication, Gateway performs
-one credential-file reauthentication and retries that read once. A simulation
-call is never reposted after an authentication error; its saved intent must be
-reconciled first.
+An unfinished batch blocks a fresh `run-once`. `recover` first resumes the
+saved canonical runner using its persisted simulation URL, then falls back to
+read-only account reconciliation when that URL is unavailable. It never
+reposts a possibly submitted expression. A draft with **no** simulation intent
+can be archived while preserving its files:
 
-```powershell
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state void <batch-directory> --reason 'invalid model proposal'
+Authentication and shared cookies remain owned by
+`brain-flow/scripts/brain_session.py`. The project Gateway does not copy
+credentials or create another BRAIN session.
+
+```sh
+nq void "$BATCH_DIRECTORY" --reason 'invalid model proposal'
 ```
 
 Each batch stores its context, probe plan and evidence, pre-registration,
@@ -147,9 +174,8 @@ model token usage is `null` unless actually measured.
 `status` also lists campaign pointers. To explicitly invalidate or reinstate an
 indexed evidence item, use its ID from `state/knowledge/evidence_index.json`:
 
-```powershell
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state `
-  evidence-validity <evidence-id> --status falsified --reason 'controlled evidence overturned this conclusion'
+```sh
+nq evidence-validity "$EVIDENCE_ID" --status falsified --reason 'controlled evidence overturned this conclusion'
 ```
 
 The update is evidence-preserving: the indexed source remains intact and normal
@@ -161,8 +187,8 @@ Use `knowledge list` and `knowledge show` to inspect managed notes, remedies,
 and indexed evidence. Add or revise an exact operator/field note with a UTF-8
 content file; replacing an existing note requires both `--replace` and a reason:
 
-```cmd
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state knowledge note put --kind operator --key ts_mean --content-file D:\notes\ts_mean.md --source "operator handbook#ts_mean" --operator researcher
+```sh
+nq knowledge note put --kind operator --key ts_mean --content-file "$NOTE_FILE" --source "operator handbook#ts_mean" --operator researcher
 ```
 
 Register remedies from a JSON file. New entries always enter as
@@ -189,24 +215,23 @@ back when the filesystem permits it. A failure during that rollback is
 reported as an unresolved management write; the two files are not a single
 crash-atomic transaction.
 
-```cmd
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state knowledge remedy add --file D:\notes\remedy.json --operator researcher
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state knowledge remedy review --id R-TURN-SMOOTH --status verified --reviewer researcher --reason "batch evidence reviewed"
+```sh
+nq knowledge remedy add --file "$REMEDY_FILE" --operator researcher
+nq knowledge remedy review --id R-TURN-SMOOTH --status verified --reviewer researcher --reason "batch evidence reviewed"
 ```
 
 Search evidence with structured tags. `--include-history` returns only
 non-valid evidence and labels every row as history-only:
 
-```cmd
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state knowledge search --dataset model110 --failure-signature S_TURNOVER_HI --limit 5 --include-history
+```sh
+nq knowledge search --dataset model110 --failure-signature S_TURNOVER_HI --limit 5 --include-history
 ```
 
 After a remedy has been entered as `verified` in
 `state/knowledge/remedies.json`, apply it as one locked batch with:
 
-```powershell
-D:\quant-venv\Scripts\python.exe -m nastu_quant --state-root D:\quant\nastu_quant_state `
-  run-once --objective 'the original objective' --diagnosis-id <diagnosis-id> --remedy-id <remedy-id>
+```sh
+nq run-once --objective 'the original objective' --diagnosis-id "$DIAGNOSIS_ID" --remedy-id "$REMEDY_ID"
 ```
 
 The command verifies the diagnosis and remedy against local evidence, fixes the
@@ -221,6 +246,7 @@ are idempotently retried by recovery.
 ## Offline checks
 
 ```powershell
-$env:PYTHONPATH = 'D:\quant\alpha_explore_agent\src'
-D:\quant-venv\Scripts\python.exe -m unittest discover -s tests
+& $env:BRAIN_PYTHON -m unittest discover -s tests
 ```
+
+For POSIX shells, use `"$BRAIN_PYTHON" -m unittest discover -s tests`.
