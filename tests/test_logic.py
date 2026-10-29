@@ -2,13 +2,16 @@
 metering, recovery matching."""
 import sys
 import tempfile
+import threading
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nastu_quant import gatekeeper, metering, paths, recovery, state_store
 from nastu_quant.config import DEFAULT_CONFIG
+from nastu_quant.submission_gate import SubmissionGate
 
 
 class TestConfig(unittest.TestCase):
@@ -25,7 +28,7 @@ class TestGatekeeper(unittest.TestCase):
         ok, _ = gatekeeper.correlation_verdict(0.6999, 0.5, {}, DEFAULT_CONFIG)
         self.assertTrue(ok)
         ok, reasons = gatekeeper.correlation_verdict(0.70, 0.5, {}, DEFAULT_CONFIG)
-        self.assertTrue(ok, "current brain-flow rule allows exactly 0.70")
+        self.assertTrue(ok, "project configuration allows exactly 0.70")
         ok, reasons = gatekeeper.correlation_verdict(0.7001, 0.5, {}, DEFAULT_CONFIG)
         self.assertFalse(ok)
         self.assertTrue(reasons)
@@ -35,6 +38,11 @@ class TestGatekeeper(unittest.TestCase):
         self.assertTrue(ok)
         ok, _ = gatekeeper.correlation_verdict(0.1, 0.1, {"A1": 0.40}, DEFAULT_CONFIG)
         self.assertFalse(ok)
+
+    def test_correlation_thresholds_use_absolute_values(self):
+        self.assertFalse(gatekeeper.correlation_verdict(-0.8, 0.1, {}, DEFAULT_CONFIG)[0])
+        self.assertFalse(gatekeeper.correlation_verdict(0.1, -0.8, {}, DEFAULT_CONFIG)[0])
+        self.assertFalse(gatekeeper.correlation_verdict(0.1, 0.1, {"A1": -0.4}, DEFAULT_CONFIG)[0])
 
     def test_correlation_requires_ra_passed(self):
         with self.assertRaises(gatekeeper.GateOrderError):
@@ -79,21 +87,17 @@ class TestGatekeeper(unittest.TestCase):
         self.assertTrue(audit["correlation_allowed"])
         self.assertIn("sharpe", audit["failures"])
 
-    def test_non_glb_requires_verified_operator_count_below_eight(self):
+    def test_regular_candidates_have_no_ppa_operator_limit(self):
         detail = {"is": {"sharpe": 1.8, "fitness": 1.2,
                          "sharpe_2y": 1.7, "margin": 0.001,
                          "turnover": 0.2}}
         checks = {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]}
         evidence = {"correlations": {"prod": 0.2, "self": 0.3}}
-        unknown = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
-                                                 **evidence)
-        self.assertIn("operator_count_unavailable", unknown["pending"])
-        at_limit = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
-                                                  operator_count=8, **evidence)
-        self.assertIn("operator_count", at_limit["failures"])
-        below = gatekeeper.evaluate_candidate(detail, checks, "USA", DEFAULT_CONFIG,
-                                               operator_count=7, **evidence)
-        self.assertEqual(below["status"], "CANDIDATE")
+        for count in (None, 8, 9, 20):
+            with self.subTest(count=count):
+                verdict = gatekeeper.evaluate_candidate(
+                    detail, checks, "USA", DEFAULT_CONFIG, operator_count=count, **evidence)
+                self.assertEqual(verdict["status"], "CANDIDATE")
 
     def test_malformed_check_row_cannot_establish_readable_ra(self):
         detail = {"is": {"sharpe": 1.8}}
@@ -157,6 +161,19 @@ class TestPaths(unittest.TestCase):
 
 
 class TestStateStore(unittest.TestCase):
+    def test_stop_api_waits_for_active_submission_gate(self):
+        with tempfile.TemporaryDirectory() as temp:
+            flag = Path(temp) / "stop.flag"
+            finished = threading.Event()
+            with patch.object(state_store, "stop_flag_path", return_value=flag):
+                with SubmissionGate(temp):
+                    worker = threading.Thread(target=lambda: (state_store.set_stop(), finished.set()), daemon=True)
+                    worker.start()
+                    self.assertFalse(finished.wait(0.25))
+                worker.join(timeout=5)
+            self.assertTrue(finished.is_set())
+            self.assertTrue(flag.exists())
+
     def test_prereg_hash_lock(self):
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "prereg.md"

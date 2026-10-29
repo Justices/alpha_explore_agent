@@ -8,6 +8,9 @@ command — a second, independent layer (acceptance A2).
 """
 import math
 
+from .config import DEFAULT_CONFIG
+from .ppa import evaluate_ppa
+
 ALPHA_STATES = {
     "CREATED", "SIMULATED", "CLASSIFIED", "BELOW_THRESHOLD",
     "RA_PASSED", "RA_FAILED", "CORR_PASSED", "CORR_REJECTED",
@@ -67,14 +70,17 @@ def correlation_verdict(prod_corr, self_corr, pairwise_corrs, cfg: dict):
     """Current research rule: prod/self <= limit, pairwise < limit."""
     g = cfg["gate"]
     reasons = []
-    if prod_corr is None or not prod_corr <= g["prod_corr_max"]:
-        reasons.append(f"prod_corr {prod_corr} not <= {g['prod_corr_max']}")
-    if self_corr is None or not self_corr <= g["self_corr_max"]:
-        reasons.append(f"self_corr {self_corr} not <= {g['self_corr_max']}")
+    for name, value in (("prod", prod_corr), ("self", self_corr)):
+        number = _finite(value)
+        limit = g[name + "_corr_max"]
+        if number is None or not -1 <= number <= 1 or abs(number) > limit:
+            reasons.append(f"{name}_corr {value} not within +/-{limit}")
     for other_id, value in (pairwise_corrs or {}).items():
-        if value is None or not value < g["pairwise_corr_max"]:
+        number = _finite(value)
+        if (number is None or not -1 <= number <= 1
+                or abs(number) >= g["pairwise_corr_max"]):
             reasons.append(
-                f"pairwise vs {other_id}: {value} not < {g['pairwise_corr_max']}")
+                f"pairwise vs {other_id}: abs({value}) not < {g['pairwise_corr_max']}")
     return (not reasons, reasons)
 
 
@@ -101,6 +107,40 @@ def _finite(value):
     return number if math.isfinite(number) else None
 
 
+def terminal_correlation_check(checks, name):
+    """Return a single readable terminal platform check, without guessing duplicates."""
+    if not isinstance(checks, list):
+        return None
+    matches = [row for row in checks if isinstance(row, dict) and row.get("name") == name]
+    if len(matches) != 1:
+        return None
+    check = matches[0]
+    value = _finite(check.get("value"))
+    if (str(check.get("result") or "").upper() not in {"PASS", "FAIL", "WARNING"}
+            or value is None or not -1 <= value <= 1):
+        return None
+    return check
+
+
+def local_self_correlation_state(evidence, limit):
+    """Classify a local prefilter without treating missing comparisons as zero."""
+    threshold = _finite(limit)
+    if (threshold is None or not 0 <= threshold <= 1 or not isinstance(evidence, dict)
+            or _finite(evidence.get("limit")) != threshold
+            or evidence.get("window_years") != 4
+            or type(evidence.get("comparison_count")) is not int
+            or evidence["comparison_count"] < 1):
+        return "pending"
+    value = _finite(evidence.get("value"))
+    if value is None or not -1 <= value <= 1:
+        return "pending"
+    if abs(value) > threshold:
+        return "fail"
+    if evidence.get("status") == "pass" and evidence.get("complete") is True:
+        return "pass"
+    return "pending"
+
+
 def _checks(detail, check_payload):
     is_data = detail.get("is") if isinstance(detail, dict) else None
     source = is_data.get("checks") if isinstance(is_data, dict) else None
@@ -116,6 +156,19 @@ def _checks(detail, check_payload):
     return rows or None
 
 
+def ra_correlation_check_state(detail):
+    """Classify whether readable RA checks permit correlation diagnostics."""
+    rows = _checks(detail, None)
+    if rows is None:
+        return "unavailable"
+    states = [str(row.get("result") or "").upper() for row in rows]
+    if any(state not in {"PASS", "PENDING", "FAIL", "WARNING"} for state in states):
+        return "unavailable"
+    if any(state in {"FAIL", "WARNING"} for state in states):
+        return "fail"
+    return "pending" if "PENDING" in states else "pass"
+
+
 def _two_year(is_data, rows):
     values = []
     if "sharpe_2y" in is_data:
@@ -129,13 +182,31 @@ def _two_year(is_data, rows):
 
 def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict,
                        correlations=None, pairwise=None,
-                       expected_pairwise_ids=None, operator_count=None) -> dict:
+                       expected_pairwise_ids=None, operator_count=None, local_self=None,
+                       ppa=False, field_count=None, ppa_expression=None) -> dict:
     """Conservative settled Regular gate. Missing evidence never passes."""
     is_data = detail.get("is") if isinstance(detail, dict) else None
     is_data = is_data if isinstance(is_data, dict) else {}
     rows = _checks(detail, check_payload)
     gate = cfg["gate"]
     failures, pending = [], []
+    ppa_eligibility = (evaluate_ppa(operator_count, field_count, is_data.get("sharpe"))
+                       if ppa else None)
+    if ppa_eligibility is not None:
+        regular = detail.get("regular") if isinstance(detail, dict) else None
+        if (not isinstance(ppa_expression, str) or not ppa_expression
+                or not isinstance(regular, dict) or regular.get("code") != ppa_expression):
+            ppa_eligibility["pending"].append("expression_unverified")
+            if ppa_eligibility["status"] == "PASS":
+                ppa_eligibility["status"] = "PENDING"
+        failures.extend("ppa_" + item for item in ppa_eligibility["failures"])
+        pending.extend("ppa_" + item for item in ppa_eligibility["pending"])
+    if local_self is not None:
+        local_state = local_self_correlation_state(local_self, gate.get("self_corr_max"))
+        if local_state == "fail":
+            failures.append("local_self_correlation")
+        elif local_state != "pass":
+            pending.append("local_self_correlation_unavailable")
     sharpe = _finite(is_data.get("sharpe"))
     region = (region or "").upper()
     if region not in SUPPORTED_REGIONS:
@@ -167,19 +238,21 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
         if not isinstance(risk, dict):
             pending.append("risk_neutralized_unavailable")
         else:
-            for key, limit in (("sharpe", 1.0), ("fitness", 0.7),
-                               ("margin", gate["margin_min"])):
+            defaults = DEFAULT_CONFIG["gate"]
+            limits = (("sharpe", gate.get("risk_neutralized_sharpe_min",
+                                           defaults["risk_neutralized_sharpe_min"])),
+                      ("fitness", gate.get("risk_neutralized_fitness_min",
+                                            defaults["risk_neutralized_fitness_min"])),
+                      ("margin", gate["margin_min"]))
+            for key, limit in limits:
                 value = _finite(risk.get(key))
-                if value is None:
+                limit = _finite(limit)
+                if limit is None:
+                    pending.append("risk_neutralized_" + key + "_threshold_unavailable")
+                elif value is None:
                     pending.append("risk_neutralized_" + key + "_unavailable")
                 elif value <= limit:
                     failures.append("risk_neutralized_" + key)
-    if region in SUPPORTED_REGIONS and region != "GLB":
-        if not isinstance(operator_count, int) or isinstance(operator_count, bool):
-            pending.append("operator_count_unavailable")
-        elif operator_count >= 8:
-            failures.append("operator_count")
-
     ra_failures = []
     ra_pending = []
     if rows is None:
@@ -203,7 +276,8 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
                   "RA_FAILED" if ra_failures else "EVIDENCE_PENDING")
         return {"status": status, "correlation_allowed": False,
                 "ra_fail_count": len(ra_failures), "failures": failures,
-                "pending": pending}
+                "pending": pending,
+                **({"ppa_eligibility": ppa_eligibility} if ppa else {})}
 
     correlations = correlations or {}
     prod = _finite(correlations.get("prod"))
@@ -234,7 +308,8 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
     else:
         status = "CANDIDATE"
     return {"status": status, "correlation_allowed": True,
-            "ra_fail_count": 0, "failures": failures, "pending": pending}
+            "ra_fail_count": 0, "failures": failures, "pending": pending,
+            **({"ppa_eligibility": ppa_eligibility} if ppa else {})}
 
 
 def parse_correlations(payload: dict, expected_pairwise_ids=None) -> dict:
@@ -243,17 +318,32 @@ def parse_correlations(payload: dict, expected_pairwise_ids=None) -> dict:
     checks = payload.get("checks") if isinstance(payload, dict) else None
     if not isinstance(checks, dict):
         return result
+    case_evidence = payload.get("case_pairwise")
+    if isinstance(case_evidence, dict):
+        for alpha_id in expected_pairwise_ids or []:
+            evidence = case_evidence.get(alpha_id)
+            value = _finite(evidence.get("correlation")) if isinstance(evidence, dict) else None
+            if (isinstance(evidence, dict) and evidence.get("source") == "daily_pnl"
+                    and type(evidence.get("observations")) is int
+                    and evidence["observations"] >= 2
+                    and value is not None and -1 <= value <= 1):
+                result["pairwise"][alpha_id] = abs(value)
     prod = checks.get("production") or {}
     prod_data = prod.get("correlation_data") if isinstance(prod, dict) else None
     if isinstance(prod_data, dict):
         value = _finite(prod_data.get("max"))
-        if value is None:
-            schema = prod_data.get("schema") or {}
-            value = _finite(schema.get("max")) if isinstance(schema, dict) else None
         if value is not None and -1 <= value <= 1:
             result["prod"] = abs(value)
+    if result["prod"] is None and isinstance(prod, dict):
+        check = terminal_correlation_check([prod.get("platform_check")], "PROD_CORRELATION")
+        if check:
+            result["prod"] = abs(_finite(check["value"]))
 
     self_check = checks.get("self") or {}
+    if isinstance(self_check, dict):
+        check = terminal_correlation_check([self_check.get("platform_check")], "SELF_CORRELATION")
+        if check:
+            result["self"] = abs(_finite(check["value"]))
     self_data = self_check.get("correlation_data") if isinstance(self_check, dict) else None
     if not isinstance(self_data, dict):
         return result
@@ -262,12 +352,15 @@ def parse_correlations(payload: dict, expected_pairwise_ids=None) -> dict:
             or self_data.get("count", len(records)) != len(records)):
         return result
     schema = self_data.get("schema") or {}
-    columns = [entry.get("name") for entry in schema.get("properties", [])
-               if isinstance(entry, dict)] if isinstance(schema, dict) else []
-    try:
-        corr_index = columns.index("correlation")
-    except ValueError:
+    properties = schema.get("properties") if isinstance(schema, dict) else None
+    if (not isinstance(properties, list) or any(not isinstance(entry, dict)
+            or not isinstance(entry.get("name"), str) or not entry["name"]
+            for entry in properties)):
         return result
+    columns = [entry["name"] for entry in properties]
+    if columns.count("correlation") != 1:
+        return result
+    corr_index = columns.index("correlation")
     id_index = next((columns.index(name) for name in ("alphaId", "alpha", "id")
                      if name in columns), None)
     values = []
@@ -282,6 +375,8 @@ def parse_correlations(payload: dict, expected_pairwise_ids=None) -> dict:
         if id_index is not None and len(record) > id_index:
             pairs[str(record[id_index])] = abs(value)
     result["self"] = max(values)
-    result["pairwise"] = {alpha_id: pairs[alpha_id]
-                          for alpha_id in expected_pairwise_ids or [] if alpha_id in pairs}
+    for alpha_id in expected_pairwise_ids or []:
+        if alpha_id in pairs:
+            result["pairwise"][alpha_id] = max(result["pairwise"].get(alpha_id, 0),
+                                               pairs[alpha_id])
     return result

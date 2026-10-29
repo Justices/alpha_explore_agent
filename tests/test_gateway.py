@@ -44,6 +44,21 @@ class TestGateway(unittest.TestCase):
             gateway.call("check_correlation", alpha_id="A1")
         self.assertIn("RA", str(caught.exception))
 
+    def test_platform_correlation_requires_local_self_prefilter(self):
+        alpha = {"state": "RA_PASSED", "ra_fail_count": 0, "ra_readable": True,
+                 "self_corr_max": 0.7, "local_self": {"status": "pending"}}
+        gateway = Gateway(alpha_lookup=lambda alpha_id: alpha)
+        gateway.proc = type("Process", (), {"poll": lambda self: None})()
+        sent = []
+        gateway._send = lambda payload: sent.append(payload) or {"ok": True, "result": {}}
+        with self.assertRaises(GatewayError):
+            gateway.call("check_correlation", alpha_id="A1")
+        self.assertEqual(sent, [])
+        alpha["local_self"] = {"status": "pass", "value": 0.4, "complete": True,
+                               "comparison_count": 1, "window_years": 4, "limit": 0.7}
+        gateway.call("check_correlation", alpha_id="A1")
+        self.assertEqual([row["cmd"] for row in sent], ["check_correlation"])
+
     def test_composite_submission_check_is_not_exposed(self):
         gateway = Gateway()
         with self.assertRaises(GatewayError):

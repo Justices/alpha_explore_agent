@@ -35,6 +35,8 @@ DEFAULT_CONFIG = {
         "fitness_min": 1.0,
         "two_year_sharpe_min": 1.60,
         "margin_min": 0.0005,
+        "risk_neutralized_sharpe_min": 1.0,
+        "risk_neutralized_fitness_min": 0.7,
         "turnover_min": 0.05,
         "turnover_max": 0.30,
         "prod_corr_max": 0.70,       # current rule: inclusive
@@ -47,7 +49,6 @@ DEFAULT_CONFIG = {
     "model": {"provider": None, "url": None, "model": None,
               "api_key_env": "NASTU_QUANT_MODEL_API_KEY"},
     "knowledge": {
-        "brain_flow_root": None,
         "construction_advisory_path": None,
         "prior_knowledge_path": None,
         "operator_root": None,

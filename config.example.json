@@ -19,6 +19,8 @@
     "fitness_min": 1.0,
     "two_year_sharpe_min": 1.6,
     "margin_min": 0.0005,
+    "risk_neutralized_sharpe_min": 1.0,
+    "risk_neutralized_fitness_min": 0.7,
     "turnover_min": 0.05,
     "turnover_max": 0.3,
     "prod_corr_max": 0.7,
@@ -27,7 +29,6 @@
   },
   "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
   "knowledge": {
-    "brain_flow_root": null,
     "construction_advisory_path": null,
     "prior_knowledge_path": null,
     "operator_root": null,

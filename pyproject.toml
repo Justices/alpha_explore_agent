@@ -7,7 +7,7 @@ name = "nastu-quant"
 version = "0.1.0"
 description = "nastu_quant: autonomous Alpha exploration agent for WorldQuant BRAIN"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["requests>=2.28,<3"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

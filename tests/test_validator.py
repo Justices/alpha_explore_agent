@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from nastu_quant.validator import load_catalog, load_operators, validate
+from nastu_quant.validator import load_catalog, load_operators, regular_operator_names, validate
 
 FIX = Path(__file__).parent / "fixtures"
 CATALOG = load_catalog(str(FIX / "catalog_risk60.json"))
@@ -37,6 +37,18 @@ class TestBatch21Pass(unittest.TestCase):
         for expr in BATCH21:
             res = check(expr)
             self.assertEqual(res["verdict"], "PASS", f"{expr}: {res['errors']}")
+
+    def test_regular_expression_can_use_nine_operators(self):
+        expression = "rank(" * 9 + "field_a" + ")" * 9
+        result = validate(expression, "data", {"field_a": {"type": "MATRIX", "dataset": "data"}}, {"rank"})
+        self.assertEqual(result["operator_count"], 9)
+        self.assertEqual(result["verdict"], "PASS", result["errors"])
+
+    def test_regular_expression_can_use_four_distinct_fields(self):
+        catalog = {name: {"type": "MATRIX", "dataset": "data"} for name in ("a", "b", "c", "d")}
+        result = validate("rank(max(max(a, b), max(c, d)))", "data", catalog, {"rank", "max"})
+        self.assertEqual(result["fields"], ["a", "b", "c", "d"])
+        self.assertEqual(result["verdict"], "PASS", result["errors"])
 
 
 class TestRejections(unittest.TestCase):
@@ -109,6 +121,50 @@ class TestRejections(unittest.TestCase):
     def test_infix_and_unary_operators_count_toward_budget(self):
         res = check("group_rank(-vec_avg(rsk60_offer), market)")
         self.assertEqual(res["operator_count"], 3)
+
+
+class TestLiveOperatorEvidence(unittest.TestCase):
+    def setUp(self):
+        self.catalog = {"signal_a": {"type": "MATRIX", "dataset": "analyst69"}}
+        self.operators = [
+            {"name": "rank", "scope": ["REGULAR"], "definition": "rank(x, rate=2)"},
+            {"name": "ts_mean", "scope": ["REGULAR"], "definition": "ts_mean(x, d)"},
+            {"name": "combo_a", "scope": ["COMBO"], "definition": "combo_a(x)"},
+            {"name": "unknown_scope", "definition": "unknown_scope(x)"},
+        ]
+
+    def verify(self, expr):
+        return validate(expr, "analyst69", self.catalog,
+                        regular_operator_names(self.operators),
+                        operator_definitions=self.operators)
+
+    def test_only_live_regular_scope_operators_are_admitted(self):
+        self.assertEqual(regular_operator_names(self.operators), {"rank", "ts_mean"})
+        self.assertIn("E_UNKNOWN_OPERATOR", codes(self.verify("combo_a(signal_a)")))
+
+    def test_clear_live_signatures_enforce_required_and_extra_arguments(self):
+        self.assertEqual(self.verify("rank(signal_a, rate=2)")["verdict"], "PASS")
+        for expr in ("rank()", "rank(signal_a, 2, 3)",
+                     "rank(ts_mean(signal_a))", "rank(signal_a, mystery=2)",
+                     "rank(signal_a, x=signal_a)"):
+            with self.subTest(expr=expr):
+                self.assertEqual(self.verify(expr)["verdict"], "REJECT")
+
+    def test_duplicate_named_arguments_are_rejected(self):
+        result = self.verify("rank(signal_a, rate=2, rate=3)")
+        self.assertIn("E_PARSE", codes(result))
+
+    def test_unparseable_live_definition_is_reported_without_guessing(self):
+        self.operators[0]["definition"] = "documentation omits a callable signature"
+        result = self.verify("rank(signal_a)")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertIn("W_OPERATOR_SIGNATURE_UNVERIFIED", {x["code"] for x in result["warnings"]})
+
+    def test_symbolic_default_is_not_assumed_to_be_an_optional_literal(self):
+        self.operators[1]["definition"] = "ts_mean(x, d=lookback)"
+        result = self.verify("rank(ts_mean(signal_a))")
+        self.assertEqual(result["verdict"], "PASS")
+        self.assertIn("W_OPERATOR_SIGNATURE_UNVERIFIED", {x["code"] for x in result["warnings"]})
 
 
 if __name__ == "__main__":

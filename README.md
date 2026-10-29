@@ -7,9 +7,17 @@ hypothesis before simulation, and can recover an interrupted batch without
 blindly reposting it. It has no Alpha submission or property mutation command.
 
 The project's rules are in [`AGENTS.md`](AGENTS.md). The files in `design/`
-are product requirements and historical design references. Configure
-`BRAIN_FLOW_HOME` to locate the existing `brain-flow/scripts` integration;
-its `AGENTS.md` is not this project's rule source.
+are product requirements and historical design references. The brain-flow
+workflow and scripts are development references only: this agent does not
+import, execute, or require that repository at runtime.
+
+Normal Alpha research does not impose PPA's operator or data-field limits.
+To research Power Pool Alpha, explicitly include `PPA` (case-insensitive) or
+`Power Pool Alpha` as the target in the objective. PPA expressions are checked
+before simulation for at most 8 operators and 3 distinct data fields; after
+read-back, the agent reports local `ppa_eligibility` using Sharpe >= 1.0.
+Missing evidence remains pending. This local result is not a platform PPA
+classification or a substitute for the configured Candidate gates and audit.
 
 Dataset admission reads the exact-scope `/data-sets` catalog and then the
 selected `/data-sets/{dataset_id}` detail. The detail's `data` list must contain
@@ -18,13 +26,11 @@ query must not use a Dataset ID as a `search` term; the live API returned HTTP
 400 for that combination in the GLB/analyst69 preflight. Fixed Dataset IDs are
 matched against the complete catalog locally.
 
-The runtime reads Dataset, field and operator catalogs through the existing
-`fetch_datasets.py`, `inspect_fields.py` and `fetch_brain_operators.py` entry
-points. Other platform reads use the shared `brain_session.py` owner. All
-simulation submissions and resumptions go through `simulate_batch.py`; this
-project has no direct BRAIN simulation-create command. The agent passes the
-chosen Pasteurization and `test_period` in each variant's `settings`, which the
-runner merges into the effective settings used for admission and execution.
+The project's own platform runtime authenticates with BRAIN, reads Dataset,
+field and operator catalogs, and performs and resumes simulations. It persists
+case-local catalog snapshots, the complete effective settings and pre-backtest
+receipt under the state root. A possibly submitted simulation is never reposted
+automatically. Alpha submission and property mutation are not supported.
 
 ## Current boundary
 
@@ -34,14 +40,30 @@ runner merges into the effective settings used for admission and execution.
   probes are run only when the model asks for targeted missing evidence.
 - Scope needs an explicit Region. Dataset can be fixed in config or selected
   from the live catalog. A configured Dataset cannot be changed by the model.
-- Candidate requires the local configured gates plus a successful complete
-  `audit_alphas.py` case audit, terminal RA checks, production/self correlation,
-  active-case pairwise checks, and clear robustness/tradeoff reviews.
-  `PENDING` or unreadable evidence remains pending. The case contender file
-  preserves pairwise conflicts for user resolution.
-- The current audit integration also applies the external script's own metric
-  and correlation thresholds. This can conflict with this project's configured
-  thresholds and must be reconciled before Candidate decisions are complete.
+- The live operator catalog is restricted to entries explicitly available to
+  Regular Alphas. Unambiguous live signatures are checked before simulation;
+  an unclear signature is recorded as unverified rather than guessed.
+- Candidate requires the local configured gates, complete local audit and
+  case evidence, terminal platform checks, production/self correlation,
+  active-case pairwise checks, and clear robustness/tradeoff reviews. Numeric
+  audit evidence is evaluated against this project's configuration. Missing,
+  unreadable, changed or unrecognized evidence remains pending. The case contender file preserves
+  pairwise conflicts for user resolution.
+- When readable RA checks have no failures, including while some are pending,
+  a four-year local self-correlation prefilter compares same-region OS Alphas
+  excluding Power Pool Alphas. A breach or unavailable comparison prevents
+  platform correlation requests. Terminal platform correlation checks are
+  reused; pending endpoint responses receive bounded retries. Retained case
+  contenders have their scope, RA state and local prefilter checked again before
+  a new batch's pairwise comparisons. A retained Candidate is first marked
+  pending on disk, then must pass a fresh complete audit bound to its original
+  pre-registration and simulation receipt before it is counted again. Case-pair
+  correlations use cumulative PnL changes over matching date intervals, with
+  input snapshots and hashes saved in the case state. OS pools and PnL are reused
+  only within one batch or audit;
+  each new batch and audit starts with fresh platform reads. A missing
+  risk-neutralized block is recorded as absent; an
+  unreadable or incomplete block remains pending.
 - The bounded loop cannot prove economic exhaustion automatically and has no
   user review resolution command. `auth.mode=per_batch` is rejected until an
   explicit approval flow is implemented. An exhausted or pending branch is
@@ -60,7 +82,7 @@ runner merges into the effective settings used for admission and execution.
 - Each model decision receives a deterministic knowledge pack. L1 sections are
   mapped by task from this repository's `AGENTS.md`; construction advice
   is marked advisory. L2 uses exact operator/field records only. L3 indexes
-  curated `RESEARCH_MEMORY.md` priors, closed local gate evidence, and saved
+  configured `RESEARCH_MEMORY.md` priors, closed local gate evidence, and saved
   probe reports with dataset/mechanism/signature/field tags and deterministic
   BM25 ranking.
   Historical priors remain advisory. Invalidated and void evidence stays available
@@ -81,14 +103,14 @@ runner merges into the effective settings used for admission and execution.
 
 ## Configure
 
-Use Python 3.11+ with `cnhkmcp` available in the selected interpreter. Copy
+Use Python 3.11+ and install this project with its declared dependencies. Copy
 [`config.example.json`](config.example.json) to `<state-root>/config/nastu_quant.json`,
 outside the repository. The default state root follows OS conventions:
 `%LOCALAPPDATA%/nastu_quant` on Windows, `~/Library/Application Support/nastu_quant`
 on macOS, and `${XDG_STATE_HOME:-~/.local/state}/nastu_quant` on Linux. Set
-`NASTU_QUANT_HOME` to choose another location. Set `BRAIN_FLOW_HOME` to the
-brain-flow repository root. Project rules always come from this repository's
-root `AGENTS.md`; only advisory knowledge paths are configurable. Relative
+`NASTU_QUANT_HOME` to choose another location. Project rules always come from
+this repository's root `AGENTS.md`; only advisory knowledge paths are
+configurable. Relative
 knowledge paths are resolved from the state root. Fill the explicit
 scope values using live supported settings. A missing Region blocks research.
 The model URL is HTTPS; `json_http` accepts a JSON request
@@ -102,37 +124,33 @@ invalid decisions are rejected and their text is saved in the local model call
 error record for diagnosis. Implementing `complete_json(task,
 context)` is the extension point for other services.
 
-Set `BRAIN_CREDENTIALS_FILE` to the external JSON file used by
-`brain-flow/scripts/brain_session.py`, containing the
-BRAIN email and password. Set the configured model API key environment variable
-when the service requires one. Secrets are not stored in this repository or
-passed through the agent's JSON command stream. BRAIN session state remains
-owned by `brain_session.py`.
+Set `BRAIN_CREDENTIALS_FILE` to an external JSON file containing the BRAIN
+email and password, either at the top level or inside a `credentials` object.
+Set the configured model API key environment variable when the service requires
+one. The agent uses its own in-memory BRAIN session; it does not print or store
+credential values.
 
-Set `BRAIN_PYTHON` to the absolute path of the selected environment's Python
-interpreter. Install this project into that environment with `-m pip install -e .`.
-The same CLI works on Windows, macOS, and Linux; only shell environment syntax
-differs. For example:
+Install and run the project with the Python interpreter selected for this agent.
+For Windows Command Prompt:
 
-```powershell
-$env:BRAIN_PYTHON = '<path to the selected Python interpreter>'
-$env:NASTU_QUANT_HOME = '<path to the state directory>'
-$env:BRAIN_FLOW_HOME = '<path to the brain-flow repository>'
-$env:BRAIN_CREDENTIALS_FILE = '<external credentials JSON path>'
-& $env:BRAIN_PYTHON -m pip install -e .
-function nq { & $env:BRAIN_PYTHON -m nastu_quant --state-root $env:NASTU_QUANT_HOME @args }
-nq run-once --objective 'State the economic research question'
+```cmd
+set NASTU_QUANT_HOME=<path to the state directory>
+set BRAIN_CREDENTIALS_FILE=<external credentials JSON path>
+python -m pip install -e .
+python -m nastu_quant --state-root %NASTU_QUANT_HOME% run-once --objective "State the economic research question"
 ```
+
+On macOS or Linux:
 
 ```sh
-export BRAIN_PYTHON='<path to the selected Python interpreter>'
 export NASTU_QUANT_HOME='<path to the state directory>'
-export BRAIN_FLOW_HOME='<path to the brain-flow repository>'
 export BRAIN_CREDENTIALS_FILE='<external credentials JSON path>'
-"$BRAIN_PYTHON" -m pip install -e .
-nq() { "$BRAIN_PYTHON" -m nastu_quant --state-root "$NASTU_QUANT_HOME" "$@"; }
-nq run-once --objective 'State the economic research question'
+python3 -m pip install -e .
+python3 -m nastu_quant --state-root "$NASTU_QUANT_HOME" run-once --objective 'State the economic research question'
 ```
+
+The examples below use `nq` as shorthand for the corresponding
+`python -m nastu_quant --state-root <state-directory>` command.
 
 For autonomous serial batches within a fixed budget, replace the final line
 with `nq run --objective 'State the economic research question' --max-batches 3`.
@@ -151,16 +169,22 @@ nq recover "$BATCH_DIRECTORY"
 ```
 
 Set `BATCH_DIRECTORY` to the saved batch directory before recovery.
+`stop` is serialized with the start of a simulation POST. It waits for an
+already-started POST to finish before confirming the stop; it does not cancel
+an existing simulation. If it cannot acquire the submission lock within 60
+seconds, it returns an error instead of confirming a stop.
 
 An unfinished batch blocks a fresh `run-once`. `recover` first resumes the
-saved canonical runner using its persisted simulation URL, then falls back to
-read-only account reconciliation when that URL is unavailable. It never
-reposts a possibly submitted expression. A draft with **no** simulation intent
-can be archived while preserving its files:
+local runner using its persisted simulation URL. If that URL is unavailable,
+account matches are recorded as possible matches and remain unresolved because
+their batch ownership cannot be established. It never reposts a possibly
+submitted expression. A batch recorded as stopped before its first POST can be
+started once by `recover` after an explicit `resume`, using its saved intent and
+locked research evidence. A draft with **no** simulation intent can be archived
+while preserving its files:
 
-Authentication and shared cookies remain owned by
-`brain-flow/scripts/brain_session.py`. The project Gateway does not copy
-credentials or create another BRAIN session.
+Authentication and session cookies are managed by this project's own runtime.
+Credentials stay in the selected external file.
 
 ```sh
 nq void "$BATCH_DIRECTORY" --reason 'invalid model proposal'
@@ -245,8 +269,6 @@ are idempotently retried by recovery.
 
 ## Offline checks
 
-```powershell
-& $env:BRAIN_PYTHON -m unittest discover -s tests
+```sh
+python -m unittest discover -s tests
 ```
-
-For POSIX shells, use `"$BRAIN_PYTHON" -m unittest discover -s tests`.

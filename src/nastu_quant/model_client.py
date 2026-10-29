@@ -37,7 +37,7 @@ TASK_INSTRUCTIONS = {
     "plan_probes": (
         "Before hypothesis design, inspect nominal and usable coverage, refresh rate, "
         "units, typical level, distribution, publication timing, and tradeability. "
-        "Choose one to four core_fields and a required_dimensions map for each field, "
+        "Choose the necessary core_fields and a required_dimensions map for each field, "
         "including nominal_coverage and usable_observations; justify this in "
         "requirement_reason. Use only targeted probes for material unknowns. Each probe "
         "needs expression, question, economic_relevance, expected, failure_criterion, "
@@ -54,7 +54,7 @@ TASK_INSTRUCTIONS = {
         "required dimension and list nonmaterial unknowns with reason and why_not_material. "
         "Each variant needs expression and ex-ante reason. These top-level rationale "
         "fields plus hypothesis, expected_sign, and failure_criterion must be substantive, "
-        "nonempty research evidence suitable for simulate_batch.py's required research object. "
+        "nonempty research evidence suitable for the local pre-backtest receipt. "
         "Use one Dataset, at most three fields per expression, one to eight variants; "
         "do not splice signals with + or *, use trade_when/add/multiply, or tune to prior results. "
         "If draft_proposal is present, review it against the supplied exact operator notes, "

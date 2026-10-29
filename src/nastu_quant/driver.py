@@ -1,4 +1,4 @@
-"""Line-delimited JSON bridge to brain-flow scripts and brain_session.py."""
+"""Line-delimited JSON bridge to this project's independent BRAIN runtime."""
 
 import json
 import sys
@@ -8,7 +8,7 @@ PROJECT_SRC = Path(__file__).resolve().parents[1]
 if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
-from nastu_quant.brain_flow_runtime import BrainFlowRuntime  # noqa: E402
+from nastu_quant.platform_runtime import PlatformRuntime  # noqa: E402
 
 
 def write(payload):
@@ -18,7 +18,7 @@ def write(payload):
 
 def main():
     try:
-        runtime = BrainFlowRuntime()
+        runtime = PlatformRuntime()
     except Exception as exc:
         write({"ok": False, "stage": "configuration", "error": str(exc)[:1000]})
         return 2

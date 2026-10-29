@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 
 from . import paths
+from .submission_gate import SubmissionGate
 
 
 def atomic_write_json(path: Path, data) -> None:
@@ -72,13 +73,21 @@ def stop_flag_path() -> Path:
     return paths.state_dir() / "stop.flag"
 
 
+def update_stop_flag(path: Path, stopped: bool) -> None:
+    path = Path(path)
+    with SubmissionGate(path.parent):
+        if stopped:
+            path.write_text("stop\n", encoding="utf-8")
+        else:
+            path.unlink(missing_ok=True)
+
+
 def set_stop() -> None:
-    stop_flag_path().parent.mkdir(parents=True, exist_ok=True)
-    stop_flag_path().write_text("stop\n", encoding="utf-8")
+    update_stop_flag(stop_flag_path(), True)
 
 
 def clear_stop() -> None:
-    stop_flag_path().unlink(missing_ok=True)
+    update_stop_flag(stop_flag_path(), False)
 
 
 def stop_requested() -> bool:

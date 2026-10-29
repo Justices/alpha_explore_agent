@@ -2,8 +2,9 @@
 
 This file governs research-agent behavior in this repository. Other
 repositories' `AGENTS.md` files are not policy sources for this project.
-`BRAIN_FLOW_HOME` locates an integration dependency; it does not change this
-contract. Do not edit another repository's rules as part of this project.
+The brain-flow repository is a read-only reference for development; this agent
+must not require, import, or invoke it at runtime. Do not edit another
+repository's rules as part of this project.
 
 Files under `design/` are product requirements and historical design inputs.
 They inform implementation but do not silently override this file or the
@@ -20,19 +21,16 @@ changes.
 - The model must base decisions on supplied live or saved evidence. It must
   state uncertainty and failure criteria, and must not invent data, platform
   settings, field semantics, or successful results.
-- Use the existing `brain-flow/scripts` entry points and its `brain_session.py`
-  owner for supported Dataset/field screening, expression validation,
-  simulation, gate evaluation, audit, and recovery. Resolve the repository via
-  `BRAIN_FLOW_HOME` and invoke its tools with the absolute `BRAIN_PYTHON`
-  interpreter. Do not create a second BRAIN session or submit simulations by
-  calling `cnhkmcp`, raw platform HTTP, or `create_simulation` directly.
-- `simulate_batch.py` is the execution entry point. Supply its complete
-  pre-backtest research evidence, exact effective settings, case-local field
-  cache, and output under `brain-flow/runs/<case_key>/`. Recover through the
-  existing script workflow; never repost a possibly submitted simulation.
-- If an operation has no supported script entry point, identify the capability
-  gap and use only a bounded read-only fallback when available. Do not bypass
-  execution validation or use a direct platform write.
+- Implement the BRAIN session, Dataset and field screening, expression
+  validation, simulation, gate evaluation, audit, and recovery in this project.
+  The brain-flow workflow and scripts may be inspected as references, but are
+  not runtime dependencies or policy sources.
+- Retain complete pre-backtest research evidence, exact effective settings,
+  case-local field evidence, and simulation receipts under this project's state
+  root. Record non-idempotent simulation intents and recovery identifiers;
+  never repost a possibly submitted simulation.
+- If platform evidence or an operation is unavailable, report it as unresolved;
+  never bypass local validation or substitute a successful result.
 - Never submit an Alpha or mutate Alpha properties automatically. Simulation
   completion is not Candidate or submission proof.
 
@@ -46,9 +44,21 @@ changes.
 - Keep each expression within one Dataset and the platform's validated field
   and operator constraints. Diagnostics answer predeclared material questions;
   their metrics are not Alpha performance evidence.
+- Ordinary Alpha research has no project-imposed PPA operator-count or
+  data-field-count limit. Apply PPA rules only when the user explicitly asks
+  to explore Power Pool Alpha (PPA): at most 8 operators, at most 3 distinct
+  data fields, and Sharpe of at least 1.0. Record the local PPA eligibility
+  separately; it does not replace the complete Candidate audit or prove the
+  platform has assigned the PPA classification.
 - Missing, pending, or unreadable gates are unresolved. Candidate requires the
   complete applicable live audit and read-back; model opinion cannot override
   deterministic failures or missing evidence.
+- For Regular research, check the local self-correlation prefilter before
+  requesting platform correlations. Compare same-Region non-Power-Pool OS
+  Alphas over the most recent four years, using this project's configured
+  self-correlation limit. An unavailable comparison remains pending; a
+  measured breach blocks the platform correlation request. Resolve case
+  pairwise conflicts through the user's decision.
 - Use the thresholds in this repository's active configuration and approved
   project requirements. Do not import thresholds from another repository or
   historical design text without an explicit project change.
@@ -58,8 +68,8 @@ changes.
 - Store runtime state outside the source tree under `NASTU_QUANT_HOME` or the
   platform-specific per-user default. Keep research evidence in a case-scoped
   directory and retain enough inputs and receipts for recovery.
-- Read platform credentials through `BRAIN_CREDENTIALS_FILE` as supported by
-  `brain_session.py`. Read model credentials through their configured
+- Read platform credentials through `BRAIN_CREDENTIALS_FILE` using this
+  project's own session. Read model credentials through their configured
   environment variable. Never print or persist credential values.
 - Support Windows, macOS, and Linux. Use `pathlib`, expand user and environment
   paths, avoid machine-specific absolute paths, and use argument arrays for

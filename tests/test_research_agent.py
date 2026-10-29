@@ -3,13 +3,15 @@ from copy import deepcopy
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nastu_quant.agent import ResearchAgent, ResearchError
-from nastu_quant.brain_flow_runtime import BrainFlowRuntime
+from nastu_quant.platform_runtime import PlatformRuntime
 from nastu_quant.config import DEFAULT_CONFIG
+from nastu_quant.recovery import SETTING_KEYS
 
 
 class ScriptedModel:
@@ -39,22 +41,53 @@ class ScriptedModel:
 
 class FakeGateway:
     def __init__(self, base):
-        self.base = Path(base) / "fake_brain_flow"
+        self.base = Path(base) / "fake_platform"
         self.calls = []
+        self.simulations = {}
         self.probe_calls_remaining = 0
         self.fail_simulation = False
         self.fail_probe_once = False
         self.recent_alphas = []
         self.ra_result = "PASS"
+        self.ra_by_alpha = {}
+        self.unavailable_details = set()
+        self.settings_by_alpha = {}
         self.catalog_incomplete = False
+        self.datasets = ["risk60"]
         self.single_ids = []
         self.full_details = False
+        self.sharpe_by_alpha = {}
         self.correlation_by_alpha = {}
+        self.correlation_unavailable = set()
+        self.prod_by_alpha = {}
+        self.local_self_by_alpha = {}
         self.allow_probe_neutralization = True
         self.omit_field_dataset = False
         self.omit_field_description = False
         self.single_probe_counts = False
         self.dataset_detail_scope_mismatch = False
+
+    def _details(self, alpha_id):
+        if alpha_id in self.unavailable_details:
+            raise RuntimeError("Alpha read-back unavailable")
+        ra_result = self.ra_by_alpha.get(alpha_id, self.ra_result)
+        if self.full_details:
+            is_data = {"sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,
+                       "margin": 0.001, "turnover": 0.2,
+                       "checks": [{"name": "LOW_SHARPE", "result": ra_result}]}
+        else:
+            is_data = {"sharpe": 1.7,
+                       "checks": [{"name": "LOW_SHARPE", "result": ra_result}]}
+        if alpha_id in self.sharpe_by_alpha:
+            is_data["sharpe"] = self.sharpe_by_alpha[alpha_id]
+        details = {"id": alpha_id, "is": is_data}
+        simulation = self.simulations.get(alpha_id)
+        if simulation:
+            details.update({"type": "REGULAR", "regular": {"code": simulation["expression"]},
+                            "settings": {SETTING_KEYS.get(key, key): value for key, value in
+                                         simulation["settings"].items()}})
+            details["settings"].update(self.settings_by_alpha.get(alpha_id, {}))
+        return details
 
     def call(self, cmd, **params):
         self.calls.append((cmd, params))
@@ -62,7 +95,7 @@ class FakeGateway:
             self.case_key, self.run_id = params["case_key"], params["run_id"]
             return {"case_key": self.case_key, "run_id": self.run_id}
         if cmd == "validate_simulation_settings":
-            return BrainFlowRuntime.validate_simulation_settings(params["settings"])
+            return PlatformRuntime.validate_simulation_settings(params["settings"])
         if cmd == "get_platform_setting_options":
             return {"instrument_options": [{"InstrumentType": "EQUITY",
                      "Region": "GLB", "Delay": 1,
@@ -78,18 +111,20 @@ class FakeGateway:
                     "nanHandling": {"type": "choice", "choices": [
                         {"value": "ON"}, {"value": "OFF"}]},
                     "maxTrade": {"type": "choice", "choices": [
-                        {"value": "ON"}, {"value": "OFF"}]}}
+                        {"value": "ON"}, {"value": "OFF"}]},
+                    "testPeriod": {"type": "string", "minValue": "P0Y0M0D",
+                                   "maxValue": "P6Y0M0D"}}
         if cmd == "get_datasets":
-            return [{"id": "risk60"}]
+            return [{"id": dataset} for dataset in self.datasets]
         if cmd == "get_dataset_details":
             return {"id": params["dataset_id"], "data": [{
                 "region": "USA" if self.dataset_detail_scope_mismatch else "GLB",
                 "delay": 1, "universe": "TOP3000"}]}
         if cmd == "get_datafields":
             rows = [
-                {"id": "signal_a", "type": "MATRIX", "dataset": {"id": "risk60"},
+                {"id": "signal_a", "type": "MATRIX", "dataset": {"id": params["dataset_id"]},
                  "description": "slow economic signal", "coverage": 0.9},
-                {"id": "signal_b", "type": "MATRIX", "dataset": {"id": "risk60"},
+                {"id": "signal_b", "type": "MATRIX", "dataset": {"id": params["dataset_id"]},
                  "description": "independent slow signal", "coverage": 0.8},
             ]
             if not self.catalog_incomplete:
@@ -106,7 +141,11 @@ class FakeGateway:
                     row.pop("description")
             return {"results": rows}
         if cmd == "get_operators":
-            return [{"name": "rank"}, {"name": "ts_mean"}]
+            if any(key not in params for key in ("region", "universe", "delay")):
+                raise AssertionError("operator catalog requires the active scope")
+            return [{"name": "rank", "scope": ["REGULAR"], "definition": "rank(x, rate=2)"},
+                    {"name": "ts_mean", "scope": ["REGULAR"], "definition": "ts_mean(x, d)"},
+                    {"name": "combo_a", "scope": ["COMBO"], "definition": "combo_a(x)"}]
         if cmd == "simulate_batch":
             is_probe = params["label"].startswith("probe_")
             if is_probe and self.fail_probe_once:
@@ -127,6 +166,9 @@ class FakeGateway:
                 rows.append({"alpha_id": alpha_id, "is": metrics,
                              "name": variant["name"], "expression": variant["expression"],
                              "success": True})
+                self.simulations[alpha_id] = {"expression": variant["expression"],
+                                              "settings": params["settings"],
+                                              "dataset": params["dataset_id"]}
             folder = self.base / self.case_key / self.run_id
             folder.mkdir(parents=True, exist_ok=True)
             output = folder / f"{params['batch_id']}_{params['label']}.json"
@@ -139,25 +181,45 @@ class FakeGateway:
         if cmd == "resume_simulation_batch":
             raise RuntimeError("no saved runner result")
         if cmd == "audit_alphas":
-            return {"results": [{"alpha_id": alpha_id, "candidate_eligible": True}
-                                for alpha_id in params["alpha_ids"]],
-                    "audit_path": str(self.base / "audit.json")}
+            results = []
+            for alpha_id in params["alpha_ids"]:
+                simulation = self.simulations.get(alpha_id)
+                if not simulation:
+                    results.append({"alpha_id": alpha_id, "candidate_eligible": False})
+                    continue
+                settings = simulation["settings"]
+                field_ids = [field for field in ("signal_a", "signal_b")
+                             if field in simulation["expression"]]
+                pairs = self.correlation_by_alpha.get(alpha_id, [["OTHER", 0.3]])
+                results.append({"alpha_id": alpha_id, "candidate_eligible": True,
+                                "candidate_status": "candidate", "gate_failures": [],
+                                "gate_pending": [], "candidate_metric_failures": [],
+                                "raw_details": self._details(alpha_id),
+                                "expression": simulation["expression"],
+                                "prod_corr": self.prod_by_alpha.get(alpha_id, 0.5),
+                                "self_corr": max(abs(row[1]) for row in pairs),
+                                "pairwise_state": "not_applicable", "pairwise": [],
+                                "field_admission": {"passed": True, "failures": [],
+                                    "dataset": simulation["dataset"],
+                                    "scope": {key: settings[key] for key in
+                                              ("region", "universe", "delay", "instrument_type")},
+                                    "fields": [{"id": field} for field in field_ids]}})
+            return {"results": results, "audit_path": str(self.base / "audit.json")}
         if cmd == "get_alpha_details":
-            if self.full_details:
-                return {"id": params["alpha_id"], "is": {
-                    "sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,
-                    "margin": 0.001, "turnover": 0.2,
-                    "checks": [{"name": "LOW_SHARPE", "result": self.ra_result}]}}
-            return {"id": params["alpha_id"], "is": {
-                "sharpe": 1.7,
-                "checks": [{"name": "LOW_SHARPE", "result": self.ra_result}]}}
+            return self._details(params["alpha_id"])
         if cmd == "get_submission_check":
             return {"checks": [{"name": "LOW_SHARPE", "result": self.ra_result}]}
+        if cmd == "check_local_self_correlation":
+            return self.local_self_by_alpha.get(params["alpha_id"], {
+                "status": "pass", "value": 0.3, "complete": True,
+                "comparison_count": 1, "window_years": 4, "limit": params["self_corr_max"]})
         if cmd == "check_correlation":
+            if params["alpha_id"] in self.correlation_unavailable:
+                raise RuntimeError("correlation unavailable")
             pairs = self.correlation_by_alpha.get(params["alpha_id"],
                                                    [["OTHER", 0.3]])
             return {"checks": {
-                "production": {"correlation_data": {"max": 0.5}},
+                "production": {"correlation_data": {"max": self.prod_by_alpha.get(params["alpha_id"], 0.5)}},
                 "self": {"correlation_data": {
                     "count": len(pairs), "next": None,
                     "schema": {"properties": [{"name": "alphaId"},
@@ -172,8 +234,10 @@ class FakeGateway:
 
 class TestResearchAgent(unittest.TestCase):
     def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
+        self.tmp_parent = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp_parent.cleanup)
+        self.tmp = SimpleNamespace(name=str(Path(self.tmp_parent.name) / "runs"))
+        Path(self.tmp.name).mkdir()
         self.gateway = FakeGateway(self.tmp.name)
         self.config = deepcopy(DEFAULT_CONFIG)
         self.config["scope"]["region"] = "GLB"
@@ -241,6 +305,104 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(metering["alpha_expressions"], 2)
         self.assertIsNone(metering["model_tokens"])
 
+    def test_ppa_objective_records_local_eligibility_separately_from_candidate(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.gateway.sharpe_by_alpha["A1"] = 1.0
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(" * 8 + "signal_a" + ")" * 8, "reason": "PPA boundary"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("探索 ppa 基本面因子", dataset_id="risk60")
+        prereg = json.loads((Path(result["batch_dir"]) / "prereg.json").read_text(encoding="utf-8"))
+        self.assertEqual(prereg["research_type"], "PPA")
+        self.assertEqual(result["gate"]["A1"]["ppa_eligibility"]["status"], "PASS")
+        self.assertNotEqual(result["gate"]["A1"]["status"], "CANDIDATE")
+        self.assertEqual(self.model.contexts["construct_batch"]["research_type"], "PPA")
+
+    def test_ppa_eligibility_is_pending_if_readback_expression_does_not_match(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(signal_a)", "reason": "PPA baseline"}]
+        original_details = self.gateway._details
+        def changed_details(alpha_id):
+            details = original_details(alpha_id)
+            if "regular" in details:
+                details["regular"]["code"] = "rank(signal_b)"
+            return details
+        self.gateway._details = changed_details
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("探索 PPA", dataset_id="risk60")
+        eligibility = result["gate"]["A1"]["ppa_eligibility"]
+        self.assertEqual(eligibility["status"], "PENDING")
+        self.assertIn("expression_unverified", eligibility["pending"])
+
+    def test_ppa_over_eight_operators_never_reaches_simulation(self):
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(" * 9 + "signal_a" + ")" * 9, "reason": "too many operators"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with self.assertRaisesRegex(ResearchError, "E_OPERATOR_COUNT"):
+            agent.run_once("探索 PPA", dataset_id="risk60")
+        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+
+    def test_regular_objective_can_simulate_more_than_eight_operators(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(" * 9 + "signal_a" + ")" * 9, "reason": "regular expression"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("探索基本面因子", dataset_id="risk60")
+        self.assertEqual(result["gate"]["A1"]["status"], "CANDIDATE")
+        self.assertNotIn("ppa_eligibility", result["gate"]["A1"])
+
+    def test_ppa_bounded_run_reports_ppa_eligibility(self):
+        self.gateway.single_ids = ["A1"]
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(signal_a)", "reason": "PPA baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        summary = agent.run_case("探索 PPA", max_batches=1, dataset_id="risk60")
+        self.assertIn("A1", summary.get("ppa_eligibility", {}))
+        self.assertEqual(summary["ppa_eligibility"]["A1"]["status"], "PASS")
+
+    def test_ppa_bounded_run_does_not_report_stale_retained_eligibility(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        original_decide = self.model.complete_json
+        def decide(task, context):
+            if task == "construct_batch":
+                field = "signal_b" if context.get("prior_batches") else "signal_a"
+                self.model.decisions["construct_batch"]["variants"] = [
+                    {"expression": f"rank({field})", "reason": "independent field"}]
+            return original_decide(task, context)
+        self.model.complete_json = decide
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        original_run = agent.run_once
+        def run_and_change(*args, **kwargs):
+            result = original_run(*args, **kwargs)
+            self.gateway.sharpe_by_alpha["A1"] = 0.99
+            return result
+        agent.run_once = run_and_change
+        summary = agent.run_case("探索 PPA", max_batches=2, dataset_id="risk60")
+        self.assertEqual(summary["ppa_eligibility"]["A1"]["status"], "FAIL")
+        self.assertIn("sharpe", summary["ppa_eligibility"]["A1"]["failures"])
+
+    def test_ppa_recovery_preserves_locked_mode(self):
+        stop_flag = Path(self.tmp.name) / "stop.flag"
+        stop_flag.write_text("stop\n", encoding="utf-8")
+        self.gateway.single_ids = ["A1"]
+        self.model.decisions["construct_batch"]["variants"] = [{
+            "expression": "rank(" * 8 + "signal_a" + ")" * 8, "reason": "PPA boundary"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name), stop_flag=stop_flag)
+        with self.assertRaises(ResearchError):
+            agent.run_once("探索 PPA", dataset_id="risk60")
+        batch = agent._unfinished_batch()
+        stop_flag.unlink()
+        result = agent.recover(batch)
+        self.assertEqual(result["gate"]["A1"]["ppa_eligibility"]["status"], "PASS")
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
+
     def test_fixed_dataset_detail_must_match_exact_live_scope(self):
         self.gateway.dataset_detail_scope_mismatch = True
         agent = ResearchAgent(self.gateway, self.model, self.config,
@@ -274,6 +436,20 @@ class TestResearchAgent(unittest.TestCase):
         with self.assertRaisesRegex(ResearchError, "truncation.*out of range"):
             agent.run_once("fundamental forecast", dataset_id="risk60")
         self.assertNotIn("get_datasets", [name for name, _ in self.gateway.calls])
+
+    def test_test_period_is_checked_against_live_schema(self):
+        self.config["scope"]["test_period"] = "P7Y0M0D"
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with self.assertRaisesRegex(ResearchError, "test_period.*live"):
+            agent.run_once("fundamental forecast", dataset_id="risk60")
+        self.assertNotIn("get_datasets", [name for name, _ in self.gateway.calls])
+
+    def test_test_period_records_live_schema_evidence(self):
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        scope = agent._scope("fundamental forecast")
+        self.assertEqual(scope["test_period"], "P0Y0M")
+        self.assertEqual(scope["_test_period_evidence"]["minValue"], "P0Y0M0D")
+        self.assertEqual(scope["_test_period_evidence"]["maxValue"], "P6Y0M0D")
 
     def test_invalid_expression_blocks_simulation(self):
         self.model.decisions["construct_batch"]["variants"][0]["expression"] = "rank(unknown_field)"
@@ -326,8 +502,8 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(json.loads(batch.read_text(encoding="utf-8"))["alpha_expressions"], 4)
         context = json.loads((batch.parent / "batch_context.json").read_text(encoding="utf-8"))
         intent = json.loads((batch.parent / "probe_1_intent.json").read_text(encoding="utf-8"))
-        self.assertEqual(intent["runner"]["case_key"], context["brain_flow_case_key"])
-        self.assertEqual(intent["runner"]["run_id"], context["brain_flow_run_id"])
+        self.assertEqual(intent["runner"]["case_key"], context["platform_case_key"])
+        self.assertEqual(intent["runner"]["run_id"], context["platform_run_id"])
 
     def test_probe_settings_must_be_live_supported(self):
         self.gateway.allow_probe_neutralization = False
@@ -350,8 +526,8 @@ class TestResearchAgent(unittest.TestCase):
             agent.run_once("slow lending signal", dataset_id="risk60")
         self.assertEqual(self.gateway.calls, [])
 
-    def test_gate_thresholds_cannot_be_relaxed_by_config(self):
-        self.config["gate"]["sharpe_min"] = 1.0
+    def test_invalid_gate_threshold_is_blocked_before_platform_calls(self):
+        self.config["gate"]["prod_corr_max"] = 1.01
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
         with self.assertRaises(ResearchError):
@@ -366,7 +542,7 @@ class TestResearchAgent(unittest.TestCase):
             agent.run_once("slow lending signal", dataset_id="risk60")
         self.assertEqual(self.gateway.calls, [])
 
-    def test_lost_response_is_reconciled_without_reposting(self):
+    def test_lost_response_without_runner_provenance_remains_unresolved(self):
         self.gateway.fail_simulation = True
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
@@ -392,8 +568,11 @@ class TestResearchAgent(unittest.TestCase):
             {"id": "A2", "regular": {"code": "rank(signal_b)"},
              "settings": platform_settings},
         ]
-        recovered = agent.recover(batch)
-        self.assertEqual(recovered["alpha_ids"], ["A1", "A2"])
+        with self.assertRaisesRegex(ResearchError, "provenance"):
+            agent.recover(batch)
+        recovery = json.loads((batch / "recovery.json").read_text(encoding="utf-8"))
+        self.assertEqual(recovery["status"], "UNRESOLVED_PROVENANCE")
+        self.assertFalse((batch / "results.json").exists())
         self.assertEqual(sum(name == "simulate_batch"
                              for name, _ in self.gateway.calls), 1)
 
@@ -403,8 +582,86 @@ class TestResearchAgent(unittest.TestCase):
                               Path(self.tmp.name))
         result = agent.run_once("slow lending signal", dataset_id="risk60")
         self.assertNotIn("check_correlation", [name for name, _ in self.gateway.calls])
+        self.assertNotIn("check_local_self_correlation", [name for name, _ in self.gateway.calls])
         self.assertNotIn("get_submission_check", [name for name, _ in self.gateway.calls])
         self.assertEqual(result["gate"]["A1"]["status"], "RA_FAILED")
+
+    def test_local_self_breach_blocks_platform_correlation_and_candidate(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        self.gateway.local_self_by_alpha["A1"] = {
+            "status": "fail", "value": 0.9, "complete": True,
+            "comparison_count": 1, "window_years": 4, "limit": 0.7}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertNotIn("check_correlation", [name for name, _ in self.gateway.calls])
+        self.assertIn("local_self_correlation", result["gate"]["A1"]["failures"])
+        self.assertEqual(result["gate"]["A1"]["status"], "CORR_REJECTED")
+
+    def test_local_self_unavailable_blocks_platform_correlation_and_stays_pending(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        self.gateway.local_self_by_alpha["A1"] = {"status": "pending", "value": None,
+                                                  "complete": False, "limit": 0.7}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertNotIn("check_correlation", [name for name, _ in self.gateway.calls])
+        self.assertIn("local_self_correlation_unavailable", result["gate"]["A1"]["pending"])
+        self.assertNotEqual(result["gate"]["A1"]["status"], "CANDIDATE")
+
+    def test_local_self_rejected_alpha_is_not_in_pairwise_review_pool(self):
+        self.gateway.full_details = True
+        self.gateway.local_self_by_alpha["A2"] = {
+            "status": "fail", "value": 0.9, "complete": True,
+            "comparison_count": 1, "window_years": 4, "limit": 0.7}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        platform_calls = [params for name, params in self.gateway.calls if name == "check_correlation"]
+        self.assertEqual([row["alpha_id"] for row in platform_calls], ["A1"])
+        self.assertNotIn("A2", platform_calls[0]["contender_ids"])
+        audit = next(params for name, params in self.gateway.calls if name == "audit_alphas")
+        self.assertNotIn("A2", audit["contender_ids"])
+        self.assertIn("local_self_correlation", result["gate"]["A2"]["failures"])
+
+    def test_ra_failure_discovered_by_prefilter_excludes_new_contender(self):
+        self.gateway.full_details = True
+        latest = {"id": "A1", "is": {"sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,
+                  "margin": 0.001, "turnover": 0.2,
+                  "checks": [{"name": "LOW_SHARPE", "result": "FAIL"}]}}
+        self.gateway.local_self_by_alpha["A1"] = {
+            "status": "pending", "ra_state": "fail", "ra_details": latest, "limit": 0.7}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        self.assertIn("ra:LOW_SHARPE", result["gate"]["A1"]["failures"])
+        calls = [params for name, params in self.gateway.calls
+                 if name == "check_correlation" and params["alpha_id"] == "A2"]
+        self.assertNotIn("A1", calls[-1]["contender_ids"])
+
+    def test_ra_pending_discovered_by_prefilter_keeps_candidate_pending(self):
+        self.gateway.single_ids = ["A1"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        latest = {"id": "A1", "is": {"sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,
+                  "margin": 0.001, "turnover": 0.2,
+                  "checks": [{"name": "LOW_SHARPE", "result": "PENDING"}]}}
+        self.gateway.local_self_by_alpha["A1"] = {
+            "status": "pass", "value": 0.3, "complete": True,
+            "comparison_count": 1, "window_years": 4, "limit": 0.7,
+            "ra_state": "pending", "ra_details": latest}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        self.assertIn("check_correlation", [name for name, _ in self.gateway.calls])
+        self.assertIn("ra_pending:LOW_SHARPE", result["gate"]["A1"]["pending"])
+        self.assertNotEqual(result["gate"]["A1"]["status"], "CANDIDATE")
 
     def test_zero_ra_failures_record_raw_correlation_evidence(self):
         agent = ResearchAgent(self.gateway, self.model, self.config,
@@ -414,6 +671,19 @@ class TestResearchAgent(unittest.TestCase):
                              for name, _ in self.gateway.calls), 2)
         self.assertEqual(result["gate"]["A1"]["correlations"]["prod"], 0.5)
 
+    def test_ra_eligible_alpha_remains_in_pairwise_pool_despite_metric_failure(self):
+        self.gateway.full_details = True
+        self.gateway.sharpe_by_alpha["A2"] = 1.0
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        self.assertIn("sharpe", result["gate"]["A2"]["failures"])
+        calls = {params["alpha_id"]: params for name, params in self.gateway.calls
+                 if name == "check_correlation"}
+        self.assertIn("A2", calls["A1"]["contender_ids"])
+        self.assertIn("A1", calls["A2"]["contender_ids"])
+
     def test_stop_flag_blocks_new_simulation(self):
         stop_flag = Path(self.tmp.name) / "stop.flag"
         stop_flag.write_text("stop\n", encoding="utf-8")
@@ -422,6 +692,62 @@ class TestResearchAgent(unittest.TestCase):
         with self.assertRaises(ResearchError):
             agent.run_once("slow lending signal", dataset_id="risk60")
         self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+
+    def test_stopped_before_gateway_can_resume_locked_production_batch(self):
+        stop_flag = Path(self.tmp.name) / "stop.flag"
+        stop_flag.write_text("stop\n", encoding="utf-8")
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name), stop_flag=stop_flag)
+        with self.assertRaises(ResearchError):
+            agent.run_once("slow lending signal", dataset_id="risk60")
+        batch = agent._unfinished_batch()
+        intent = json.loads((batch / "simulation_intent.json").read_text(encoding="utf-8"))
+        self.assertEqual(intent["status"], "STOPPED_BEFORE_SUBMISSION")
+        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+
+        stop_flag.unlink()
+        recovered = agent.recover(batch)
+
+        self.assertEqual(recovered["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
+
+    def test_stopped_before_gateway_can_resume_diagnostic_probe(self):
+        self.gateway.catalog_incomplete = True
+        self.gateway.single_ids = ["P1", "A1"]
+        self.gateway.single_probe_counts = True
+        self.model.decisions["plan_probes"] = {
+            "core_fields": ["signal_a"],
+            "required_dimensions": {"signal_a": ["nominal_coverage", "usable_observations"]},
+            "requirement_reason": "coverage matters",
+            "probes": [{"field_id": "signal_a", "expression": "signal_a != 0 ? 1 : 0",
+                        "question": "usable observations", "measures": ["usable_observations"],
+                        "economic_relevance": "avoid zero-filled rank", "expected": "broad",
+                        "failure_criterion": "few stocks"}]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        self.model.decisions["construct_batch"]["field_report"] = [{
+            "field_id": "signal_a", "verdict": "ADMIT", "constraints": ["approximate count"],
+            "evidence": {"nominal_coverage": {"source": "catalog", "observation": "0.9"},
+                         "usable_observations": {"source": "probe:0", "observation": "120/100"}},
+            "unresolved": {key: {"reason": "unavailable", "why_not_material": "level rank"}
+                           for key in ("refresh_rate", "scale_units", "typical_level", "distribution")}}]
+        stop_flag = Path(self.tmp.name) / "stop.flag"
+        stop_flag.write_text("stop\n", encoding="utf-8")
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name), stop_flag=stop_flag)
+        with self.assertRaises(ResearchError):
+            agent.run_once("slow lending signal", dataset_id="risk60")
+        batch = agent._unfinished_batch()
+        intent_path = batch / "probe_1_intent.json"
+        self.assertEqual(json.loads(intent_path.read_text(encoding="utf-8"))["status"],
+                         "STOPPED_BEFORE_SUBMISSION")
+        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+
+        stop_flag.unlink()
+        result = agent.recover(batch)
+
+        self.assertEqual(result["alpha_ids"], ["A1"])
+        self.assertEqual(json.loads(intent_path.read_text(encoding="utf-8"))["status"], "READ_BACK")
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 2)
 
     def test_missing_hypothesis_direction_blocks_alpha_batch(self):
         del self.model.decisions["construct_batch"]["expected_sign"]
@@ -496,6 +822,13 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(result["dataset_id"], "risk60")
         self.assertIn("select_scope", self.model.tasks)
 
+    def test_model_receives_only_regular_scope_operators(self):
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        names = {row["name"] for row in self.model.contexts["construct_batch"]["operator_catalog"]}
+        self.assertIn("rank", names)
+        self.assertNotIn("combo_a", names)
+
     def test_invalid_scope_choice_blocks_before_dataset_request(self):
         self.config["scope"]["universe"] = None
         self.model.decisions["select_scope"]["universe"] = "MADE_UP"
@@ -535,7 +868,7 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(result["dataset_id"], "risk60")
         self.assertNotIn("select_dataset", self.model.tasks)
 
-    def test_interrupted_probe_is_reconciled_before_alpha_construction(self):
+    def test_interrupted_probe_without_provenance_stays_unresolved(self):
         self.gateway.fail_probe_once = True
         self.model.decisions["plan_probes"] = {"core_fields": ["signal_a", "signal_b"],
             "probes": [
@@ -562,10 +895,13 @@ class TestResearchAgent(unittest.TestCase):
         ]
         with self.assertRaises(ResearchError):
             agent.run_once("slow lending signal", dataset_id="risk60")
-        result = agent.recover(batch)
-        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        with self.assertRaisesRegex(ResearchError, "provenance"):
+            agent.recover(batch)
+        recovery = json.loads((batch / "probe_1_recovery.json").read_text(encoding="utf-8"))
+        self.assertEqual(recovery["status"], "UNRESOLVED_PROVENANCE")
+        self.assertNotIn("construct_batch", self.model.tasks)
         self.assertEqual(sum(name == "simulate_batch"
-                             for name, _ in self.gateway.calls), 2)
+                             for name, _ in self.gateway.calls), 1)
 
     def test_recover_before_probe_plan_without_abandoning_batch(self):
         self.model.fail_task_once = "plan_probes"
@@ -683,6 +1019,286 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(state["contenders"]["A2"]["status"], "PAIRWISE_CONFLICT")
         self.assertEqual(second["candidate_status"], "PENDING_FULL_GATE")
 
+    def test_retained_contender_ra_is_rechecked_before_new_pairwise_comparison(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.45]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        self.gateway.ra_by_alpha["A1"] = "FAIL"
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        latest = [params for name, params in self.gateway.calls
+                  if name == "check_correlation" and params["alpha_id"] == "A2"][-1]
+        self.assertNotIn("A1", latest["contender_ids"])
+        self.assertNotEqual(second["gate"]["A2"]["status"], "PAIRWISE_CONFLICT")
+        case = next((Path(self.tmp.name) / "cases").glob("*.json"))
+        self.assertEqual(json.loads(case.read_text(encoding="utf-8"))["contenders"]["A1"]["status"], "RA_FAILED")
+        states = json.loads((Path(self.tmp.name) / "alpha_states.json").read_text(encoding="utf-8"))
+        self.assertEqual(states["A1"]["state"], "RA_FAILED")
+        self.assertEqual(states["A1"]["ra_fail_count"], 1)
+
+    def test_retained_candidate_failing_fresh_metrics_is_not_counted(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        first = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertEqual(first["gate"]["A1"]["status"], "CANDIDATE")
+        self.gateway.sharpe_by_alpha["A1"] = 1.0
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
+        old = case["contenders"]["A1"]
+        self.assertNotEqual(old["status"], "CANDIDATE")
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
+                              .read_text(encoding="utf-8"))
+        self.assertIn("sharpe", evidence["A1"]["failures"])
+
+    def test_retained_candidate_failing_fresh_production_correlation_is_not_counted(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        self.assertEqual(agent.run_once("slow lending signal", dataset_id="risk60")["gate"]["A1"]["status"], "CANDIDATE")
+        self.gateway.prod_by_alpha["A1"] = 0.85
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
+        self.assertNotEqual(case["contenders"]["A1"]["status"], "CANDIDATE")
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
+                              .read_text(encoding="utf-8"))
+        self.assertIn("prod_correlation", evidence["A1"]["failures"])
+
+    def test_retained_reaudit_preserves_known_metric_failure_when_correlation_unavailable(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        self.gateway.sharpe_by_alpha["A1"] = 1.0
+        self.gateway.correlation_unavailable.add("A1")
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
+                              .read_text(encoding="utf-8"))["A1"]
+        self.assertIn("sharpe", evidence["failures"])
+        self.assertTrue(any(item.startswith("retained_reaudit_unavailable:")
+                            for item in evidence["pending"]))
+
+    def test_retained_candidate_stays_candidate_only_after_complete_reaudit(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        self.assertEqual(agent.run_once("slow lending signal", dataset_id="risk60")["gate"]["A1"]["status"], "CANDIDATE")
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(case["contenders"]["A1"]["status"], "CANDIDATE")
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
+                              .read_text(encoding="utf-8"))
+        self.assertEqual(evidence["A1"]["status"], "CANDIDATE")
+        self.assertTrue(any(name == "audit_alphas" and params.get("audit_id", "").endswith("_A1")
+                            for name, params in self.gateway.calls))
+
+    def test_retained_candidate_with_changed_preregistration_is_pending(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        first = agent.run_once("slow lending signal", dataset_id="risk60")
+        prior_prereg = Path(first["batch_dir"]) / "prereg.json"
+        prior_prereg.write_text(prior_prereg.read_text(encoding="utf-8") + " ", encoding="utf-8")
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(case["contenders"]["A1"]["status"], "PENDING_FULL_AUDIT")
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
+                              .read_text(encoding="utf-8"))
+        self.assertTrue(any(item.startswith("retained_reaudit_unavailable:")
+                            for item in evidence["A1"]["pending"]))
+
+    def test_interrupted_retained_reaudit_does_not_leave_stale_candidate(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        first = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertEqual(first["gate"]["A1"]["status"], "CANDIDATE")
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+        original = agent._refresh_retained_contenders
+        def interrupted(*args, **kwargs):
+            raise RuntimeError("reaudit interrupted")
+        agent._refresh_retained_contenders = interrupted
+
+        with self.assertRaisesRegex(RuntimeError, "reaudit interrupted"):
+            agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(first["case_path"]).read_text(encoding="utf-8"))
+        self.assertNotEqual(case["contenders"]["A1"]["status"], "CANDIDATE")
+        agent._refresh_retained_contenders = original
+        recovered = agent.recover(agent._unfinished_batch())
+        case = json.loads(Path(recovered["case_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(case["contenders"]["A1"]["status"], "CANDIDATE")
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 2)
+
+    def test_retained_pairwise_conflict_demotes_both_old_candidates(self):
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["A2", 0.2]], "A2": [["A1", 0.2]]}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        first = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertEqual(first["gate"]["A1"]["status"], "CANDIDATE")
+        self.assertEqual(first["gate"]["A2"]["status"], "CANDIDATE")
+        self.gateway.single_ids = ["A3"]
+        self.gateway.correlation_by_alpha = {
+            "A1": [["A2", 0.55]], "A2": [["A1", 0.2]],
+            "A3": [["A1", 0.2], ["A2", 0.2]]}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(ts_mean(signal_a, 5))", "reason": "slow horizon control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(case["contenders"]["A1"]["status"], "PAIRWISE_CONFLICT")
+        self.assertEqual(case["contenders"]["A2"]["status"], "PAIRWISE_CONFLICT")
+
+    def test_unreadable_retained_contender_blocks_new_candidate_verdict(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        self.gateway.unavailable_details.add("A1")
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        self.assertNotEqual(second["gate"]["A2"]["status"], "CANDIDATE")
+        self.assertIn("retained_contender_unverified:A1", second["gate"]["A2"]["pending"])
+        states = json.loads((Path(self.tmp.name) / "alpha_states.json").read_text(encoding="utf-8"))
+        self.assertFalse(states["A1"]["ra_readable"])
+
+    def test_retained_contender_with_changed_scope_is_not_silently_pooled(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        self.gateway.settings_by_alpha["A1"] = {"universe": "OTHER"}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        calls = [params for name, params in self.gateway.calls
+                 if name == "check_correlation" and params["alpha_id"] == "A2"]
+        self.assertNotIn("A1", calls[-1]["contender_ids"])
+        self.assertIn("retained_contender_unverified:A1", second["gate"]["A2"]["pending"])
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_correlation_precheck.json")
+                              .read_text(encoding="utf-8"))
+        self.assertIn("details", evidence["A1"])
+        self.assertEqual(evidence["A1"]["details"]["settings"]["universe"], "OTHER")
+
+    def test_retained_contender_local_self_is_rechecked_before_pairwise(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        self.gateway.local_self_by_alpha["A1"] = {
+            "status": "fail", "value": 0.9, "complete": True,
+            "comparison_count": 1, "window_years": 4, "limit": 0.7}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        agent.run_once("slow lending signal", dataset_id="risk60")
+
+        latest = [params for name, params in self.gateway.calls
+                  if name == "check_correlation" and params["alpha_id"] == "A2"][-1]
+        self.assertNotIn("A1", latest["contender_ids"])
+        case = next((Path(self.tmp.name) / "cases").glob("*.json"))
+        saved = json.loads(case.read_text(encoding="utf-8"))["contenders"]["A1"]
+        self.assertTrue(saved["local_self_rejected"])
+        self.assertEqual(saved["status"], "CORR_REJECTED")
+
+    def test_retained_contender_new_ra_failure_during_prefilter_excludes_it(self):
+        self.gateway.single_ids = ["A1", "A2"]
+        self.gateway.full_details = True
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_a)", "reason": "level baseline"}]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        agent.run_once("slow lending signal", dataset_id="risk60")
+        latest = self.gateway._details("A1")
+        latest["is"]["checks"][0]["result"] = "FAIL"
+        self.gateway.local_self_by_alpha["A1"] = {
+            "status": "pending", "ra_state": "fail", "ra_details": latest, "limit": 0.7}
+        self.model.decisions["construct_batch"]["variants"] = [
+            {"expression": "rank(signal_b)", "reason": "independent control"}]
+
+        second = agent.run_once("slow lending signal", dataset_id="risk60")
+
+        calls = [params for name, params in self.gateway.calls
+                 if name == "check_correlation" and params["alpha_id"] == "A2"]
+        self.assertNotIn("A1", calls[-1]["contender_ids"])
+        evidence = json.loads((Path(second["batch_dir"]) / "retained_correlation_precheck.json")
+                              .read_text(encoding="utf-8"))
+        self.assertEqual(evidence["A1"]["status"], "ra_failed")
+        self.assertEqual(evidence["A1"]["prefilter_details"]["is"]["checks"][0]["result"], "FAIL")
+
+    def test_existing_pairwise_conflict_is_not_erased_by_a_later_ra_failure(self):
+        self.gateway.full_details = True
+        self.gateway.correlation_by_alpha = {"A1": [["OTHER", 0.3]], "A2": [["A1", 0.45]]}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        case_path = next((Path(self.tmp.name) / "cases").glob("*.json"))
+        case = json.loads(case_path.read_text(encoding="utf-8"))
+        self.assertEqual(case["contenders"]["A1"]["status"], "PAIRWISE_CONFLICT")
+        self.gateway.ra_by_alpha["A1"] = "FAIL"
+
+        agent._refresh_retained_contenders(case["contenders"], [], case["scope"], 0.7,
+                                           Path(result["batch_dir"]))
+
+        self.assertTrue(case["contenders"]["A1"]["ra_rejected"])
+        self.assertEqual(case["contenders"]["A1"]["status"], "PAIRWISE_CONFLICT")
+
     def test_pairwise_conflict_within_one_batch_demotes_both(self):
         self.gateway.full_details = True
         self.gateway.correlation_by_alpha = {
@@ -783,27 +1399,20 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(self.model.tasks.count("select_scope"), 1)
 
     def test_case_stops_at_three_candidate_datasets(self):
-        self.gateway.single_ids = ["A3"]
+        self.gateway.datasets = ["risk60", "other1", "other2"]
+        self.gateway.single_ids = ["OLD1", "OLD2", "A3"]
         self.gateway.full_details = True
         self.gateway.correlation_by_alpha = {
+            "OLD1": [["OLD2", 0.2]], "OLD2": [["OLD1", 0.2]],
             "A3": [["OLD1", 0.2], ["OLD2", 0.3]]}
         self.model.decisions["construct_batch"]["variants"] = [
             {"expression": "rank(signal_a)", "reason": "third dataset mechanism"}]
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
-        scope = self.config["scope"]
-        path = agent._case_path("slow lending signal", scope)
-        path.parent.mkdir(parents=True)
-        path.write_text(json.dumps({
-            "objective": "slow lending signal",
-            "scope": {"region": "GLB", "universe": "TOP3000", "delay": 1},
-            "contenders": {
-                "OLD1": {"status": "CANDIDATE", "batch": "b1"},
-                "OLD2": {"status": "CANDIDATE", "batch": "b2"}},
-            "batches": [
-                {"batch": "b1", "dataset_id": "other1", "expressions": ["rank(x)"]},
-                {"batch": "b2", "dataset_id": "other2", "expressions": ["rank(y)"]}],
-        }), encoding="utf-8")
+        first = agent.run_once("slow lending signal", dataset_id="other1")
+        self.assertEqual(first["gate"]["OLD1"]["status"], "CANDIDATE")
+        second = agent.run_once("slow lending signal", dataset_id="other2")
+        self.assertEqual(second["gate"]["OLD2"]["status"], "CANDIDATE")
         summary = agent.run_case("slow lending signal", max_batches=5,
                                  dataset_id="risk60")
         self.assertEqual(summary["status"], "TARGET_REACHED")

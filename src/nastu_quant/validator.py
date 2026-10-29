@@ -4,8 +4,7 @@
 Encodes the iron rules as code so a non-compliant expression can never
 reach the platform:
   - single dataset, fields must exist in the live catalog
-  - at most 3 distinct fields
-  - operator_count < 8
+  - PPA only: operator_count <= 8 and at most 3 distinct fields
   - banned operators: trade_when / add / multiply
   - no '+' or '*' splicing of branches (strictest interpretation)
   - field-field '-' or '/' (difference / ratio) only with a recorded
@@ -24,6 +23,11 @@ import json
 import os
 import re
 import sys
+
+if __package__:
+    from .ppa import PPA_MAX_FIELDS, PPA_MAX_OPERATORS
+else:
+    from ppa import PPA_MAX_FIELDS, PPA_MAX_OPERATORS
 
 # ---------------------------------------------------------------- tokenizer
 TOKEN_RE = re.compile(r"""
@@ -150,6 +154,8 @@ class Parser:
                         if self.peek()[0] == "ident" and self.peek(1)[1] == "=":
                             key = self.next()[1]
                             self.next()  # '='
+                            if key in kwargs:
+                                raise ParseError(f"duplicate named argument: {key}")
                             kwargs[key] = self.parse_ternary()
                         else:
                             args.append(self.parse_ternary())
@@ -227,12 +233,78 @@ GROUP_NAMES = {"market", "sector", "industry", "subindustry",
                "country", "exchange", "currency"}
 NON_FIELD_IDENTS = GROUP_NAMES | {"true", "false"}
 TS_ALLOWED_ENDINGS = {"ts_zscore", "ts_rank"}
-MAX_FIELDS = 3
-MAX_OPERATORS = 8  # operator_count must be < 8
+
+
+def regular_operator_names(rows):
+    """Admit only operators whose live metadata explicitly includes REGULAR."""
+    return {row["name"] for row in rows or []
+            if isinstance(row, dict) and isinstance(row.get("name"), str) and row["name"]
+            and isinstance(row.get("scope"), list) and "REGULAR" in row["scope"]}
+
+
+def _live_signature(name, definition):
+    """Parse only unambiguous callable definitions; never infer missing metadata."""
+    if not isinstance(definition, str):
+        return None
+    matches = list(re.finditer(r"\b" + re.escape(name) + r"\s*\(", definition))
+    if len(matches) != 1:
+        return None
+    parts, current, quote = [], [], None
+    for char in definition[matches[0].end():]:
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+        elif char in ("'", '"', "“", "‘"):
+            quote = {"“": "”", "‘": "’"}.get(char, char)
+            current.append(char)
+        elif char == "(":
+            return None
+        elif char == ")":
+            parts.append("".join(current).strip())
+            break
+        elif char == ",":
+            parts.append("".join(current).strip())
+            current = []
+        else:
+            current.append(char)
+    else:
+        return None
+    if quote:
+        return None
+    if parts == [""]:
+        parts = []
+    names, required, variadic, optional_seen = [], [], False, False
+    for part in parts:
+        if part in {"..", "..."}:
+            if variadic:
+                return None
+            variadic = True
+            continue
+        key, separator, default = part.partition("=")
+        key = key.strip()
+        if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key) or key in names:
+            return None
+        if separator:
+            default = default.strip()
+            is_number = bool(re.fullmatch(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?", default))
+            is_literal = (default.casefold() in {"true", "false", "nan"} or is_number
+                          or len(default) >= 2 and (default[0], default[-1]) in {
+                              ("'", "'"), ('"', '"'), ("“", "”"), ("‘", "’")})
+            if not is_literal:
+                return None
+            optional_seen = True
+        elif optional_seen:
+            return None
+        else:
+            required.append(key)
+        names.append(key)
+    return {"names": names, "required": required, "variadic": variadic}
 
 
 def validate(expr, dataset, catalog, operators,
-             allow_field_diff_ratio=False, diff_ratio_reason=""):
+             allow_field_diff_ratio=False, diff_ratio_reason="", operator_definitions=None,
+             ppa=False):
     """Return dict: verdict, fields, operator_count, errors, warnings."""
     errors, warnings = [], []
 
@@ -256,12 +328,36 @@ def validate(expr, dataset, catalog, operators,
         or (n.kind == "unary" and n.children[0].kind != "num")
         for n, _ in nodes)
 
-    # operator inventory + banned operators
+    definitions = None
+    if operator_definitions is not None:
+        definitions = {}
+        for row in operator_definitions:
+            if isinstance(row, dict) and isinstance(row.get("name"), str):
+                name = row["name"]
+                definition = row.get("definition")
+                definitions[name] = definition if name not in definitions else None
+
+    # operator inventory, banned operators, and unambiguous live signatures
     for c in calls:
         if operators is not None and c.value not in operators:
             err("E_UNKNOWN_OPERATOR", f"unknown operator: {c.value}")
         if c.value in BANNED_OPERATORS:
             err("E_BANNED_OPERATOR", f"banned operator: {c.value}")
+        if definitions is not None and (operators is None or c.value in operators):
+            signature = _live_signature(c.value, definitions.get(c.value))
+            if signature is None:
+                warn("W_OPERATOR_SIGNATURE_UNVERIFIED", f"live signature unavailable: {c.value}")
+                continue
+            names, required = signature["names"], signature["required"]
+            if len(c.args) > len(names) and not signature["variadic"]:
+                err("E_OPERATOR_ARITY", f"too many positional arguments: {c.value}")
+            positional = set(names[:len(c.args)])
+            if positional.intersection(c.kwargs):
+                err("E_OPERATOR_ARGUMENT_DUPLICATE", f"argument supplied twice: {c.value}")
+            if set(c.kwargs) - set(names):
+                err("E_OPERATOR_KEYWORD", f"unknown named argument: {c.value}")
+            if set(required) - (positional | set(c.kwargs)):
+                err("E_OPERATOR_ARITY", f"required argument missing: {c.value}")
 
     # fields
     field_nodes = [(n, anc) for n, anc in nodes
@@ -273,13 +369,13 @@ def validate(expr, dataset, catalog, operators,
         elif catalog[name]["dataset"] not in (None, dataset):
             err("E_MIXED_DATASET",
                 f"field {name} belongs to {catalog[name]['dataset']}, not {dataset}")
-    if len(field_names) > MAX_FIELDS:
+    if ppa and len(field_names) > PPA_MAX_FIELDS:
         err("E_TOO_MANY_FIELDS",
-            f"{len(field_names)} distinct fields > {MAX_FIELDS}: {field_names}")
+            f"{len(field_names)} distinct fields > {PPA_MAX_FIELDS}: {field_names}")
 
     # operator budget
-    if op_count >= MAX_OPERATORS:
-        err("E_OPERATOR_COUNT", f"operator_count {op_count} >= {MAX_OPERATORS}")
+    if ppa and op_count > PPA_MAX_OPERATORS:
+        err("E_OPERATOR_COUNT", f"operator_count {op_count} > {PPA_MAX_OPERATORS}")
 
     # splicing / diff-ratio arithmetic
     field_set = set(field_names)
@@ -372,6 +468,7 @@ def main(argv=None):
                                             "operators_study_raw.json"))
         p.add_argument("--allow-field-diff-ratio", action="store_true")
         p.add_argument("--reason", default="")
+        p.add_argument("--ppa", action="store_true", help="apply PPA structural limits")
         p.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
@@ -403,7 +500,7 @@ def main(argv=None):
     any_reject = False
     for expr in exprs:
         res = validate(expr, args.dataset, catalog, operators,
-                       args.allow_field_diff_ratio, args.reason)
+                       args.allow_field_diff_ratio, args.reason, ppa=args.ppa)
         any_reject |= res["verdict"] == "REJECT"
         if args.json:
             print(json.dumps({"expression": expr, **res}, ensure_ascii=False))

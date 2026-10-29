@@ -109,8 +109,6 @@ class KnowledgeService:
         self.cfg = cfg.get("knowledge", {})
         self.knowledge_root = self.state_root / "knowledge"
         self.project_root = Path(__file__).resolve().parents[2]
-        configured_root = self.cfg.get("brain_flow_root") or os.environ.get("BRAIN_FLOW_HOME")
-        self.brain_flow_root = self._resolve_path(configured_root) if configured_root else None
         self.canonical_path = self.project_root / "AGENTS.md"
         self.advisory_path = self._knowledge_path("construction_advisory_path")
         self.prior_knowledge_path = self._knowledge_path(
@@ -135,8 +133,6 @@ class KnowledgeService:
         configured = self.cfg.get(key)
         if configured:
             return self._resolve_path(configured)
-        if self.brain_flow_root is not None and root_parts:
-            return self.brain_flow_root.joinpath(*root_parts)
         return None
 
     def _read_source(self, path: Path | None, *, required: bool):

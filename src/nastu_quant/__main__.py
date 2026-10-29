@@ -10,6 +10,8 @@ from .model_client import ConfiguredModelClient
 from .campaign import SingleWriterLock, WriterLockError
 from .knowledge import KnowledgeService
 from .paths import default_state_root, expand_path
+from .state_store import update_stop_flag
+from .submission_gate import SubmissionGateError
 
 
 def _path_argument(value):
@@ -98,14 +100,13 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.state_root.resolve()
     stop_flag = root / "state" / "stop.flag"
-    if args.command == "stop":
-        stop_flag.parent.mkdir(parents=True, exist_ok=True)
-        stop_flag.write_text("stop\n", encoding="utf-8")
-        print(json.dumps({"stopped": True}))
-        return 0
-    if args.command == "resume":
-        stop_flag.unlink(missing_ok=True)
-        print(json.dumps({"stopped": False}))
+    if args.command in {"stop", "resume"}:
+        try:
+            update_stop_flag(stop_flag, args.command == "stop")
+        except (OSError, SubmissionGateError) as exc:
+            print(f"stop state not changed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps({"stopped": args.command == "stop"}))
         return 0
     if args.command == "status":
         runs = root / "runs"
@@ -229,14 +230,6 @@ def main(argv=None):
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
     os.environ["NASTU_QUANT_STATE_DIR"] = str(root / "state")
-    knowledge_cfg = cfg.get("knowledge") or {}
-    configured_flow_root = knowledge_cfg.get("brain_flow_root")
-    if configured_flow_root:
-        os.environ["BRAIN_FLOW_HOME"] = str(expand_path(configured_flow_root).resolve())
-    elif os.environ.get("BRAIN_FLOW_HOME"):
-        os.environ["BRAIN_FLOW_HOME"] = str(expand_path(os.environ["BRAIN_FLOW_HOME"]).resolve())
-    if os.environ.get("BRAIN_PYTHON"):
-        os.environ["BRAIN_PYTHON"] = str(expand_path(os.environ["BRAIN_PYTHON"]).resolve())
     credential_env = (cfg.get("auth") or {}).get("credential_env", "BRAIN_CREDENTIALS_FILE")
     if not os.environ.get("BRAIN_CREDENTIALS_FILE") and credential_env:
         configured_credentials = os.environ.get(credential_env)
@@ -269,10 +262,15 @@ def main(argv=None):
         if args.command == "run":
             print(json.dumps(result, ensure_ascii=False))
         else:
-            print(json.dumps({"dataset_id": result["dataset_id"],
-                              "alpha_ids": result["alpha_ids"],
-                              "candidate_status": result["candidate_status"]},
-                             ensure_ascii=False))
+            summary = {"dataset_id": result["dataset_id"],
+                       "alpha_ids": result["alpha_ids"],
+                       "candidate_status": result["candidate_status"]}
+            ppa = {alpha_id: verdict["ppa_eligibility"]
+                   for alpha_id, verdict in result.get("gate", {}).items()
+                   if "ppa_eligibility" in verdict}
+            if ppa:
+                summary["ppa_eligibility"] = ppa
+            print(json.dumps(summary, ensure_ascii=False))
         return 0
     except Exception as exc:
         print(f"research paused: {exc}", file=sys.stderr)

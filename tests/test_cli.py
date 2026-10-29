@@ -5,7 +5,10 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).parent.parent
 
@@ -19,6 +22,26 @@ def cli(*args):
 
 
 class TestCli(unittest.TestCase):
+    def test_run_once_reports_local_ppa_eligibility(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        from nastu_quant import __main__ as entry
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "config.json"
+            config.write_text(json.dumps({"model": {}}), encoding="utf-8")
+            output = StringIO()
+            with patch.object(entry, "ConfiguredModelClient"), patch.object(entry, "Gateway"), \
+                    patch.object(entry, "ResearchAgent") as agent, patch.dict(os.environ), \
+                    redirect_stdout(output):
+                agent.return_value.run_once.return_value = {
+                    "dataset_id": "data", "alpha_ids": ["A1"],
+                    "candidate_status": "PENDING_FULL_GATE",
+                    "gate": {"A1": {"ppa_eligibility": {"status": "PASS"}}}}
+                code = entry.main(["--state-root", temp, "--config", str(config),
+                                   "run-once", "--objective", "explore PPA"])
+            self.assertEqual(code, 0)
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["ppa_eligibility"]["A1"]["status"], "PASS")
+
     def test_status_and_stop_need_no_platform_session(self):
         with tempfile.TemporaryDirectory() as temp:
             first = cli("--state-root", temp, "status")
