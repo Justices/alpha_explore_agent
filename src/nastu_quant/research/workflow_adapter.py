@@ -17,6 +17,9 @@ class MockWorkflowAdapter:
             raise OrchestrationError("explicit offline mock gateway is required")
         if agent is None:
             raise OrchestrationError("mock agent is required")
+        if dispatcher is dispatch and not getattr(getattr(agent, "model", None),
+                                                  "is_offline_mock", False):
+            raise OrchestrationError("explicit offline mock model is required")
         self.root = state_root
         self.config = config
         self.gateway = gateway
