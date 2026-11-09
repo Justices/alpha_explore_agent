@@ -43,7 +43,7 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None):
     if command not in COMMANDS:
         raise ValueError(f"unknown research workflow command: {command}")
     if command == "recover-research":
-        return recover_simulation_intent(gateway, root, args.intent_path)
+        return recover_simulation_intent(gateway, root, args.intent_path, config=cfg)
     if command in {"plan-optimization", "run-optimization"}:
         region = _constraint(args.region, (cfg.get("scope") or {}).get("region"),
                              "Region")
