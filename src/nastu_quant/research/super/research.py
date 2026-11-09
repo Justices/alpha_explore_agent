@@ -11,6 +11,7 @@ from ...state_store import atomic_write_json
 from ...validator import Parser, ParseError
 from ..audit import record_pending_audit
 from ..simulation_intent import create_simulation_intent, transition_simulation_intent
+from ..records import ResearchRecordStore
 
 
 class SuperScopeError(ValueError):
@@ -124,6 +125,19 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
     path = (Path(state_root).resolve() / "state" / "research_v1_1" /
             "super_runs" / f"{run_id}.json")
     atomic_write_json(path, record)
+    now = record["observed_at"]
+    ResearchRecordStore(state_root).put("super_run", {
+        "schema_version": 1, "run_id": run_id, "workflow": "super",
+        "region": region, "objective": objective,
+        "budget": {"limits": {"experiments": 1},
+                   "reserved": {"experiments": 0},
+                   "used": {"experiments": 0}},
+        "platform_record_ref": str(path),
+        "platform_super_schema": super_schema,
+        "active_submitted_pool_ref": str(path),
+        "simulation_intent_ref": None, "readback_ref": None,
+        "audit_ref": None, "unresolved": unresolved,
+        "status": record["status"], "created_at": now, "updated_at": now})
     return {"run_id": run_id, "status": record["status"],
             "eligible_alpha_count": len(eligible),
             "unresolved_count": len(unresolved), "record_ref": str(path)}
@@ -139,6 +153,19 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         delay=delay, run_id=run_id)
     run_path = Path(prepared["record_ref"])
     run = json.loads(run_path.read_text(encoding="utf-8"))
+    store = ResearchRecordStore(state_root)
+    shared = store.get("super_run", run_id)
+    def persist_shared(**changes):
+        nonlocal shared
+        previous = shared["updated_at"]
+        now = datetime.now(timezone.utc)
+        last = datetime.fromisoformat(previous)
+        if now <= last:
+            from datetime import timedelta
+            now = last + timedelta(microseconds=1)
+        shared.update(changes)
+        shared["updated_at"] = now.isoformat()
+        store.put("super_run", shared, expected_updated_at=previous)
     if prepared["status"] != "prepared":
         return prepared
     operators = gateway.call("get_operators")
@@ -203,10 +230,16 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["simulation_intent_ref"] = str(intent_path)
     run["status"] = "simulation_prepared"
     atomic_write_json(run_path, run)
+    persist_shared(status="simulation_prepared",
+                   simulation_intent_ref=str(intent_path),
+                   budget={"limits": {"experiments": 1},
+                           "reserved": {"experiments": 1},
+                           "used": {"experiments": 0}})
     transition_simulation_intent(
         intent_path, expected_status="PREPARED", status="POSTING")
     run["status"] = "simulation_posting"
     atomic_write_json(run_path, run)
+    persist_shared(status="simulation_posting")
     try:
         result = gateway.call(
             "simulate_super", batch_id=batch_id, settings=settings,
@@ -217,6 +250,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
         run["status"] = "outcome_unknown"
         atomic_write_json(run_path, run)
+        persist_shared(status="outcome_unknown",
+                       unresolved=["platform_simulation_outcome_requires_reconciliation"])
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
                                 default=str).encode("utf-8")
@@ -229,6 +264,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             intent_path, expected_status="RESPONSE_RECEIVED", status="OUTCOME_UNKNOWN")
         run["status"] = "outcome_unknown"
         atomic_write_json(run_path, run)
+        persist_shared(status="outcome_unknown",
+                       unresolved=["simulation_response_missing_alpha_readback"])
         raise SuperScopeError("Super simulation readback is incomplete")
     run["alpha_id"] = rows[0]["alpha_id"]
     run["runner"] = result.get("runner")
@@ -243,5 +280,10 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["audit_ref"] = str(audit_path)
     run["status"] = "simulated_pending_audit"
     atomic_write_json(run_path, run)
+    persist_shared(status="simulated_pending_audit",
+                   readback_ref=run["readback_ref"], audit_ref=str(audit_path),
+                   budget={"limits": {"experiments": 1},
+                           "reserved": {"experiments": 0},
+                           "used": {"experiments": 1}})
     return {"run_id": run_id, "alpha_id": run["alpha_id"],
             "status": run["status"], "record_ref": str(run_path)}
