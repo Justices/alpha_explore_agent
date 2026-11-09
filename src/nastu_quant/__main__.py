@@ -13,6 +13,8 @@ from .paths import default_state_root, expand_path
 from .state_store import update_stop_flag
 from .submission_gate import SubmissionGateError
 from .research.entrypoints import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
+from .research.records import ResearchRecordStore
+from .research.candidate_pool import CandidatePool
 
 
 def _path_argument(value):
@@ -134,6 +136,7 @@ def main(argv=None):
     search.add_argument("--include-history", action="store_true",
                          help="return historical-only evidence; never mixed with valid results")
     sub.add_parser("status", help="inspect local state without platform access")
+    sub.add_parser("rebuild-pools", help="rebuild global Candidate/Preferred index without BRAIN requests")
     sub.add_parser("stop", help="block new simulations")
     sub.add_parser("resume", help="clear the stop flag by explicit command")
     args = parser.parse_args(argv)
@@ -146,6 +149,14 @@ def main(argv=None):
             print(f"stop state not changed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps({"stopped": args.command == "stop"}))
+        return 0
+    if args.command == "rebuild-pools":
+        try:
+            index = CandidatePool(ResearchRecordStore(root)).sync_index()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            print(f"pool rebuild failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(index, ensure_ascii=False))
         return 0
     if args.command == "status":
         runs = root / "runs"
@@ -240,7 +251,12 @@ def main(argv=None):
                     except (OSError, ValueError):
                         output.append({"path": str(record_path), "status": "unreadable"})
             return output
-        print(json.dumps({"stopped": stop_flag.exists(),
+        try:
+            global_pool = CandidatePool(ResearchRecordStore(root)).build_index()
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            global_pool = {"status": "unavailable", "reason": type(exc).__name__}
+        print(json.dumps({"global_alpha_pool": global_pool,
+                          "stopped": stop_flag.exists(),
                           "unfinished_batches": unfinished,
                           "campaigns": campaigns,
                           "v11_campaigns": v11_campaigns,

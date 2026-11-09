@@ -5,7 +5,6 @@ pool presentation, never used to bypass live RA / correlation verification.
 """
 import hashlib
 import json
-from pathlib import Path
 
 from ..state_store import atomic_write_json
 
@@ -34,7 +33,10 @@ def _latest(candidate_rows, preferred_by_id):
     newest = sorted(candidate_rows,
                     key=lambda row: (row["updated_at"], row["candidate_id"]))[-1]
     preferred = preferred_by_id.get(newest["candidate_id"])
-    preferred_status = preferred.get("status") if preferred else "NOT_CANDIDATE"
+    same_evidence = bool(preferred and
+                         preferred.get("evidence_sha256") == newest.get("evidence_sha256") and
+                         preferred.get("policy_sha256") == newest.get("policy_sha256"))
+    preferred_status = preferred["status"] if same_evidence else "NOT_CANDIDATE"
     return newest, preferred_status
 
 

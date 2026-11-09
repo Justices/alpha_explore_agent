@@ -14,7 +14,8 @@ from ..gatekeeper import (evaluate_candidate, parse_correlations,
                          RA_CHECK_NAMES)
 from ..preferred import evaluate_preferred
 from .records import ResearchRecordStore
-from .candidate_pool import CandidatePool, evidence_hash, policy_hash
+from .candidate_pool import CandidatePool, evidence_hash, policy_hash, _hash
+from ..state_store import atomic_write_json
 
 
 def _now():
@@ -28,18 +29,32 @@ def _stable_id(value):
 
 
 def _upsert(store, kind, record):
+    """Idempotent update with immutable revision snapshots before replacement.
+
+    A byte-for-byte equivalent assessment makes no new history entry and does
+    not change updated_at. Any substantive change archives the prior record.
+    """
     try:
         previous = store.get(kind, record["candidate_id"])
     except FileNotFoundError:
         previous = None
     now = datetime.now(timezone.utc)
     if previous:
+        record["created_at"] = previous["created_at"]
+        without_clock = lambda value: {
+            key: item for key, item in value.items()
+            if key not in ("created_at", "updated_at")
+        }
+        if without_clock(previous) == without_clock(record):
+            return store.path_for(kind, record["candidate_id"])
+        archive_hash = _hash(previous)
+        archive_path = (store.root / "evaluation_history" / kind /
+                        record["candidate_id"] / (archive_hash + ".json"))
+        if not archive_path.exists():
+            atomic_write_json(archive_path, previous)
         last = datetime.fromisoformat(previous["updated_at"])
         if now <= last:
             now = last + timedelta(microseconds=1)
-        record["created_at"] = previous["created_at"]
-    else:
-        record["created_at"] = now.isoformat()
     record["updated_at"] = now.isoformat()
     return store.put(kind, record,
                      expected_updated_at=previous["updated_at"] if previous else None)
