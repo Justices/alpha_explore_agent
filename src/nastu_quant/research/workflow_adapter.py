@@ -61,11 +61,20 @@ class MockWorkflowAdapter:
                 completed = execution.get("completed")
                 if not isinstance(completed, list):
                     raise OrchestrationError("Regular Campaign lacks completed records")
+                if not completed:
+                    raise OrchestrationError("Regular Campaign has no completed batch")
+                for item in completed:
+                    if (not isinstance(item, dict) or
+                            not isinstance(item.get("alpha_ids"), list) or
+                            not isinstance(item.get("candidate_status"), dict)):
+                        raise OrchestrationError("Regular Campaign qualification evidence incomplete")
                 return {"status": execution.get("status"), "completed": [
-                    {"alpha_ids": item.get("alpha_ids"),
-                     "candidate_status": item.get("candidate_status")}
+                    {"alpha_ids": item["alpha_ids"],
+                     "candidate_status": item["candidate_status"]}
                     for item in completed]}
-            if not execution.get("candidate_id"):
+            if not all(execution.get(key) for key in (
+                    "candidate_id", "candidate_status", "preferred_status",
+                    "candidate_ref", "preferred_ref")):
                 raise OrchestrationError("qualification evidence unavailable")
             return {"candidate_id": execution["candidate_id"],
                     "candidate_status": execution.get("candidate_status"),
