@@ -717,7 +717,7 @@ class PlatformRuntime:
             result["ra_state"] = ra_state
             if ra_state != "pass":
                 result["ra_details"] = details
-            if ra_state in {"fail", "unavailable"}:
+            if ra_state != "pass":
                 result["reason"] = "ra_checks_" + ra_state
                 return result
             self._recent_alpha_details[alpha_id] = details
@@ -930,7 +930,7 @@ class PlatformRuntime:
                     if not readable:
                         pending.append("risk_neutralized_" + metric + "_unavailable")
             ra_state = ra_correlation_check_state(details)
-            eligible = ra_state in {"pass", "pending"}
+            eligible = ra_state == "pass"
             if ra_state != "pass":
                 pending.append("ra_checks_unsettled_or_unavailable")
             others = [other for other in contenders if other != alpha_id]

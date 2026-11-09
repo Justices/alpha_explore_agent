@@ -134,7 +134,7 @@ def local_self_correlation_state(evidence, limit):
     value = _finite(evidence.get("value"))
     if value is None or not -1 <= value <= 1:
         return "pending"
-    if abs(value) > threshold:
+    if abs(value) >= threshold:
         return "fail"
     if evidence.get("status") == "pass" and evidence.get("complete") is True:
         return "pass"
@@ -268,7 +268,7 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
                 pending.append("ra_status_unreadable:" + row["name"])
     failures.extend("ra:" + name for name in ra_failures)
     pending.extend("ra_pending:" + name for name in ra_pending)
-    correlation_allowed = (rows is not None and not ra_failures
+    correlation_allowed = (rows is not None and not ra_failures and not ra_pending
                            and not any(item.startswith("ra_status_unreadable")
                                        for item in pending))
     if not correlation_allowed:
@@ -287,7 +287,7 @@ def evaluate_candidate(detail: dict, check_payload: dict, region: str, cfg: dict
     for name, value in (("prod", prod), ("self", self_corr)):
         if value is None:
             pending.append(name + "_correlation_unavailable")
-        elif abs(value) > gate[name + "_corr_max"]:
+        elif abs(value) >= gate[name + "_corr_max"]:
             failures.append(name + "_correlation")
     for alpha_id in expected:
         value = _finite(pairwise.get(alpha_id))

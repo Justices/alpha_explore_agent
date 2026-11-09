@@ -39,8 +39,8 @@ DEFAULT_CONFIG = {
         "risk_neutralized_fitness_min": 0.7,
         "turnover_min": 0.05,
         "turnover_max": 0.30,
-        "prod_corr_max": 0.70,       # current rule: inclusive
-        "self_corr_max": 0.70,       # current rule: inclusive
+        "prod_corr_max": 0.70,       # strict less-than
+        "self_corr_max": 0.70,       # strict less-than
         "pairwise_corr_max": 0.40,   # strict less-than
     },
     "preferred": {
