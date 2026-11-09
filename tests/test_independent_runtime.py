@@ -540,10 +540,10 @@ class TestIndependentRuntime(unittest.TestCase):
         row = self.runtime.audit_alphas({**self.runner, "alpha_ids": ["A1"],
             "entries": {"A1": entry}, "contender_ids": ["A1"]})["results"][0]
 
-        self.assertIsNotNone(row["local_self_correlation"])
-        self.assertEqual(row["local_self_correlation"]["status"], "pass")
-        self.assertEqual(row["prod_corr"], 0.4)
-        self.assertEqual(row["self_corr"], 0.5)
+        # RA must settle with zero failures before local or platform correlations.
+        self.assertIsNone(row["local_self_correlation"])
+        self.assertIsNone(row["prod_corr"])
+        self.assertIsNone(row["self_corr"])
         self.assertFalse(row["evidence_complete"])
         self.assertIn("ra_checks_unsettled_or_unavailable", row["gate_pending"])
 
