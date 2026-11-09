@@ -9,11 +9,12 @@ import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from .gatekeeper import (evaluate_candidate, parse_correlations,
+from ..gatekeeper import (evaluate_candidate, parse_correlations,
                          ra_correlation_check_state, local_self_correlation_state,
                          RA_CHECK_NAMES)
-from .preferred import evaluate_preferred
+from ..preferred import evaluate_preferred
 from .records import ResearchRecordStore
+from .candidate_pool import CandidatePool, evidence_hash, policy_hash
 
 
 def _now():
@@ -51,6 +52,7 @@ class CandidateQualificationService:
         self.gateway = gateway
         self.store = ResearchRecordStore(Path(state_root))
         self.config = config
+        self.pool = CandidatePool(self.store)
 
     @staticmethod
     def _platform_check_findings(details):
@@ -91,13 +93,17 @@ class CandidateQualificationService:
         preferred = evaluate_preferred(details, candidate_status=status, config=self.config)
         metrics = preferred.get("metrics", {})
         now = _now()
+        fingerprint = evidence_hash(details, correlations, failures, pending)
+        configured_policy = policy_hash(self.config)
         candidate = {
             "schema_version": 1, "candidate_id": candidate_id, "alpha_id": alpha_id,
             "workflow": workflow, "source_ref": str(source_ref),
             "candidate_ref": str(candidate_ref), "status": status,
             "failures": failures, "pending": pending, "metrics": metrics,
             "correlations": correlations or {}, "evidence_refs": evidence_refs or {},
-            "preferred_status": preferred["status"], "created_at": now, "updated_at": now,
+            "preferred_status": preferred["status"],
+            "evidence_sha256": fingerprint, "policy_sha256": configured_policy,
+            "created_at": now, "updated_at": now,
         }
         candidate_path = _upsert(self.store, "candidate", candidate)
         preferred_record = {
@@ -105,11 +111,13 @@ class CandidateQualificationService:
             "workflow": workflow, "source_ref": str(source_ref),
             "candidate_ref": str(candidate_ref), "status": preferred["status"],
             "failures": preferred.get("failures", []), "pending": preferred.get("pending", []),
-            "metrics": metrics,
+            "metrics": metrics, "evidence_sha256": fingerprint,
+            "policy_sha256": configured_policy,
             "evidence_refs": {**(evidence_refs or {}), "candidate_record": str(candidate_path)},
             "created_at": _now(), "updated_at": _now(),
         }
         preferred_path = _upsert(self.store, "preferred", preferred_record)
+        self.pool.sync_index()
         return {"candidate_id": candidate_id, "alpha_id": alpha_id,
                 "workflow": workflow, "candidate_status": status,
                 "candidate_failures": failures, "candidate_pending": pending,
@@ -129,8 +137,9 @@ class CandidateQualificationService:
         if ra_state != "pass":
             correlations, pairwise = None, None
         settings = details.get("settings") if isinstance(details.get("settings"), dict) else {}
+        is_data = details.get("is") if isinstance(details.get("is"), dict) else {}
         gate = evaluate_candidate(
-            details, {"checks": (details.get("is") or {}).get("checks")},
+            details, {"checks": is_data.get("checks")},
             settings.get("region"), self.config, correlations=correlations,
             pairwise=pairwise or {}, expected_pairwise_ids=expected_pairwise_ids or [])
         if ra_state == "fail":
@@ -250,9 +259,17 @@ class CandidateQualificationService:
         return self.store.list("preferred")
 
     def list_candidates(self):
-        return [row for row in self.list_candidate_evaluations()
-                if row.get("status") == "CANDIDATE"]
+        return self.pool.list_candidates()
 
     def list_preferred(self):
-        return [row for row in self.list_preferred_evaluations()
-                if row.get("status") == "PREFERRED"]
+        return self.pool.list_preferred()
+
+    def find_reusable_evaluation(self, alpha_id, *, evidence_sha256, policy_sha256):
+        """Exact evidence+policy match only; never bypass fresh RA/PC checks."""
+        return self.pool.find_reusable(alpha_id, evidence_sha256=evidence_sha256,
+                                       policy_sha256=policy_sha256)
+
+    def rebuild_candidate_index(self):
+        """Reconstruct global per-Alpha pools solely from versioned evaluations."""
+        return self.pool.sync_index()
+
