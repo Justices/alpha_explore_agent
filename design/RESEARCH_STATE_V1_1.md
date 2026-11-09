@@ -222,3 +222,24 @@ Turnover in [0.01, 0.70], maximum weight <= 0.10, and a PASS result for
 is `NOT_CANDIDATE`. Preferred never changes Candidate status or submits an
 Alpha. Drawdown and Coverage are recorded as informational metrics until
 explicit thresholds are approved.
+
+
+## Shared Candidate Qualification completion
+
+The shared `CandidateQualificationService` is now called from the Regular
+canonical-audit path and from the native Super and Optimization simulation
+paths. It writes a Candidate Pool record and a corresponding Preferred Pool
+evaluation record keyed by a stable candidate ID derived from workflow,
+platform Alpha ID and source candidate reference. Each record retains source
+lineage, evidence references, metrics, failures, pending reasons and status.
+
+The service uses read-only platform calls for Super and Optimization. It
+checks RA terminal state before any correlation operation, then requires the
+existing local self-correlation prefilter to complete before requesting PC/SC.
+PC and SC use the strict configured <0.70 boundary. A platform correlation
+failure or incomplete evidence remains pending; it is not treated as zero.
+Regular uses its existing canonical audit and passes the reconciled evidence
+into the same deterministic qualification/pool writer.
+
+The operational status view now includes Candidate and Preferred records.
+No Alpha submission is performed by qualification or Preferred selection.

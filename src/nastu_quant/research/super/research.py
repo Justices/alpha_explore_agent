@@ -293,6 +293,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             evidence_refs={"simulation_intent": str(intent_path),
                            "readback": run["readback_ref"], "audit": str(audit_path),
                            "prereg": str(prereg_path)})
+    run["status"] = "candidate_evaluated"
     run["candidate_id"] = qualification["candidate_id"]
     run["candidate_status"] = qualification["candidate_status"]
     run["preferred_status"] = qualification["preferred"]["status"]
