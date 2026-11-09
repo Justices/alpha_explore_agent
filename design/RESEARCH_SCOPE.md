@@ -225,7 +225,7 @@ All three research workflows now route their final candidate evidence through
 `CandidateQualificationService`. Regular supplies its canonical audit
 readback and reconciled correlation evidence; Super and Optimization use the
 same service to fetch the candidate details, verify terminal RA checks, run
-the existing RA-gated PC/SC correlation query, and only then request platform
+the existing RA-gated local self-correlation precheck followed by PC/SC correlation query, and only then request platform
 production/self correlations. A non-passing or unreadable RA state never
 triggers correlation requests. PC and SC must each be strictly below 0.70.
 

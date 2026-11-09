@@ -86,7 +86,7 @@ per invocation and retain a pending audit status after read-back.
   unreadable, changed or unrecognized evidence remains pending. The case contender file preserves
   pairwise conflicts for user resolution.
 - When readable RA checks have no failures, including while some are pending,
-  a four-year RA-gated PC/SC correlation query compares same-region OS Alphas
+  a four-year RA-gated local self-correlation precheck followed by PC/SC correlation query compares same-region OS Alphas
   excluding Power Pool Alphas. A breach or unavailable comparison prevents
   platform correlation requests. Terminal platform correlation checks are
   reused; pending endpoint responses receive bounded retries. Retained case
@@ -339,7 +339,7 @@ production/self-correlation calls through the existing gateway.
 
 The service checks RA first. If RA is failed, pending, missing or unreadable,
 it does not request production/self correlations. Only after RA is terminal
-PASS does it run the existing RA-gated PC/SC correlation query and then query
+PASS does it run the existing RA-gated local self-correlation precheck followed by PC/SC correlation query and then query
 PC/SC. PC and SC must both be strictly below 0.70. Candidate qualification
 also retains the configured metric gates and platform-check completeness.
 Only final `CANDIDATE` records can become `PREFERRED`.

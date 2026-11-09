@@ -10,7 +10,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 from .gatekeeper import (evaluate_candidate, parse_correlations,
-                         ra_correlation_check_state, RA_CHECK_NAMES)
+                         ra_correlation_check_state, local_self_correlation_state,
+                         RA_CHECK_NAMES)
 from .preferred import evaluate_preferred
 from .records import ResearchRecordStore
 
@@ -167,6 +168,37 @@ class CandidateQualificationService:
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
                 source_ref=source_ref, details=details, correlations=None,
                 evidence_refs=evidence_refs)
+        # Preserve the existing Regular workflow's local OS-pool self-correlation
+        # precheck. It is only reached after terminal RA PASS; PC/SC follows it.
+        try:
+            local = self.gateway.call(
+                "check_local_self_correlation", alpha_id=alpha_id,
+                self_corr_max=self.config["gate"]["self_corr_max"])
+        except Exception as exc:
+            return self.qualify_from_evidence(
+                workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                source_ref=source_ref, details=details, correlations=None,
+                evidence_refs={**(evidence_refs or {}),
+                               "local_self_correlation_error": type(exc).__name__},
+                external_pending=["local_self_correlation_unavailable"])
+        if isinstance(local, dict) and isinstance(local.get("ra_details"), dict):
+            details = local["ra_details"]
+        if ra_correlation_check_state(details) != "pass":
+            return self.qualify_from_evidence(
+                workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                source_ref=source_ref, details=details, correlations=None,
+                evidence_refs={**(evidence_refs or {}),
+                               "local_self_correlation": local},
+                external_pending=["ra_changed_during_local_self_precheck"])
+        local_state = local_self_correlation_state(
+            local, self.config["gate"]["self_corr_max"])
+        if local_state != "pass":
+            return self.qualify_from_evidence(
+                workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                source_ref=source_ref, details=details, correlations=None,
+                evidence_refs={**(evidence_refs or {}),
+                               "local_self_correlation": local},
+                external_pending=["local_self_correlation_precheck_unresolved"])
         # The gateway re-reads Alpha details and independently enforces
         # terminal RA PASS before making either PC or SC request.
         try:
