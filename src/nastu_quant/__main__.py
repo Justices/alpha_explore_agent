@@ -73,6 +73,8 @@ def main(argv=None):
     super_run.add_argument("--region")
     super_run.add_argument("--objective", required=True)
     super_run.add_argument("--delay", type=int)
+    research_recovery = sub.add_parser("recover-research", help="reconcile a V1.1 Super or Optimization simulation intent without reposting")
+    research_recovery.add_argument("intent_path", type=_path_argument)
     recovery = sub.add_parser("recover", help="reconcile an unfinished batch")
     recovery.add_argument("batch_dir", type=_path_argument)
     void = sub.add_parser("void", help="archive an unsubmitted draft")
@@ -304,7 +306,7 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super"}
+        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
                  else ConfiguredModelClient(cfg["model"]))
     except (OSError, ValueError, KeyError) as exc:
         print(f"configuration unavailable: {exc}", file=sys.stderr)
@@ -317,7 +319,7 @@ def main(argv=None):
             os.environ["BRAIN_CREDENTIALS_FILE"] = str(
                 expand_path(configured_credentials).resolve())
     gateway = Gateway()
-    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super"} else
+    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"} else
              ResearchAgent(gateway, model, cfg, root / "runs",
                            stop_flag=stop_flag))
     lock = SingleWriterLock(root / "state" / "agent.lock")
