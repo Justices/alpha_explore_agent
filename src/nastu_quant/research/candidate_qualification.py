@@ -156,7 +156,7 @@ class CandidateQualificationService:
         if (existing_candidate is not None and existing_preferred is not None
                 and same_assessment(existing_candidate, candidate)
                 and same_assessment(existing_preferred, preferred_record)):
-            self.pool.sync_index()
+            self.pool.sync_index(current_policy_sha256=configured_policy)
             return {"candidate_id": candidate_id, "alpha_id": alpha_id,
                     "workflow": workflow, "candidate_status": status,
                     "candidate_failures": failures, "candidate_pending": pending,
@@ -169,7 +169,7 @@ class CandidateQualificationService:
         _upsert(self.store, "candidate", staged_candidate)
         preferred_path = _upsert(self.store, "preferred", preferred_record)
         candidate_path = _upsert(self.store, "candidate", candidate)
-        self.pool.sync_index()
+        self.pool.sync_index(current_policy_sha256=configured_policy)
         return {"candidate_id": candidate_id, "alpha_id": alpha_id,
                 "workflow": workflow, "candidate_status": status,
                 "candidate_failures": failures, "candidate_pending": pending,
