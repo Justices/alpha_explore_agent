@@ -66,7 +66,9 @@ class MockWorkflowAdapter:
                 for item in completed:
                     if (not isinstance(item, dict) or
                             not isinstance(item.get("alpha_ids"), list) or
-                            not isinstance(item.get("candidate_status"), dict)):
+                            not (isinstance(item.get("candidate_status"), dict)
+                                 or isinstance(item.get("candidate_status"), str)
+                                 and bool(item["candidate_status"].strip()))):
                         raise OrchestrationError("Regular Campaign qualification evidence incomplete")
                 return {"status": execution.get("status"), "completed": [
                     {"alpha_ids": item["alpha_ids"],
