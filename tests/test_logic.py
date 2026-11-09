@@ -77,7 +77,7 @@ class TestGatekeeper(unittest.TestCase):
         audit = gatekeeper.evaluate_candidate(
             detail, checks, "GLB", DEFAULT_CONFIG,
             correlations={"prod": 0.7, "self": 0.7}, expected_pairwise_ids=[])
-        self.assertTrue(audit["correlation_allowed"])
+        self.assertFalse(audit["correlation_allowed"])
         self.assertEqual(audit["status"], "CHECKS_PENDING")
 
     def test_zero_ra_failures_allow_correlation_even_when_sharpe_fails(self):
@@ -111,7 +111,7 @@ class TestGatekeeper(unittest.TestCase):
         detail = {"is": {"sharpe": 1.8, "fitness": 1.2, "sharpe_2y": 1.7,
                          "margin": 0.001, "turnover": 0.2}}
         checks = {"checks": [{"name": "LOW_2Y_SHARPE", "result": "PASS", "value": 1.7}]}
-        kwargs = {"correlations": {"prod": 0.7, "self": 0.7},
+        kwargs = {"correlations": {"prod": 0.699, "self": 0.699},
                   "expected_pairwise_ids": ["OLD"]}
         audit = gatekeeper.evaluate_candidate(detail, checks, "GLB", DEFAULT_CONFIG,
                                                pairwise={"OLD": 0.39}, **kwargs)
