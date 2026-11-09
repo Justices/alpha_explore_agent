@@ -263,8 +263,13 @@ def main(argv=None):
                           "v11_super_runs": _record_summaries("super_run"),
                           "v11_optimization_sources": _record_summaries("optimization_source"),
                           "v11_candidate_branches": _record_summaries("candidate_branch"),
-                          "v11_candidates": _record_summaries("candidate"),
-                          "v11_preferred": _record_summaries("preferred"),
+                          "v11_candidates": [
+                              row for row in global_pool.get("entries", [])
+                              if row["candidate_status"] == "CANDIDATE"],
+                          "v11_preferred": [
+                              row for row in global_pool.get("entries", [])
+                              if row["candidate_status"] == "CANDIDATE" and
+                                 row["preferred_status"] == "PREFERRED"],
                           "v11_candidate_evaluations": _record_summaries("candidate_evaluations"),
                           "v11_preferred_evaluations": _record_summaries("preferred_evaluations")},
                          ensure_ascii=False))

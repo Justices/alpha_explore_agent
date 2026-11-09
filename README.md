@@ -349,3 +349,19 @@ corresponding Preferred Pool evaluation record, with stable IDs, workflow,
 source/candidate lineage, metrics, failure/pending reasons and evidence refs.
 The `status` command lists both pools. These paths only read BRAIN Alpha
 evidence; they do not submit or modify Alphas.
+
+
+### Incremental Candidate pool maintenance
+
+Use `nq status` to inspect the deduplicated global Candidate/Preferred pool and
+all per-Workflow evaluation ledgers. Use `nq rebuild-pools` to reconstruct the
+derived global index solely from saved versioned evaluation records. Rebuilding
+does not contact BRAIN, resimulate or submit an Alpha.
+
+Candidate records are keyed by workflow + Alpha ID + candidate reference, so
+different Campaigns and Optimization branches keep distinct research/audit
+lineage. Their global views deduplicate by Alpha ID, selecting the latest
+evaluation rather than an older PASS. Re-evaluations with identical evidence
+are idempotent; changed records archive previous revisions under
+`state/research_v1_1/evaluation_history/` before replacement. Reuse requires
+a matching current evidence and policy hash, never just matching Alpha ID.

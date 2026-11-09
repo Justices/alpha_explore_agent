@@ -243,3 +243,31 @@ into the same deterministic qualification/pool writer.
 
 The operational status view now includes Candidate and Preferred records.
 No Alpha submission is performed by qualification or Preferred selection.
+
+
+## Global deduplication, audit reuse and incremental refresh
+
+The global `CandidatePool` index groups assessments by the platform Alpha ID,
+across Regular Campaigns, Super and Optimization, without rewriting any
+individual workflow's `candidate_id` or source lineage. Global pool membership
+is derived from the most recent evaluation of each Alpha ID; a newer failed
+or pending evaluation cannot leave an older `CANDIDATE` or `PREFERRED` result
+visible as the current global result. Both the Candidate and Preferred
+evidence/policy hashes must match before Preferred is shown.
+
+`CandidateQualificationService` automatically rebuilds the derived pool index
+after a successfully persisted evaluation. Existing Candidate/Preferred
+evaluation records are updated idempotently: unchanged evidence and policy do
+not advance `updated_at`; a changed record first archives the prior snapshot
+in `state/research_v1_1/evaluation_history/<kind>/<candidate_id>/`.
+Uninterrupted and interrupted runs can reconstruct the global index from
+the canonical versioned candidate/preferred records using
+`rebuild-pools`, with **no BRAIN requests**. It is a derived cache, not
+an additional admission authority.
+
+Historical candidate evaluations can be located for reuse only with the
+exact current evidence SHA-256 and policy SHA-256, and only if the *latest*
+evaluation for that Alpha matches. This provides safe, evidence-bound
+historical lookup; it does not bypass current RA/PC/SC checks or substitute
+for a BRAIN correlation refresh. Old snapshots remain audit history, never
+automatic submission eligibility.
