@@ -14,7 +14,8 @@ from .state_store import update_stop_flag
 from .submission_gate import SubmissionGateError
 from .research.entrypoints import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 from .research.records import ResearchRecordStore
-from .research.candidate_pool import CandidatePool
+from .research.candidate_pool import CandidatePool, policy_hash
+from .config import DEFAULT_CONFIG
 
 
 def _path_argument(value):
@@ -152,13 +153,29 @@ def main(argv=None):
         return 0
     if args.command == "rebuild-pools":
         try:
-            index = CandidatePool(ResearchRecordStore(root)).sync_index()
-        except (OSError, ValueError, KeyError, TypeError) as exc:
+            config_path = args.config or root / "config" / "nastu_quant.json"
+            cfg = (json.loads(config_path.read_text(encoding="utf-8"))
+                   if config_path.exists() else DEFAULT_CONFIG)
+            if not isinstance(cfg, dict):
+                raise ValueError("configuration must be an object")
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                index = CandidatePool(ResearchRecordStore(root)).sync_index(
+                    current_policy_sha256=policy_hash(cfg))
+        except (OSError, ValueError, KeyError, TypeError, WriterLockError) as exc:
             print(f"pool rebuild failed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps(index, ensure_ascii=False))
         return 0
     if args.command == "status":
+        try:
+            config_path = args.config or root / "config" / "nastu_quant.json"
+            pool_config = (json.loads(config_path.read_text(encoding="utf-8"))
+                           if config_path.exists() else DEFAULT_CONFIG)
+            if not isinstance(pool_config, dict):
+                raise ValueError("configuration must be an object")
+            current_policy = policy_hash(pool_config)
+        except (OSError, ValueError, TypeError):
+            current_policy = None
         runs = root / "runs"
         unfinished = []
         if runs.exists():
@@ -227,19 +244,29 @@ def main(argv=None):
                 for record_path in sorted(folder.glob("*.json")):
                     try:
                         item = json.loads(record_path.read_text(encoding="utf-8"))
-                        if kind == "candidate" and item.get("status") != "CANDIDATE":
+                        if storage_kind == "candidate" and item.get("status") != "CANDIDATE":
                             continue
-                        if kind == "preferred" and item.get("status") != "PREFERRED":
+                        if storage_kind == "preferred" and item.get("status") != "PREFERRED":
                             continue
+                        policy_current = (current_policy is not None and
+                                          item.get("policy_sha256") == current_policy)
+                        candidate_status = item.get("candidate_status") or (
+                            item.get("status") if storage_kind == "candidate" else None)
+                        preferred_status = item.get("preferred_status") or (
+                            item.get("status") if storage_kind == "preferred" else None)
+                        if storage_kind == "candidate" and item.get("status") == "CANDIDATE" and not policy_current:
+                            candidate_status = "POLICY_STALE"
+                            preferred_status = "NOT_CANDIDATE"
+                        if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
+                            preferred_status = "NOT_CANDIDATE"
                         output.append({
                             "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                                   item.get("source_id"),
                             "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                             "workflow": item.get("workflow"),
-                            "candidate_status": item.get("candidate_status") or
-                                                (item.get("status") if storage_kind == "candidate" else None),
-                            "preferred_status": item.get("preferred_status") or
-                                                (item.get("status") if storage_kind == "preferred" else None),
+                            "candidate_status": candidate_status,
+                            "preferred_status": preferred_status,
+                            "policy_current": policy_current,
                             "candidate_alpha_id": item.get("candidate_alpha_id"),
                             "status": item.get("status"),
                             "simulation_intent_ref": item.get("simulation_intent_ref"),
@@ -252,7 +279,10 @@ def main(argv=None):
                         output.append({"path": str(record_path), "status": "unreadable"})
             return output
         try:
-            global_pool = CandidatePool(ResearchRecordStore(root)).build_index()
+            if current_policy is None:
+                raise ValueError("current admission policy is unavailable")
+            global_pool = CandidatePool(ResearchRecordStore(root)).build_index(
+                current_policy_sha256=current_policy)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             global_pool = {"status": "unavailable", "reason": type(exc).__name__}
         print(json.dumps({"global_alpha_pool": global_pool,
