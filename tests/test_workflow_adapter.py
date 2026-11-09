@@ -69,6 +69,11 @@ class WorkflowAdapterTests(unittest.TestCase):
                     if workflow == "optimization":
                         self.assertEqual(mocked.call_args.kwargs["alpha_id"], "SOURCE")
 
+    def test_real_dispatch_rejects_unmarked_model(self):
+        agent = type("Agent", (), {"model": object()})()
+        with self.assertRaisesRegex(OrchestrationError, "mock model"):
+            MockWorkflowAdapter(self.root, DEFAULT_CONFIG, FakeGateway(), agent)
+
     def test_rejects_gateway_without_offline_marker(self):
         with self.assertRaises(OrchestrationError):
             MockWorkflowAdapter(self.root, DEFAULT_CONFIG, UnsafeGateway(), object())
