@@ -167,7 +167,7 @@ class FullMockWorkflowTests(unittest.TestCase):
 
     def test_optimization_executor_preserves_source_and_intent(self):
         runner, task, result, gateway = self._run("optimization")
-        self.assertEqual(result["status"], "COMPLETED", result.get("failure"))
+        self.assertEqual(result["status"], "COMPLETED", (result.get("failure"), self.last_error))
         self.assertEqual(gateway.calls.count("simulate_super"), 1)
         self.assertEqual(result["checkpoints"]["execute"]["source_alpha_id"], "SOURCE")
         self.assertTrue(result["checkpoints"]["execute"]["source_unchanged_verified"])
