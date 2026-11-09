@@ -95,9 +95,10 @@ class CandidatePool:
             entries.append({
                 "alpha_id": alpha_id, "candidate_id": current["candidate_id"],
                 "candidate_status": candidate_status,
-                "preferred_status": (preferred_status
-                                     if candidate_status == "CANDIDATE"
-                                     else "NOT_CANDIDATE"),
+                "preferred_status": (
+                    preferred_status if candidate_status == "CANDIDATE" else
+                    "PENDING_PREFERRED" if candidate_status == "EVALUATION_PENDING"
+                    else "NOT_CANDIDATE"),
                 "requires_reaudit": (not digests_complete or policy_stale),
                 "policy_stale": policy_stale,
                 "evaluation_pending": current.get("status") == "EVALUATION_PENDING",
