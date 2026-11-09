@@ -89,8 +89,14 @@ def main(argv=None):
     super_run.add_argument("--delay", type=int)
     research_recovery = sub.add_parser("recover-research", help="reconcile a V1.1 Super or Optimization simulation intent without reposting")
     research_recovery.add_argument("intent_path", type=_path_argument)
-    recovery = sub.add_parser("recover", help="reconcile an unfinished batch")
+    recovery = sub.add_parser("recover", help="reconcile an unfinished Regular batch")
     recovery.add_argument("batch_dir", type=_path_argument)
+    unified_recovery = sub.add_parser(
+        "recover-workflow",
+        help="recover a Regular batch directory or a Super/Optimization simulation intent")
+    unified_recovery.add_argument(
+        "--workflow", choices=("regular", "super", "optimization"), required=True)
+    unified_recovery.add_argument("target", type=_path_argument)
     void = sub.add_parser("void", help="archive an unsubmitted draft")
     void.add_argument("batch_dir", type=_path_argument)
     void.add_argument("--reason", required=True)
@@ -400,13 +406,14 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists() and args.command not in {"recover", "recover-research"}:
+    if stop_flag.exists() and args.command not in {"recover", "recover-research", "recover-workflow"}:
         print("research is stopped; no new platform work will start", file=sys.stderr)
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
+                 or (args.command == "recover-workflow" and args.workflow != "regular")
                  else ConfiguredModelClient(cfg["model"]))
     except (OSError, ValueError, KeyError) as exc:
         print(f"configuration unavailable: {exc}", file=sys.stderr)
@@ -419,7 +426,8 @@ def main(argv=None):
             os.environ["BRAIN_CREDENTIALS_FILE"] = str(
                 expand_path(configured_credentials).resolve())
     gateway = Gateway()
-    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"} else
+    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
+             or (args.command == "recover-workflow" and args.workflow != "regular") else
              ResearchAgent(gateway, model, cfg, root / "runs",
                            stop_flag=stop_flag))
     lock = SingleWriterLock(root / "state" / "agent.lock")
@@ -430,6 +438,12 @@ def main(argv=None):
         return 2
     try:
         gateway.start()
+        if args.command == "recover-workflow":
+            result = RecoveryCoordinator(root).recover(
+                args.target, gateway=gateway, agent=agent, config=cfg,
+                expected_workflow=args.workflow)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         if args.command in RESEARCH_COMMANDS:
             result = dispatch_research(args.command, args, cfg, root, gateway, agent)
             print(json.dumps(result, ensure_ascii=False))

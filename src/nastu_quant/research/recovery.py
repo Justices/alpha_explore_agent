@@ -140,7 +140,7 @@ class RecoveryCoordinator:
             return None
         return self._read_json(journal_path, "recovery journal")
 
-    def recover(self, target, *, gateway, agent=None, config=None):
+    def recover(self, target, *, gateway, agent=None, config=None, expected_workflow=None):
         """Recover one existing operation without ever issuing a new Simulation.
 
         Regular targets are batch directories. Super and Optimization targets
@@ -149,6 +149,14 @@ class RecoveryCoordinator:
         """
         path = self._resolve_target(target)
         workflow, resolved, intent, fingerprint = self._inspect(path)
+        if expected_workflow is not None and expected_workflow != workflow:
+            raise RecoveryError(
+                f"recovery target is {workflow}, not requested {expected_workflow}"
+            )
+        if workflow == "regular" and agent is None:
+            raise RecoveryError("Regular recovery requires the existing ResearchAgent")
+        if workflow in {"super", "optimization"} and gateway is None:
+            raise RecoveryError("Super/Optimization recovery requires the platform gateway")
         journal_path = self._journal_path(workflow, resolved)
         if journal_path.exists():
             journal = self._read_json(journal_path, "recovery journal")
@@ -185,8 +193,6 @@ class RecoveryCoordinator:
 
         try:
             if workflow == "regular":
-                if agent is None:
-                    raise RecoveryError("Regular recovery requires the existing ResearchAgent")
                 result = agent.recover(resolved)
             else:
                 recover_fn = self._simulation_recover

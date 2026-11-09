@@ -145,14 +145,11 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(coordinator.journal_for(batch)["status"], "BLOCKED")
 
     def test_target_outside_state_root_is_rejected(self):
-        outside = Path(tempfile.gettempdir()) / "outside-recovery-target"
-        outside.mkdir(exist_ok=True)
-        try:
+        with tempfile.TemporaryDirectory() as outside_root:
+            outside = Path(outside_root)
             with self.assertRaisesRegex(RecoveryError, "outside"):
                 RecoveryCoordinator(self.root).recover(
                     outside, gateway=self.gateway, agent=FakeAgent())
-        finally:
-            outside.rmdir()
 
     def test_immutable_target_change_blocks_recovery_replay(self):
         batch = self._regular_target()
