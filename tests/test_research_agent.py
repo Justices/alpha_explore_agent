@@ -659,7 +659,7 @@ class TestResearchAgent(unittest.TestCase):
 
         result = agent.run_once("slow lending signal", dataset_id="risk60")
 
-        self.assertIn("check_correlation", [name for name, _ in self.gateway.calls])
+        self.assertNotIn("check_correlation", [name for name, _ in self.gateway.calls])
         self.assertIn("ra_pending:LOW_SHARPE", result["gate"]["A1"]["pending"])
         self.assertNotEqual(result["gate"]["A1"]["status"], "CANDIDATE")
 
