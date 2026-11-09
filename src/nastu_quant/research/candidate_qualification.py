@@ -40,7 +40,7 @@ def _candidate_status(failures, pending, fallback="EVIDENCE_PENDING"):
     if failures:
         return "METRICS_FAILED"
     if pending:
-        return "EVIDENCE_PENDING"
+        return fallback if fallback not in {"CANDIDATE", "PREFERRED", None} else "EVIDENCE_PENDING"
     return fallback or "CANDIDATE"
 
 
