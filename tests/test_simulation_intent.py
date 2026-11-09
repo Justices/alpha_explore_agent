@@ -17,9 +17,10 @@ from nastu_quant.research.simulation_intent import (
 
 
 class ReadBackGateway:
-    def __init__(self, details, limit):
+    def __init__(self, details, limit, source_details=None):
         self.details = details
         self.limit = limit
+        self.source_details = source_details
         self.commands = []
 
     def call(self, command, **kwargs):
@@ -27,6 +28,8 @@ class ReadBackGateway:
         if command == "set_case":
             return None
         if command == "get_alpha_details":
+            if self.source_details and kwargs.get("alpha_id") == self.source_details.get("id"):
+                return self.source_details
             return self.details
         if command == "check_local_self_correlation":
             return {"status": "fail", "complete": True,
@@ -140,6 +143,81 @@ class TestSimulationIntent(unittest.TestCase):
         self.assertEqual(store.list("candidate")[0]["status"], "CORR_REJECTED")
         history = store.root / "evaluation_history" / "candidate" / first["candidate_id"]
         self.assertFalse(history.exists())
+        self.assertNotIn("resume_simulation_batch", gateway.commands)
+
+    def test_optimization_read_back_recovery_finishes_branch_qualification(self):
+        root = Path(self.temp.name)
+        store = ResearchRecordStore(root)
+        run_id, batch_id, branch_id = "c" * 32, "batch-opt", "b" * 32
+        now = datetime.now(timezone.utc).isoformat()
+        branch_dir = store.root / "candidate_branch"
+        branch_dir.mkdir(parents=True, exist_ok=True)
+        source_details = {
+            "id": "A_SOURCE", "type": "REGULAR",
+            "settings": {"region": "GLB", "delay": 1, "universe": "TOP3000"},
+            "regular": {"code": "rank(source_field)"},
+        }
+        snapshot_path = branch_dir / "source_snapshot.json"
+        atomic_write_json(snapshot_path, source_details)
+        source_properties = {
+            "id": source_details["id"], "type": "REGULAR",
+            "settings": source_details["settings"],
+            "regular": source_details["regular"]["code"],
+        }
+        source_digest = hashlib.sha256(json.dumps(
+            source_properties, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        branch = {
+            "schema_version": 1, "branch_id": branch_id, "source_id": "d" * 32,
+            "source_alpha_id": "A_SOURCE", "source_type": "regular",
+            "source_snapshot_ref": str(snapshot_path),
+            "source_snapshot_sha256": "f" * 64,
+            "source_properties_sha256": source_digest,
+            "rationale": "recovery test", "changes": ["change one"],
+            "effective_settings": {"region": "GLB", "dataset_id": "analyst69",
+                                   "delay": 1, "universe": "TOP3000"},
+            "objective": "optimization recovery", "simulation_intent_ref": None,
+            "status": "simulated_pending_audit",
+            "created_at": now, "updated_at": now,
+        }
+        platform_dir = store.root / "optimization"
+        platform_dir.mkdir(parents=True, exist_ok=True)
+        intent_path = platform_dir / "intent.json"
+        branch["simulation_intent_ref"] = str(intent_path)
+        store.put("candidate_branch", branch)
+        details = {
+            "id": "A_OPT_RECOVERED", "type": "REGULAR",
+            "settings": {"region": "GLB", "delay": 1, "universe": "TOP3000"},
+            "regular": {"code": "rank(candidate_field)"},
+            "is": {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]},
+        }
+        row = {"alpha_id": "A_OPT_RECOVERED", "details": details}
+        result = {"results": [row], "runner": {"recovered": True}}
+        response_path, receipt_path = platform_dir / "response.json", platform_dir / "receipt.json"
+        atomic_write_json(response_path, result)
+        atomic_write_json(receipt_path, row)
+        digest = hashlib.sha256(json.dumps(
+            result, ensure_ascii=False, sort_keys=True, default=str
+        ).encode("utf-8")).hexdigest()
+        create_simulation_intent(
+            intent_path, workflow="optimization", run_id=run_id, batch_id=batch_id,
+            request={"regular": "rank(candidate_field)"},
+            settings={"region": "GLB", "delay": 1})
+        transition_simulation_intent(intent_path, expected_status="PREPARED", status="POSTING")
+        transition_simulation_intent(
+            intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
+            response_sha256=digest, response_ref=str(response_path))
+        transition_simulation_intent(
+            intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
+            receipt_ref=str(receipt_path), response_sha256=digest,
+            response_ref=str(response_path))
+        gateway = ReadBackGateway(
+            details, DEFAULT_CONFIG["gate"]["self_corr_max"], source_details=source_details)
+        recovered = recover_simulation_intent(
+            gateway, root, intent_path, config=DEFAULT_CONFIG)
+        self.assertEqual(recovered["status"], "candidate_evaluated")
+        self.assertEqual(store.get("candidate_branch", branch_id)["status"],
+                         "candidate_evaluated")
         self.assertNotIn("resume_simulation_batch", gateway.commands)
 
     def test_intent_creation_refuses_overwrite(self):
