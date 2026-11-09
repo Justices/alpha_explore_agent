@@ -140,7 +140,8 @@ class RecoveryCoordinator:
             return None
         return self._read_json(journal_path, "recovery journal")
 
-    def recover(self, target, *, gateway, agent=None, config=None, expected_workflow=None):
+    def recover(self, target, *, gateway, agent=None, config=None, expected_workflow=None,
+                task_id=None, step=None):
         """Recover one existing operation without ever issuing a new Simulation.
 
         Regular targets are batch directories. Super and Optimization targets
@@ -157,12 +158,18 @@ class RecoveryCoordinator:
             raise RecoveryError("Regular recovery requires the existing ResearchAgent")
         if workflow in {"super", "optimization"} and gateway is None:
             raise RecoveryError("Super/Optimization recovery requires the platform gateway")
+        if (task_id is None) != (step is None):
+            raise RecoveryError("task_id and step must be supplied together")
+        if task_id is not None and step != "execute":
+            raise RecoveryError("workflow recovery can reconcile only the execute step")
         journal_path = self._journal_path(workflow, resolved)
         if journal_path.exists():
             journal = self._read_json(journal_path, "recovery journal")
-            if journal.get("target_fingerprint") != fingerprint:
+            if (journal.get("target_fingerprint") != fingerprint
+                    or journal.get("task_id") != task_id
+                    or journal.get("step") != step):
                 raise RecoveryError(
-                    "recovery target evidence changed after the first attempt; manual review required"
+                    "recovery target evidence or task binding changed; manual review required"
                 )
             if journal.get("status") == "COMPLETED":
                 result = journal.get("result")
@@ -181,6 +188,8 @@ class RecoveryCoordinator:
             "workflow": workflow,
             "target_ref": str(resolved),
             "target_fingerprint": fingerprint,
+            "task_id": task_id,
+            "step": step,
             "status": "RUNNING",
             "started_at": now,
             "updated_at": now,
@@ -228,3 +237,56 @@ class RecoveryCoordinator:
                 f"{workflow} recovery failed and is blocked for manual review: "
                 f"{type(exc).__name__}"
             ) from exc
+
+    def recover_task(self, orchestrator, task_id, *, gateway, agent=None, config=None):
+        """Recover a blocked orchestration execute step from its bound domain artifact."""
+        task = orchestrator.load(task_id)
+        step = (task.get("failure") or {}).get("step")
+        target = task.get("recovery_target") or {}
+        if (task.get("status") != "BLOCKED" or step != "execute"
+                or task.get("steps", {}).get("execute") != "RUNNING"):
+            raise RecoveryError("only a blocked execute step can use workflow recovery")
+        if not target.get("ref") or not target.get("kind"):
+            raise RecoveryError("task has no durable workflow recovery target")
+        expected_kind = "regular_batch" if task["workflow"] == "regular" else "simulation_intent"
+        if target["kind"] != expected_kind:
+            raise RecoveryError("task recovery target kind does not match its workflow")
+
+        result = self.recover(
+            target["ref"], gateway=gateway, agent=agent, config=config,
+            expected_workflow=task["workflow"], task_id=task_id, step=step)
+        if task["workflow"] == "regular":
+            request = task["request"]
+            if not request.get("objective") or not request.get("region"):
+                raise RecoveryError("Regular task request lacks objective or Region for Campaign reconciliation")
+            from .regular.campaign import run_regular_campaign
+            result = run_regular_campaign(
+                agent, gateway, objective=request["objective"], region=request["region"],
+                dataset_ids=request.get("dataset_ids"), category=request.get("category"),
+                delay=request.get("delay"), universe=request.get("universe"),
+                max_batches=request.get("max_batches", 1),
+                ppa_profile=bool(request.get("ppa_profile", False)),
+                recovery_only=True)
+
+        journal = self.journal_for(target["ref"])
+        if (not isinstance(journal, dict) or journal.get("status") != "COMPLETED"
+                or journal.get("task_id") != task_id or journal.get("step") != step):
+            raise RecoveryError("domain recovery journal is not verified for this task")
+        receipt_root = self.journal_root / "tasks"
+        receipt_path = receipt_root / f"{task_id}.json"
+        receipt_root.mkdir(parents=True, exist_ok=True)
+        receipt = {
+            "schema_version": 1, "status": "COMPLETED",
+            "task_id": task_id, "workflow": task["workflow"], "step": step,
+            "target_kind": target["kind"], "target_ref": target["ref"],
+            "recovery_id": journal["recovery_id"],
+            "recovery_journal_ref": str(self._journal_path(
+                task["workflow"], Path(target["ref"]).resolve())),
+            "outcome": result, "outcome_sha256": _canonical_sha256(result),
+            "created_at": _now(),
+        }
+        atomic_write_json(receipt_path, receipt)
+        receipt_sha256 = _sha256_bytes(receipt_path.read_bytes())
+        return orchestrator.reconcile(
+            task_id, step, result, receipt_ref=str(receipt_path),
+            receipt_sha256=receipt_sha256)

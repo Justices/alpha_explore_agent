@@ -8,6 +8,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nastu_quant.research.recovery import RecoveryCoordinator, RecoveryError
+from nastu_quant.research.orchestrator import MainOrchestrator, OfflineResearchAdapter
 from nastu_quant.research.simulation_intent import (
     create_simulation_intent, transition_simulation_intent,
 )
@@ -150,6 +151,52 @@ class RecoveryCoordinatorTests(unittest.TestCase):
             with self.assertRaisesRegex(RecoveryError, "outside"):
                 RecoveryCoordinator(self.root).recover(
                     outside, gateway=self.gateway, agent=FakeAgent())
+
+    def test_task_recovery_reconciles_only_with_coordinator_receipt(self):
+        path = self._simulation_intent(status="POSTING")
+        qualification = {
+            "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
+            "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
+            "preferred_ref": "preferred.json",
+        }
+        fixtures = {
+            "super.validate": {"validated": True},
+            "super.execute": {"unused": True},
+            "super.qualify": qualification,
+            "super.collect": {"collected": True},
+        }
+
+        class BindAndFailAdapter(OfflineResearchAdapter):
+            def run(self, workflow, step, request, checkpoints, context=None):
+                if step == "execute":
+                    context["bind_recovery_target"]("simulation_intent", path)
+                    raise RuntimeError("lost response")
+                return super().run(workflow, step, request, checkpoints, context=context)
+
+        runner = MainOrchestrator(self.root, adapter=BindAndFailAdapter(fixtures))
+        task = runner.create("super", {"objective": "recovery task"})
+        blocked = runner.execute(task["task_id"])
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["recovery_target"]["ref"], str(path.resolve()))
+
+        calls = []
+        def recover_fn(gateway, state_root, intent_path, config=None):
+            calls.append(str(intent_path))
+            return {
+                "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
+                "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
+                "preferred_ref": "preferred.json",
+            }
+
+        coordinator = RecoveryCoordinator(self.root, simulation_recover=recover_fn)
+        reconciled = coordinator.recover_task(
+            runner, task["task_id"], gateway=self.gateway, config={"offline": True})
+        self.assertEqual(reconciled["steps"]["execute"], "DONE")
+        self.assertEqual(reconciled["budget"], {"limit": 1, "used": 1, "reserved": 0})
+        self.assertEqual(len(calls), 1)
+        completed = runner.execute(task["task_id"])
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertEqual(len(calls), 1)
 
     def test_immutable_target_change_blocks_recovery_replay(self):
         batch = self._regular_target()

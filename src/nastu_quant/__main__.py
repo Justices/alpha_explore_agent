@@ -97,6 +97,11 @@ def main(argv=None):
     unified_recovery.add_argument(
         "--workflow", choices=("regular", "super", "optimization"), required=True)
     unified_recovery.add_argument("target", type=_path_argument)
+    task_recovery = sub.add_parser(
+        "recover-task", help="reconcile a blocked orchestration execute step from its saved workflow intent")
+    task_recovery.add_argument(
+        "--workflow", choices=("regular", "super", "optimization"), required=True)
+    task_recovery.add_argument("task_id")
     void = sub.add_parser("void", help="archive an unsubmitted draft")
     void.add_argument("batch_dir", type=_path_argument)
     void.add_argument("--reason", required=True)
@@ -406,14 +411,14 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists() and args.command not in {"recover", "recover-research", "recover-workflow"}:
+    if stop_flag.exists() and args.command not in {"recover", "recover-research", "recover-workflow", "recover-task"}:
         print("research is stopped; no new platform work will start", file=sys.stderr)
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
-                 or (args.command == "recover-workflow" and args.workflow != "regular")
+                 or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")
                  else ConfiguredModelClient(cfg["model"]))
     except (OSError, ValueError, KeyError) as exc:
         print(f"configuration unavailable: {exc}", file=sys.stderr)
@@ -442,6 +447,12 @@ def main(argv=None):
             result = RecoveryCoordinator(root).recover(
                 args.target, gateway=gateway, agent=agent, config=cfg,
                 expected_workflow=args.workflow)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+        if args.command == "recover-task":
+            result = RecoveryCoordinator(root).recover_task(
+                MainOrchestrator(root), args.task_id, gateway=gateway,
+                agent=agent, config=cfg)
             print(json.dumps(result, ensure_ascii=False))
             return 0
         if args.command in RESEARCH_COMMANDS:

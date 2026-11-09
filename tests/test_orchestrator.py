@@ -21,7 +21,7 @@ class FaultAdapter(OfflineResearchAdapter):
         self.fail_step = fail_step
         self.calls = []
 
-    def run(self, workflow, step, request, checkpoints):
+    def run(self, workflow, step, request, checkpoints, context=None):
         self.calls.append(step)
         if step == self.fail_step:
             raise RuntimeError("injected failure")
@@ -62,12 +62,9 @@ class OrchestrationTests(unittest.TestCase):
         with self.assertRaises(OrchestrationError):
             runner.resume(task["task_id"])
         self.assertEqual(adapter.calls, ["validate", "execute"])
-        recovered = runner.reconcile(task["task_id"], "execute", {"receipt": "verified"})
-        self.assertEqual(recovered["budget"]["used"], 1)
-        self.assertEqual(recovered["budget"]["reserved"], 0)
-        completed = runner.execute(task["task_id"])
-        self.assertEqual(completed["status"], "COMPLETED")
-        self.assertEqual(adapter.calls, ["validate", "execute", "qualify", "collect"])
+        with self.assertRaisesRegex(OrchestrationError, "receipt"):
+            runner.reconcile(task["task_id"], "execute", {"receipt": "unverified"})
+        self.assertEqual(adapter.calls, ["validate", "execute"])
 
     def test_non_execute_failure_is_fail_closed(self):
         adapter = FaultAdapter(fixtures("regular"), "qualify")
@@ -78,10 +75,9 @@ class OrchestrationTests(unittest.TestCase):
         self.assertEqual(blocked["budget"]["used"], 1)
         with self.assertRaises(OrchestrationError):
             runner.resume(task["task_id"])
-        runner.reconcile(task["task_id"], "qualify", {"status": "EVIDENCE_PENDING"})
-        completed = runner.execute(task["task_id"])
-        self.assertEqual(completed["status"], "COMPLETED")
-        self.assertEqual(completed["result"]["qualification"]["status"], "EVIDENCE_PENDING")
+        with self.assertRaisesRegex(OrchestrationError, "receipt"):
+            runner.reconcile(task["task_id"], "qualify", {"status": "EVIDENCE_PENDING"})
+        self.assertEqual(runner.load(task["task_id"])["status"], "BLOCKED")
 
     def test_missing_fixture_blocks_without_platform_fallback(self):
         runner = MainOrchestrator(self.root, adapter=OfflineResearchAdapter({}))

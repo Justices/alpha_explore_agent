@@ -162,6 +162,9 @@ class MainOrchestrator:
                                            copy.deepcopy(task["request"]),
                                            copy.deepcopy(task["checkpoints"]),
                                            context=context)
+                # Binding the recovery target persists the task while the
+                # adapter is running; refresh before the next compare-and-save.
+                task = self.load(task_id)
                 if not isinstance(outcome, dict):
                     raise OrchestrationError("adapter must return a JSON object")
                 # Checkpoint must be durable and serializable before marking DONE.
@@ -173,6 +176,7 @@ class MainOrchestrator:
                     task["budget"]["used"] += 1
                 task = self._transition(task, status="RUNNING", failure=None)
             except Exception as exc:
+                task = self.load(task_id)
                 # Fail closed: RUNNING execute has unknown external outcome.
                 # Never auto-replay it or refund a reserved budget.
                 reason = "outcome_unknown_manual_reconciliation_required" if step == "execute" else type(exc).__name__
@@ -189,20 +193,46 @@ class MainOrchestrator:
             raise OrchestrationError("blocked task requires explicit reconciliation; no automatic replay")
         return self.execute(task_id)
 
-    def reconcile(self, task_id, step, outcome):
-        """Record independently verified completion, never perform platform operations."""
+    def reconcile(self, task_id, step, outcome, *, receipt_ref=None, receipt_sha256=None):
+        """Accept a checkpoint only when backed by a coordinator-issued durable receipt."""
         task = self.load(task_id)
         if (task["status"] != "BLOCKED" or task.get("failure", {}).get("step") != step
                 or task["steps"].get(step) != "RUNNING"):
             raise OrchestrationError("only blocked running step can be reconciled")
         if not isinstance(outcome, dict):
-            raise OrchestrationError("verified outcome must be a JSON object")
+            raise OrchestrationError("reconciled outcome must be a JSON object")
+        if not receipt_ref or not receipt_sha256:
+            raise OrchestrationError("a verified recovery receipt is required")
+        receipt_path = Path(receipt_ref).expanduser().resolve()
+        receipt_root = (self.state_root / "state" / "research_v1_1" /
+                        "recoveries" / "tasks").resolve()
+        if not receipt_path.is_relative_to(receipt_root) or not receipt_path.is_file():
+            raise OrchestrationError("recovery receipt must be under the task recovery journal")
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise OrchestrationError("recovery receipt is unreadable") from exc
+        actual_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        target = task.get("recovery_target") or {}
+        if (actual_sha != receipt_sha256
+                or receipt.get("status") != "COMPLETED"
+                or receipt.get("task_id") != task_id
+                or receipt.get("workflow") != task["workflow"]
+                or receipt.get("step") != step
+                or receipt.get("target_ref") != target.get("ref")
+                or receipt.get("target_kind") != target.get("kind")
+                or receipt.get("outcome_sha256") != _hash(outcome)):
+            raise OrchestrationError("recovery receipt does not verify this task outcome")
         json.dumps(outcome, allow_nan=False)
         task["checkpoints"][step] = copy.deepcopy(outcome)
         task["steps"][step] = "DONE"
         if step == "execute":
             task["budget"]["reserved"] -= 1
             task["budget"]["used"] += 1
+        task["reconciliation"] = {
+            "receipt_ref": str(receipt_path), "receipt_sha256": actual_sha,
+            "reconciled_at": _now(),
+        }
         return self._transition(task, status="RUNNING", failure=None)
 
 
