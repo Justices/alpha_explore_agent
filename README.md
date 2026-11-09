@@ -56,6 +56,15 @@ per invocation and retain a pending audit status after read-back.
   fix multiple Datasets; `--ppa` explicitly enables the PPA Profile. A budget
   stop reports unvisited combinations; an
   interrupted batch requires recovery before more Campaign work.
+  `recover-workflow --workflow regular <batch-dir>`, or the same
+  command with `super` / `optimization` and a simulation-intent
+  file, routes through the shared RecoveryCoordinator. `recover-task --workflow ... <task-id>`
+  reconciles a blocked orchestrator execute step only when its workflow has
+  persisted a recovery target. Recovery journals are durable and idempotent;
+  PREPARED intents are refused, completed recoveries are not re-invoked, and
+  failed/interrupted recovery is blocked for manual review. Task-level Regular
+  Campaign recovery is currently limited to one batch and never starts the
+  next batch.
   `plan-optimization --alpha-id ID` captures a read-only Regular or Super
   Alpha baseline and rejects missing type, settings, Region or source code.
   `plan-super --objective ... --region REGION` reads the live Super settings

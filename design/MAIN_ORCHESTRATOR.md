@@ -12,7 +12,32 @@ The orchestration steps are `validate → execute → qualify → collect`. Step
 
 Before calling an adapter, the orchestrator writes a `RUNNING` step and reserves experiment budget. If the adapter raises, the task is blocked. Re-entry never automatically replays a blocked step; an independently verified receipt may be recorded with `reconcile` and processing can then resume from the next step. This is intentionally conservative: it cannot infer that a crashed external Simulation failed.
 
-Single-writer lock is mandatory for CLI mutations; direct library users must hold the same lock. The orchestrator does not yet implement distributed locking or automatic reconciliation of platform receipts.
+Single-writer lock is mandatory for CLI mutations; direct library users must hold the same lock. The orchestrator does not implement distributed locking.
+
+The execute adapter receives a task-bound recovery-target callback. Regular binds
+its batch directory; Super and Optimization bind their immutable simulation
+intent file before the platform operation. A blocked execute step can be
+reconciled only by `RecoveryCoordinator` after the workflow-specific
+recovery succeeds and a durable task receipt is written. `MainOrchestrator.reconcile`
+rejects caller-supplied result dictionaries without that receipt. The receipt
+is bound to the task ID, workflow, step, target path, outcome digest and
+completed recovery-journal digest.
+
+`RecoveryCoordinator` routes Regular to the existing `ResearchAgent.recover`
+path and Super/Optimization to `recover_simulation_intent`. It journals
+`RUNNING / COMPLETED / BLOCKED` recovery states, validates immutable
+target evidence and returns a saved result for completed retries. It accepts
+only Regular `SUBMITTING / READ_BACK` and Super/Optimization
+`POSTING / OUTCOME_UNKNOWN / RESPONSE_RECEIVED / READ_BACK` intents.
+`PREPARED` is never submitted by recovery. Failed or interrupted
+recovery remains blocked for manual review; it is not automatically replayed.
+
+The CLI exposes `recover-workflow --workflow ... <target>` for direct
+workflow recovery and `recover-task --workflow ... <task-id>` for a
+blocked orchestration execute step. Task-level Regular recovery currently
+requires a one-batch orchestration budget and reconciles Campaign state without
+starting another batch. These recovery paths can resume/poll an existing
+platform runner, but never create a new Simulation request.
 
 ## P3: Candidate Pool
 
