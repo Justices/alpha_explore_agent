@@ -139,6 +139,17 @@ class TestGlobalCandidatePool(unittest.TestCase):
         self.assertEqual(gateway.commands,
                          ["set_case", "get_alpha_details"])
 
+    def test_unversioned_legacy_candidate_requires_reaudit(self):
+        identity = "f" * 32
+        record = self.sample(kind="candidate", candidate_id=identity,
+                             workflow="regular", status="CANDIDATE")
+        record.pop("evidence_sha256")
+        record.pop("policy_sha256")
+        _upsert(self.store, "candidate", record)
+        entries = self.pool.build_index()["entries"]
+        self.assertEqual(entries[0]["candidate_status"], "EVIDENCE_PENDING")
+        self.assertTrue(entries[0]["requires_reaudit"])
+
     def test_strict_correlation_boundary(self):
         cfg = copy.deepcopy(DEFAULT_CONFIG)
         self.assertFalse(correlation_verdict(0.7, 0.4, {}, cfg)[0])

@@ -72,12 +72,21 @@ class CandidatePool:
                  for row in rows),
                 key=lambda row: (row["workflow"], row["candidate_ref"],
                                  row["candidate_id"]))
+            # Old pre-index records may lack versioned evidence and policy
+            # fingerprints. They require re-audit, never silent promotion.
+            digests_complete = all(
+                isinstance(current.get(key), str) and
+                len(current[key]) == 64 for key in
+                ("evidence_sha256", "policy_sha256"))
+            candidate_status = (current["status"] if digests_complete
+                                else "EVIDENCE_PENDING")
             entries.append({
                 "alpha_id": alpha_id, "candidate_id": current["candidate_id"],
-                "candidate_status": current["status"],
+                "candidate_status": candidate_status,
                 "preferred_status": (preferred_status
-                                     if current["status"] == "CANDIDATE"
+                                     if candidate_status == "CANDIDATE"
                                      else "NOT_CANDIDATE"),
+                "requires_reaudit": not digests_complete,
                 "evaluation_count": len(rows),
                 "sources": sources,
                 "latest_updated_at": current["updated_at"],
