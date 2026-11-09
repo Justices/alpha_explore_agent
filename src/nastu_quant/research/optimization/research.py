@@ -382,7 +382,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             evidence_refs={"source_snapshot": source_info["snapshot_ref"],
                            "simulation_intent": str(intent_path),
                            "readback": str(readback_path), "audit": str(audit_path),
-                           "optimization_report": str(report_path)})
+                           "optimization_report": str(report_path)},
+            fallback_details=rows[0].get("details"))
     report["candidate_id"] = qualification["candidate_id"]
     report["candidate_status"] = qualification["candidate_status"]
     report["preferred_status"] = qualification["preferred"]["status"]
