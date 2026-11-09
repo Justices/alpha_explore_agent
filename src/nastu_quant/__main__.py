@@ -300,7 +300,7 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists():
+    if stop_flag.exists() and args.command != "recover-research":
         print("research is stopped; no new platform work will start", file=sys.stderr)
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"

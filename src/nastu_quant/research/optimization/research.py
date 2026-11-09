@@ -316,9 +316,12 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
                                 default=str).encode("utf-8")
+    response_path = prereg_path.with_name(f"{run_id}_response.json")
+    atomic_write_json(response_path, result)
     transition_simulation_intent(
         intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
-        response_sha256=hashlib.sha256(response_bytes).hexdigest())
+        response_sha256=hashlib.sha256(response_bytes).hexdigest(),
+        response_ref=str(response_path))
     rows = result.get("results") if isinstance(result, dict) else None
     if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("alpha_id"):
         transition_simulation_intent(
@@ -372,7 +375,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         "pending": audit["pending"], "created_at": _now()}
     atomic_write_json(report_path, report)
     branch.update(status="simulated_pending_audit", receipt_ref=str(readback_path),
-                  simulation_intent_ref=str(intent_path), audit_ref=str(audit_path),
+                  simulation_intent_ref=str(intent_path), response_ref=str(response_path),
+                  audit_ref=str(audit_path), runner=result.get("runner"),
                   report_ref=str(report_path),
                   candidate_alpha_id=rows[0]["alpha_id"],
                   budget={"limits": {"experiments": 1},
