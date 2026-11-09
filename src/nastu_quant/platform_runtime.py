@@ -1031,9 +1031,14 @@ class PlatformRuntime:
             if (params.get("batch_id") is not None and
                     _component(params["batch_id"], "batch ID") != self._prefilter_batch):
                 raise PlatformError("platform correlation belongs to a different batch")
-            if local_self_correlation_state(self._local_self_results.get(alpha_id),
-                                            params.get("self_corr_max")) != "pass":
-                raise PlatformError("platform correlation requires a completed local self prefilter")
+            # Independent gateway-side ordering guard: refresh details and
+            # require all readable RA checks to be terminal PASS before PC/SC.
+            details = self._json(self._request("GET", f"/alphas/{alpha_id}"))
+            if not isinstance(details, dict) or details.get("id") != alpha_id:
+                raise PlatformError("Alpha details are unavailable for correlation")
+            if ra_correlation_check_state(details) != "pass":
+                raise PlatformError("PC/SC correlation is forbidden until RA checks all PASS")
+            self._recent_alpha_details[alpha_id] = details
             cache = self._prefilter_cache if params.get("batch_id") is not None else None
             return self._correlations(alpha_id, params.get("contender_ids"), cache=cache)
         if command == "get_user_alphas":
