@@ -298,7 +298,7 @@ class TestResearchAgent(unittest.TestCase):
             "region": "GLB", "delay": 1, "universe": "TOP3000",
             "dataset_ids": ["risk60"]})
         done = runner.execute(task["task_id"])
-        self.assertEqual(done["status"], "COMPLETED", done.get("failure"))
+        self.assertEqual(done["status"], "COMPLETED", (done.get("failure"), done.get("checkpoints", {}).get("execute")))
         self.assertEqual(done["budget"]["used"], 1)
         self.assertEqual(len(done["checkpoints"]["execute"]["completed"]), 1)
         calls = [name for name, _ in self.gateway.calls]
