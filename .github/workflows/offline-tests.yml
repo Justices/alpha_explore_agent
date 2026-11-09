@@ -37,5 +37,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_cli.py'
       - name: Orchestrator (mock only)
         run: python -m unittest discover -s tests -p 'test_orchestrator.py'
+      - name: Existing workflow adapter (mock only)
+        run: python -m unittest discover -s tests -p 'test_workflow_adapter.py'
       - name: Full offline suite
         run: python -m unittest discover -s tests
