@@ -93,16 +93,6 @@ class FakeKnowledge:
         return {"task": task, "offline": True}
 
 
-def fake_qualification(self, **kwargs):
-    return {
-        "candidate_id": "MOCK_CANDIDATE_" + kwargs["workflow"],
-        "candidate_status": "EVIDENCE_PENDING",
-        "preferred": {"status": "PENDING_PREFERRED"},
-        "candidate_ref": "offline-candidate-record",
-        "preferred_ref": "offline-preferred-record",
-    }
-
-
 class FullMockWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -137,13 +127,7 @@ class FullMockWorkflowTests(unittest.TestCase):
             patch("nastu_quant.research.super.research.DecisionRecorder", ScriptedRecorder),
             patch("nastu_quant.research.optimization.research.KnowledgeService", FakeKnowledge),
             patch("nastu_quant.research.optimization.research.DecisionRecorder", ScriptedRecorder),
-            patch("nastu_quant.research.super.research.CandidateQualificationService.qualify_live",
-                  fake_qualification),
-            patch("nastu_quant.research.optimization.research.CandidateQualificationService.qualify_live",
-                  fake_qualification),
         ]
-        # Both module paths resolve to the same class; patches are intentionally
-        # equivalent, but only one is needed for each run.
         from contextlib import ExitStack
         with ExitStack() as stack:
             for p in patches:
