@@ -733,7 +733,7 @@ class ResearchAgent:
             # It cannot promote a pending/failed Alpha or alter Candidate status.
             try:
                 qualification = CandidateQualificationService(
-                    self.gateway, self.state_root, self.config).qualify_from_evidence(
+                    self.gateway, getattr(self, "state_root", batch_dir.parent), self.config).qualify_from_evidence(
                         workflow="regular", alpha_id=alpha_id,
                         candidate_ref=str(batch_dir),
                         source_ref=str(audit_path or batch_dir),
