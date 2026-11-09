@@ -169,7 +169,7 @@ class RecoveryCoordinator:
                     or journal.get("task_id") != task_id
                     or journal.get("step") != step):
                 raise RecoveryError(
-                    "recovery target evidence or task binding changed; manual review required"
+                    "recovery target evidence changed or task binding changed; manual review required"
                 )
             if journal.get("status") == "COMPLETED":
                 result = journal.get("result")
@@ -238,9 +238,12 @@ class RecoveryCoordinator:
                 f"{type(exc).__name__}"
             ) from exc
 
-    def recover_task(self, orchestrator, task_id, *, gateway, agent=None, config=None):
+    def recover_task(self, orchestrator, task_id, *, gateway, agent=None, config=None,
+                     expected_workflow=None):
         """Recover a blocked orchestration execute step from its bound domain artifact."""
         task = orchestrator.load(task_id)
+        if expected_workflow is not None and task.get("workflow") != expected_workflow:
+            raise RecoveryError("orchestration task workflow does not match the requested workflow")
         step = (task.get("failure") or {}).get("step")
         target = task.get("recovery_target") or {}
         if (task.get("status") != "BLOCKED" or step != "execute"
@@ -275,13 +278,15 @@ class RecoveryCoordinator:
         receipt_root = self.journal_root / "tasks"
         receipt_path = receipt_root / f"{task_id}.json"
         receipt_root.mkdir(parents=True, exist_ok=True)
+        journal_path = self._journal_path(
+            task["workflow"], Path(target["ref"]).resolve())
         receipt = {
             "schema_version": 1, "status": "COMPLETED",
             "task_id": task_id, "workflow": task["workflow"], "step": step,
             "target_kind": target["kind"], "target_ref": target["ref"],
             "recovery_id": journal["recovery_id"],
-            "recovery_journal_ref": str(self._journal_path(
-                task["workflow"], Path(target["ref"]).resolve())),
+            "recovery_journal_ref": str(journal_path),
+            "recovery_journal_sha256": _sha256_bytes(journal_path.read_bytes()),
             "outcome": result, "outcome_sha256": _canonical_sha256(result),
             "created_at": _now(),
         }

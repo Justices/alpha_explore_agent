@@ -214,6 +214,20 @@ class MainOrchestrator:
             raise OrchestrationError("recovery receipt is unreadable") from exc
         actual_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
         target = task.get("recovery_target") or {}
+        journal_path = Path(receipt.get("recovery_journal_ref", "")).expanduser().resolve()
+        journal_root = (self.state_root / "state" / "research_v1_1" / "recoveries").resolve()
+        try:
+            journal = json.loads(journal_path.read_text(encoding="utf-8"))
+            journal_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+        except (OSError, ValueError) as exc:
+            raise OrchestrationError("domain recovery journal is unreadable") from exc
+        if (not journal_path.is_relative_to(journal_root)
+                or journal.get("status") != "COMPLETED"
+                or journal.get("task_id") != task_id
+                or journal.get("step") != step
+                or journal.get("target_ref") != (task.get("recovery_target") or {}).get("ref")
+                or journal_sha != receipt.get("recovery_journal_sha256")):
+            raise OrchestrationError("domain recovery journal does not verify this task")
         if (actual_sha != receipt_sha256
                 or receipt.get("status") != "COMPLETED"
                 or receipt.get("task_id") != task_id

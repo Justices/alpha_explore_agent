@@ -452,7 +452,7 @@ def main(argv=None):
         if args.command == "recover-task":
             result = RecoveryCoordinator(root).recover_task(
                 MainOrchestrator(root), args.task_id, gateway=gateway,
-                agent=agent, config=cfg)
+                agent=agent, config=cfg, expected_workflow=args.workflow)
             print(json.dumps(result, ensure_ascii=False))
             return 0
         if args.command in RESEARCH_COMMANDS:

@@ -235,14 +235,21 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             state["plan_evidence_ref"] = str(evidence_path)
         if state.get("request") != request:
             raise ValueError("saved Campaign request does not match")
-        if state.get("active_item") is not None:
+        active_before = state.get("active_item")
+        completed_before = len(state.get("completed", []))
+        if active_before is not None:
             _reconcile_active(agent, state)
+            if recovery_only and len(state.get("completed", [])) == completed_before:
+                raise ValueError("recovered batch could not be linked to the active Campaign item")
             state["updated_at"] = _now()
             _sync_subtasks(state, state_root)
             atomic_write_json(path, state)
         if recovery_only:
             if state.get("active_item") is not None:
                 raise ValueError("Campaign active item remains unresolved after batch recovery")
+            state.pop("error", None)
+            if len(state["completed"]) >= max_batches:
+                state["status"] = "budget_complete"
             state["remaining_items"] = [
                 item for index, item in enumerate(state["items"])
                 if index not in {entry["item_index"] for entry in state["completed"]}]
