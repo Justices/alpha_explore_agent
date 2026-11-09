@@ -115,7 +115,8 @@ def prepare_source(gateway, state_root: Path, *, alpha_id: str,
     return {"source_id": captured["source_id"], "source_type": captured["source_type"],
             "alpha_id": alpha_id, "region": source_region,
             "source_ref": str(path), "snapshot_ref": str(snapshot_path),
-            "details_sha256": captured["details_sha256"]}
+            "details_sha256": captured["details_sha256"],
+            "source_properties_sha256": captured["source_properties_sha256"]}
 
 
 def create_branch(state_root: Path, *, source_ref: str, objective: str,
