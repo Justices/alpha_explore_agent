@@ -15,6 +15,7 @@ from .submission_gate import SubmissionGateError
 from .research.entrypoints import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 from .research.records import ResearchRecordStore
 from .research.candidate_pool import CandidatePool, policy_hash
+from .research.orchestrator import MainOrchestrator, OfflineResearchAdapter, OrchestrationError
 from .config import DEFAULT_CONFIG
 
 
@@ -27,6 +28,15 @@ def main(argv=None):
     parser.add_argument("--state-root", type=_path_argument, default=default_state_root())
     parser.add_argument("--config", type=_path_argument)
     sub = parser.add_subparsers(dest="command", required=True)
+    orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
+    orchestrate.add_argument("--workflow", choices=("regular", "super", "optimization"))
+    orchestrate.add_argument("--objective")
+    orchestrate.add_argument("--alpha-id")
+    orchestrate.add_argument("--task-id")
+    orchestrate.add_argument("--fixtures", type=_path_argument, required=True)
+    orchestrate.add_argument("--budget", type=int, default=1)
+    orchestration_status = sub.add_parser("orchestration-status", help="read a persisted orchestration task")
+    orchestration_status.add_argument("task_id")
     run = sub.add_parser("run-once", help="execute one admitted research batch")
     run.add_argument("--objective", required=True)
     run.add_argument("--dataset")
@@ -150,6 +160,29 @@ def main(argv=None):
             print(f"stop state not changed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps({"stopped": args.command == "stop"}))
+        return 0
+    if args.command in {"orchestrate-offline", "orchestration-status"}:
+        try:
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                if args.command == "orchestration-status":
+                    result = MainOrchestrator(root).load(args.task_id)
+                else:
+                    fixtures = json.loads(args.fixtures.read_text(encoding="utf-8"))
+                    runner = MainOrchestrator(root, adapter=OfflineResearchAdapter(fixtures))
+                    if args.task_id:
+                        result = runner.resume(args.task_id)
+                    else:
+                        if not args.workflow or not args.objective:
+                            raise OrchestrationError("workflow and objective are required for a new task")
+                        request = {"objective": args.objective}
+                        if args.alpha_id:
+                            request["alpha_id"] = args.alpha_id
+                        task = runner.create(args.workflow, request, budget=args.budget)
+                        result = runner.execute(task["task_id"])
+        except (OSError, ValueError, TypeError, WriterLockError) as exc:
+            print(f"offline orchestration failed: {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False))
         return 0
     if args.command == "rebuild-pools":
         try:
