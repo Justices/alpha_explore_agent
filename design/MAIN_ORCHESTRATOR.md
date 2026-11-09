@@ -30,6 +30,26 @@ python -m nastu_quant --state-root /tmp/alpha-state orchestrate-offline \
 python -m nastu_quant --state-root /tmp/alpha-state orchestration-status <task-id>
 ```
 
+## Existing workflow entrypoint adapter (mock-only)
+
+`src/nastu_quant/research/workflow_adapter.py` connects the orchestrator's
+`execute` step to the existing `research.entrypoints.dispatch` routes:
+`run-campaign` (Regular, one batch), `run-super` (Super), and
+`run-optimization` (Optimization with mandatory source Alpha ID).
+The adapter requires a gateway with an explicit `is_offline_mock` marker
+and a caller-injected agent. It does not construct a real Gateway or model.
+For unit tests, the dispatcher itself is injected, so no BRAIN API or
+Simulation endpoint is invoked.
+
+The existing executors own CandidateQualificationService. The orchestration
+`qualify` step only verifies their returned evidence, and the `collect`
+step builds a policy-aware, read-only Candidate Pool snapshot. This avoids
+double RA/PC/SC checks and accidental promotion.
+
+This is an **entrypoint contract integration**, not a complete simulated
+end-to-end exercise of the three existing executors. Those executors require
+richer mock gateway/model responses and have their own test suites.
+
 ## Remaining production integration boundary
 
 The current adapter is a **fixture-only contract**, not a production connection to the existing Regular Campaign, native Super, or Optimization executors. Before enabling a live adapter, implement an explicit operation policy, reconcile saved Simulation intents/receipts with the existing recovery API, validate budget accounting against the actual runner, and run a separate approval-controlled test. Automatic Alpha submission is out of scope. No live permission is implied by successful offline tests.
