@@ -222,6 +222,7 @@ def main(argv=None):
                             "candidate_alpha_id": item.get("candidate_alpha_id"),
                             "status": item.get("status"),
                             "simulation_intent_ref": item.get("simulation_intent_ref"),
+                            "response_ref": item.get("response_ref"),
                             "receipt_ref": item.get("receipt_ref") or item.get("readback_ref"),
                             "audit_ref": item.get("audit_ref"),
                             "report_ref": item.get("report_ref"),

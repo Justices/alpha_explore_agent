@@ -286,6 +286,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["status"] = "simulated_pending_audit"
     atomic_write_json(run_path, run)
     persist_shared(status="simulated_pending_audit",
+                   candidate_alpha_id=run["alpha_id"],
                    readback_ref=run["readback_ref"], audit_ref=str(audit_path),
                    budget={"limits": {"experiments": 1},
                            "reserved": {"experiments": 0},

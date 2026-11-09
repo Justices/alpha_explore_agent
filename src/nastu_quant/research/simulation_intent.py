@@ -153,6 +153,7 @@ def recover_simulation_intent(gateway, state_root, intent_path):
         if now <= last:
             now = last + timedelta(microseconds=1)
         shared.update(status="simulated_pending_audit",
+                      candidate_alpha_id=rows[0]["alpha_id"],
                       simulation_intent_ref=str(path),
                       readback_ref=str(receipt_path),
                       budget={"limits": {"experiments": 1},
