@@ -156,50 +156,58 @@ class RecoveryCoordinatorTests(unittest.TestCase):
                     outside, gateway=self.gateway, agent=FakeAgent())
 
     def test_task_recovery_reconciles_only_with_coordinator_receipt(self):
-        path = self._simulation_intent(status="POSTING")
-        qualification = {
-            "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
-            "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
-            "preferred_ref": "preferred.json",
-        }
-        fixtures = {
-            "super.validate": {"validated": True},
-            "super.execute": {"unused": True},
-            "super.qualify": qualification,
-            "super.collect": {"collected": True},
-        }
+        for workflow in ("super", "optimization"):
+            with self.subTest(workflow=workflow):
+                path = self._simulation_intent(workflow=workflow, status="POSTING")
+                qualification = {
+                    "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
+                    "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
+                    "preferred_ref": "preferred.json",
+                }
+                fixtures = {
+                    workflow + ".validate": {"validated": True},
+                    workflow + ".execute": {"unused": True},
+                    workflow + ".qualify": qualification,
+                    workflow + ".collect": {"collected": True},
+                }
 
-        class BindAndFailAdapter(OfflineResearchAdapter):
-            def run(self, workflow, step, request, checkpoints, context=None):
-                if step == "execute":
-                    context["bind_recovery_target"]("simulation_intent", path)
-                    raise RuntimeError("lost response")
-                return super().run(workflow, step, request, checkpoints, context=context)
+                class BindAndFailAdapter(OfflineResearchAdapter):
+                    def run(self, current_workflow, step, request, checkpoints, context=None):
+                        if step == "execute":
+                            context["bind_recovery_target"]("simulation_intent", path)
+                            raise RuntimeError("lost response")
+                        return super().run(
+                            current_workflow, step, request, checkpoints, context=context)
 
-        runner = MainOrchestrator(self.root, adapter=BindAndFailAdapter(fixtures))
-        task = runner.create("super", {"objective": "recovery task"})
-        blocked = runner.execute(task["task_id"])
-        self.assertEqual(blocked["status"], "BLOCKED")
-        self.assertEqual(blocked["recovery_target"]["ref"], str(path.resolve()))
+                runner = MainOrchestrator(
+                    self.root, adapter=BindAndFailAdapter(fixtures))
+                request = {"objective": "recovery task"}
+                if workflow == "optimization":
+                    request["alpha_id"] = "SOURCE"
+                task = runner.create(workflow, request)
+                blocked = runner.execute(task["task_id"])
+                self.assertEqual(blocked["status"], "BLOCKED")
+                self.assertEqual(blocked["recovery_target"]["ref"], str(path.resolve()))
 
-        calls = []
-        def recover_fn(gateway, state_root, intent_path, config=None):
-            calls.append(str(intent_path))
-            return {
-                "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
-                "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
-                "preferred_ref": "preferred.json",
-            }
+                calls = []
+                def recover_fn(gateway, state_root, intent_path, config=None):
+                    calls.append(str(intent_path))
+                    return {
+                        "candidate_id": "candidate-1", "candidate_status": "EVIDENCE_PENDING",
+                        "preferred_status": "NOT_CANDIDATE", "candidate_ref": "candidate.json",
+                        "preferred_ref": "preferred.json",
+                    }
 
-        coordinator = RecoveryCoordinator(self.root, simulation_recover=recover_fn)
-        reconciled = coordinator.recover_task(
-            runner, task["task_id"], gateway=self.gateway, config={"offline": True})
-        self.assertEqual(reconciled["steps"]["execute"], "DONE")
-        self.assertEqual(reconciled["budget"], {"limit": 1, "used": 1, "reserved": 0})
-        self.assertEqual(len(calls), 1)
-        completed = runner.execute(task["task_id"])
-        self.assertEqual(completed["status"], "COMPLETED")
-        self.assertEqual(len(calls), 1)
+                coordinator = RecoveryCoordinator(self.root, simulation_recover=recover_fn)
+                reconciled = coordinator.recover_task(
+                    runner, task["task_id"], gateway=self.gateway, config={"offline": True},
+                    expected_workflow=workflow)
+                self.assertEqual(reconciled["steps"]["execute"], "DONE")
+                self.assertEqual(reconciled["budget"], {"limit": 1, "used": 1, "reserved": 0})
+                self.assertEqual(len(calls), 1)
+                completed = runner.execute(task["task_id"])
+                self.assertEqual(completed["status"], "COMPLETED")
+                self.assertEqual(len(calls), 1)
 
     def test_regular_task_recovery_reconciles_campaign_without_starting_another_batch(self):
         request = {
