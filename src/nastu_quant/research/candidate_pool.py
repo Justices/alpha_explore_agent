@@ -40,7 +40,12 @@ def _latest(candidate_rows, preferred_by_id):
                          isinstance(policy, str) and len(policy) == 64 and
                          preferred.get("evidence_sha256") == sha and
                          preferred.get("policy_sha256") == policy)
-    preferred_status = preferred["status"] if same_evidence else "NOT_CANDIDATE"
+    if same_evidence:
+        preferred_status = preferred["status"]
+    elif newest.get("status") in {"CANDIDATE", "EVALUATION_PENDING"}:
+        preferred_status = "PENDING_PREFERRED"
+    else:
+        preferred_status = "NOT_CANDIDATE"
     return newest, preferred_status
 
 
@@ -51,7 +56,7 @@ class CandidatePool:
         self.store = record_store
         self.index_path = record_store.root / "pool_index.json"
 
-    def build_index(self):
+    def build_index(self, current_policy_sha256=None):
         candidates = self.store.list("candidate")
         preferred = {row["candidate_id"]: row
                      for row in self.store.list("preferred")}
@@ -78,15 +83,24 @@ class CandidatePool:
                 isinstance(current.get(key), str) and
                 len(current[key]) == 64 for key in
                 ("evidence_sha256", "policy_sha256"))
-            candidate_status = (current["status"] if digests_complete
-                                else "EVIDENCE_PENDING")
+            policy_stale = (current_policy_sha256 is not None
+                            and current.get("policy_sha256") != current_policy_sha256)
+            candidate_status = (
+                "EVIDENCE_PENDING" if not digests_complete else
+                "POLICY_STALE" if policy_stale else current["status"])
+            if candidate_status == "EVALUATION_PENDING":
+                preferred_status = "PENDING_PREFERRED"
+            elif candidate_status != "CANDIDATE":
+                preferred_status = "NOT_CANDIDATE"
             entries.append({
                 "alpha_id": alpha_id, "candidate_id": current["candidate_id"],
                 "candidate_status": candidate_status,
                 "preferred_status": (preferred_status
                                      if candidate_status == "CANDIDATE"
                                      else "NOT_CANDIDATE"),
-                "requires_reaudit": not digests_complete,
+                "requires_reaudit": (not digests_complete or policy_stale),
+                "policy_stale": policy_stale,
+                "evaluation_pending": current.get("status") == "EVALUATION_PENDING",
                 "evaluation_count": len(rows),
                 "sources": sources,
                 "latest_updated_at": current["updated_at"],
@@ -100,11 +114,14 @@ class CandidatePool:
                                        for e in entries),
                 "entries": entries}
 
-    def sync_index(self):
-        """Idempotently reconstruct; no platform requests, safe after interruption."""
-        state = self.build_index()
+    def sync_index(self, current_policy_sha256=None):
+        """Idempotently reconstruct; recover a corrupt derived index from records."""
+        state = self.build_index(current_policy_sha256=current_policy_sha256)
         if self.index_path.exists():
-            current = json.loads(self.index_path.read_text(encoding="utf-8"))
+            try:
+                current = json.loads(self.index_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                current = None
             if current == state:
                 return state
         atomic_write_json(self.index_path, state)
