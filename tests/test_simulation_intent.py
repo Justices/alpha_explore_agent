@@ -138,6 +138,8 @@ class TestSimulationIntent(unittest.TestCase):
         self.assertEqual(second["candidate_id"], first["candidate_id"])
         self.assertEqual(store.get("super_run", run_id)["status"], "candidate_evaluated")
         self.assertEqual(store.list("candidate")[0]["status"], "CORR_REJECTED")
+        history = store.root / "evaluation_history" / "candidate" / first["candidate_id"]
+        self.assertFalse(history.exists())
         self.assertNotIn("resume_simulation_batch", gateway.commands)
 
     def test_intent_creation_refuses_overwrite(self):
