@@ -215,12 +215,21 @@ class CandidateQualificationService:
                 external_pending=["platform_correlation_unavailable:" + type(exc).__name__])
         # Re-read details after the correlation request so the final Candidate
         # record is bound to current RA/metric evidence, not a stale snapshot.
-        latest = self.gateway.call("get_alpha_details", alpha_id=alpha_id)
+        try:
+            latest = self.gateway.call("get_alpha_details", alpha_id=alpha_id)
+        except Exception as exc:
+            latest = None
+            readback_error = type(exc).__name__
+        else:
+            readback_error = None
         if not isinstance(latest, dict) or latest.get("id") != alpha_id:
             return self.qualify_from_evidence(
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
                 source_ref=source_ref, details=details, correlations=None,
-                evidence_refs={**(evidence_refs or {}), "correlation_raw": raw},
+                evidence_refs={**(evidence_refs or {}),
+                               "local_self_correlation": local,
+                               "correlation_raw": raw,
+                               "post_correlation_readback_error": readback_error},
                 external_pending=["post_correlation_alpha_readback_unavailable"])
         parsed = parse_correlations(raw, contender_ids or [])
         if ra_correlation_check_state(latest) != "pass":
@@ -230,7 +239,9 @@ class CandidateQualificationService:
             source_ref=source_ref, details=latest, correlations=parsed,
             pairwise=(parsed or {}).get("pairwise", {}),
             expected_pairwise_ids=contender_ids or [],
-            evidence_refs={**(evidence_refs or {}), "correlation_raw": raw})
+            evidence_refs={**(evidence_refs or {}),
+                           "local_self_correlation": local,
+                           "correlation_raw": raw})
 
     def list_candidate_evaluations(self):
         return self.store.list("candidate")
