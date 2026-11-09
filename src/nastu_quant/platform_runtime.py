@@ -1038,6 +1038,10 @@ class PlatformRuntime:
                 raise PlatformError("Alpha details are unavailable for correlation")
             if ra_correlation_check_state(details) != "pass":
                 raise PlatformError("PC/SC correlation is forbidden until RA checks all PASS")
+            local = self._local_self_results.get(alpha_id)
+            if local_self_correlation_state(local, params.get("self_corr_max")) != "pass":
+                raise PlatformError(
+                    "PC/SC correlation is forbidden until local self-correlation is complete and PASS")
             self._recent_alpha_details[alpha_id] = details
             cache = self._prefilter_cache if params.get("batch_id") is not None else None
             return self._correlations(alpha_id, params.get("contender_ids"), cache=cache)
