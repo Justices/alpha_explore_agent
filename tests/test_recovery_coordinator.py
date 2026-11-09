@@ -3,12 +3,15 @@ import json
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nastu_quant.research.recovery import RecoveryCoordinator, RecoveryError
 from nastu_quant.research.orchestrator import MainOrchestrator, OfflineResearchAdapter
+from nastu_quant.research.regular.campaign import _key
+from nastu_quant.state_store import atomic_write_json
 from nastu_quant.research.simulation_intent import (
     create_simulation_intent, transition_simulation_intent,
 )
@@ -197,6 +200,91 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         completed = runner.execute(task["task_id"])
         self.assertEqual(completed["status"], "COMPLETED")
         self.assertEqual(len(calls), 1)
+
+    def test_regular_task_recovery_reconciles_campaign_without_starting_another_batch(self):
+        request = {
+            "objective": "regular recovery task", "region": "GLB",
+            "dataset_ids": ["analyst69"], "category": None, "delay": 1,
+            "universe": "TOP3000", "max_batches": 1, "ppa_profile": False,
+        }
+        campaign_id = _key(request)
+        runs_root = self.root / "runs"
+        batch = (runs_root / "GLB" / "D1" / "TOP3000" / "analyst69" / "batch-regular")
+        batch.mkdir(parents=True)
+        active_at = datetime.now(timezone.utc)
+        started_at = active_at + timedelta(seconds=1)
+        atomic_write_json(batch / "batch_context.json", {
+            "objective": request["objective"], "started_at": started_at.isoformat(),
+        })
+        atomic_write_json(batch / "prereg.json", {"variants": [{"expression": "rank(x)"}]})
+        atomic_write_json(batch / "simulation_intent.json", {
+            "status": "SUBMITTING", "expressions": ["rank(x)"],
+            "settings": {"region": "GLB", "delay": 1, "universe": "TOP3000"},
+            "runner": {"case_key": "case", "run_id": "run",
+                       "batch_id": "batch-regular", "label": "production"},
+            "prereg_sha256": "a" * 64,
+        })
+        plan_path = self.root / "state" / "research_v1_1" / "campaign_runs" / f"{campaign_id}_scope_plan.json"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan = {"unresolved": [], "unselected_dataset_ids": []}
+        atomic_write_json(plan_path, plan)
+        state_path = plan_path.with_name(f"{campaign_id}.json")
+        atomic_write_json(state_path, {
+            "schema_version": 1, "campaign_id": campaign_id,
+            "plan_evidence_ref": str(plan_path), "request": request, "plan": plan,
+            "items": [{"dataset_id": "analyst69", "category": None,
+                       "region": "GLB", "delay": 1, "universe": "TOP3000"}],
+            "completed": [], "active_item": 0,
+            "active_started_at": active_at.isoformat(),
+            "budget": {"limits": {"batches": 1}, "reserved": {"batches": 1},
+                       "used": {"batches": 0}},
+            "status": "unresolved",
+        })
+
+        class RegularAgent:
+            def __init__(self):
+                self.runs_root = runs_root
+                self.stop_flag = None
+                self.calls = 0
+
+            def recover(self, batch_dir):
+                self.calls += 1
+                intent_path = Path(batch_dir) / "simulation_intent.json"
+                intent = json.loads(intent_path.read_text(encoding="utf-8"))
+                intent["status"] = "READ_BACK"
+                atomic_write_json(intent_path, intent)
+                result = {"alpha_ids": ["A1"],
+                          "candidate_status": {"A1": "EVIDENCE_PENDING"}}
+                atomic_write_json(Path(batch_dir) / "results.json", result)
+                return {"dataset_id": "analyst69", **result}
+
+        fixtures = {
+            "regular.validate": {"validated": True},
+            "regular.execute": {"unused": True},
+            "regular.qualify": {"status": "EVIDENCE_PENDING"},
+            "regular.collect": {"collected": True},
+        }
+
+        class BindAndFailAdapter(OfflineResearchAdapter):
+            def run(self, workflow, step, task_request, checkpoints, context=None):
+                if step == "execute":
+                    context["bind_recovery_target"]("regular_batch", batch)
+                    raise RuntimeError("lost Regular executor response")
+                return super().run(workflow, step, task_request, checkpoints, context=context)
+
+        runner = MainOrchestrator(self.root, adapter=BindAndFailAdapter(fixtures))
+        task = runner.create("regular", request)
+        self.assertEqual(runner.execute(task["task_id"])["status"], "BLOCKED")
+        agent = RegularAgent()
+        coordinator = RecoveryCoordinator(self.root)
+        reconciled = coordinator.recover_task(
+            runner, task["task_id"], gateway=self.gateway, agent=agent)
+        self.assertEqual(reconciled["checkpoints"]["execute"]["status"], "budget_complete")
+        self.assertEqual(agent.calls, 1)
+        self.assertEqual(self.gateway.calls, [])
+        completed = runner.execute(task["task_id"])
+        self.assertEqual(completed["status"], "COMPLETED")
+        self.assertEqual(agent.calls, 1)
 
     def test_immutable_target_change_blocks_recovery_replay(self):
         batch = self._regular_target()

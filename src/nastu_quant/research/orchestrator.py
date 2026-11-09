@@ -225,6 +225,8 @@ class MainOrchestrator:
                 or journal.get("status") != "COMPLETED"
                 or journal.get("task_id") != task_id
                 or journal.get("step") != step
+                or journal.get("workflow") != task["workflow"]
+                or journal.get("recovery_id") != receipt.get("recovery_id")
                 or journal.get("target_ref") != (task.get("recovery_target") or {}).get("ref")
                 or journal_sha != receipt.get("recovery_journal_sha256")):
             raise OrchestrationError("domain recovery journal does not verify this task")
