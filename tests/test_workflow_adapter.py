@@ -43,9 +43,12 @@ class WorkflowAdapterTests(unittest.TestCase):
                 {"alpha_ids": ["A1"], "candidate_status": {"A1": "CANDIDATE"}}]},
              "run-campaign"),
             ("super", {"candidate_id": "c1", "candidate_status": "CANDIDATE",
-                       "preferred_status": "PREFERRED"}, "run-super"),
+                       "preferred_status": "PREFERRED", "candidate_ref": "candidate.json",
+                       "preferred_ref": "preferred.json"}, "run-super"),
             ("optimization", {"candidate_id": "c2", "candidate_status": "EVIDENCE_PENDING",
-                              "preferred_status": "PENDING_PREFERRED"}, "run-optimization"),
+                              "preferred_status": "PENDING_PREFERRED",
+                              "candidate_ref": "candidate2.json",
+                              "preferred_ref": "preferred2.json"}, "run-optimization"),
         )
         for workflow, output, expected_command in cases:
             with self.subTest(workflow=workflow):
@@ -65,6 +68,19 @@ class WorkflowAdapterTests(unittest.TestCase):
                 self.assertIn("pool", done["result"])
                 self.assertEqual(runner.resume(task["task_id"]), done)
                 self.assertEqual(len(self.calls), 1)
+
+    def test_empty_regular_campaign_blocks_without_replay(self):
+        adapter = self._adapter({"status": "unresolved", "completed": []})
+        runner = MainOrchestrator(self.root, adapter=adapter)
+        task = runner.create("regular", {"objective": "offline"})
+        blocked = runner.execute(task["task_id"])
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["steps"]["execute"], "DONE")
+        self.assertEqual(blocked["steps"]["qualify"], "RUNNING")
+        self.assertEqual(len(self.calls), 1)
+        with self.assertRaises(OrchestrationError):
+            runner.resume(task["task_id"])
+        self.assertEqual(len(self.calls), 1)
 
     def test_missing_qualification_blocks_without_reexecution(self):
         adapter = self._adapter({"status": "unresolved"})
