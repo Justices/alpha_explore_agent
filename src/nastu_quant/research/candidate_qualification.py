@@ -285,10 +285,14 @@ class CandidateQualificationService:
         return self.store.list("preferred")
 
     def list_candidates(self):
-        return self.pool.list_candidates()
+        current_policy = policy_hash(self.config)
+        return [row for row in self.pool.list_candidates()
+                if row.get("latest_policy_sha256") == current_policy]
 
     def list_preferred(self):
-        return self.pool.list_preferred()
+        current_policy = policy_hash(self.config)
+        return [row for row in self.pool.list_preferred()
+                if row.get("latest_policy_sha256") == current_policy]
 
     def find_reusable_evaluation(self, alpha_id, *, evidence_sha256, policy_sha256):
         """Exact evidence+policy match only; never bypass fresh RA/PC checks."""

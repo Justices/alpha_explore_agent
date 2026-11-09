@@ -120,10 +120,15 @@ class CandidatePool:
                    all(ch in "0123456789abcdef" for ch in v)
                    for v in (evidence_sha256, policy_sha256)):
             return None
-        for row in reversed(sorted(self.store.list("candidate"),
-                                   key=lambda x: (x["updated_at"], x["candidate_id"]))):
-            if (row["alpha_id"] == alpha_id
-                    and row.get("evidence_sha256") == evidence_sha256
-                    and row.get("policy_sha256") == policy_sha256):
-                return row
+        matches = [row for row in self.store.list("candidate")
+                   if row["alpha_id"] == alpha_id]
+        if not matches:
+            return None
+        # An older successful assessment cannot be reused after a newer
+        # failure, pending recheck or changed policy.
+        latest = sorted(matches, key=lambda row:
+                        (row["updated_at"], row["candidate_id"]))[-1]
+        if (latest.get("evidence_sha256") == evidence_sha256
+                and latest.get("policy_sha256") == policy_sha256):
+            return latest
         return None
