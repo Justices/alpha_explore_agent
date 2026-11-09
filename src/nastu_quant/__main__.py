@@ -214,6 +214,10 @@ def main(argv=None):
                 for record_path in sorted(folder.glob("*.json")):
                     try:
                         item = json.loads(record_path.read_text(encoding="utf-8"))
+                        if kind == "candidate" and item.get("status") != "CANDIDATE":
+                            continue
+                        if kind == "preferred" and item.get("status") != "PREFERRED":
+                            continue
                         output.append({
                             "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                                   item.get("source_id"),
@@ -242,7 +246,9 @@ def main(argv=None):
                           "v11_optimization_sources": _record_summaries("optimization_source"),
                           "v11_candidate_branches": _record_summaries("candidate_branch"),
                           "v11_candidates": _record_summaries("candidate"),
-                          "v11_preferred": _record_summaries("preferred")},
+                          "v11_preferred": _record_summaries("preferred"),
+                          "v11_candidate_evaluations": _record_summaries("candidate_evaluations"),
+                          "v11_preferred_evaluations": _record_summaries("preferred_evaluations")},
                          ensure_ascii=False))
         return 0
     if args.command == "void":

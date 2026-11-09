@@ -242,3 +242,10 @@ includes both pools.
 The service performs read-only BRAIN calls; it does not submit or mutate
 Alpha records. Live platform verification and automated tests remain separate
 release gates.
+
+
+Candidate and Preferred evaluation ledgers retain every outcome, including
+failed and pending results. The operational Candidate Pool view filters to
+`status == CANDIDATE`; the Preferred Pool view filters to
+`status == PREFERRED`. Separate evaluation views retain the full decision
+history for audit and recovery.

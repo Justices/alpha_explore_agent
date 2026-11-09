@@ -232,8 +232,16 @@ class CandidateQualificationService:
             expected_pairwise_ids=contender_ids or [],
             evidence_refs={**(evidence_refs or {}), "correlation_raw": raw})
 
-    def list_candidates(self):
+    def list_candidate_evaluations(self):
         return self.store.list("candidate")
 
-    def list_preferred(self):
+    def list_preferred_evaluations(self):
         return self.store.list("preferred")
+
+    def list_candidates(self):
+        return [row for row in self.list_candidate_evaluations()
+                if row.get("status") == "CANDIDATE"]
+
+    def list_preferred(self):
+        return [row for row in self.list_preferred_evaluations()
+                if row.get("status") == "PREFERRED"]
