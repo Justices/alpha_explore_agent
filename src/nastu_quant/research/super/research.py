@@ -12,6 +12,7 @@ from ...validator import Parser, ParseError
 from ..audit import record_pending_audit
 from ..simulation_intent import create_simulation_intent, transition_simulation_intent
 from ..records import ResearchRecordStore
+from ..candidate_qualification import CandidateQualificationService
 
 
 class SuperScopeError(ValueError):
@@ -285,11 +286,32 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["audit_ref"] = str(audit_path)
     run["status"] = "simulated_pending_audit"
     atomic_write_json(run_path, run)
-    persist_shared(status="simulated_pending_audit",
+    qualification = CandidateQualificationService(
+        gateway, state_root, config).qualify_live(
+            workflow="super", alpha_id=run["alpha_id"], candidate_ref=run_id,
+            source_ref=str(audit_path),
+            evidence_refs={"simulation_intent": str(intent_path),
+                           "readback": run["readback_ref"], "audit": str(audit_path),
+                           "prereg": str(prereg_path)})
+    run["candidate_id"] = qualification["candidate_id"]
+    run["candidate_status"] = qualification["candidate_status"]
+    run["preferred_status"] = qualification["preferred"]["status"]
+    atomic_write_json(run_path, run)
+    persist_shared(status="candidate_qualified",
                    candidate_alpha_id=run["alpha_id"],
+                   candidate_id=qualification["candidate_id"],
+                   candidate_status=qualification["candidate_status"],
+                   preferred_status=qualification["preferred"]["status"],
+                   candidate_record_ref=qualification["candidate_ref"],
+                   preferred_record_ref=qualification["preferred_ref"],
                    readback_ref=run["readback_ref"], audit_ref=str(audit_path),
                    budget={"limits": {"experiments": 1},
                            "reserved": {"experiments": 0},
                            "used": {"experiments": 1}})
     return {"run_id": run_id, "alpha_id": run["alpha_id"],
+            "candidate_id": qualification["candidate_id"],
+            "candidate_status": qualification["candidate_status"],
+            "preferred_status": qualification["preferred"]["status"],
+            "candidate_ref": qualification["candidate_ref"],
+            "preferred_ref": qualification["preferred_ref"],
             "status": run["status"], "record_ref": str(run_path)}

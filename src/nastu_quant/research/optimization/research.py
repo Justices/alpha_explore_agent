@@ -14,6 +14,7 @@ from ...validator import Parser, ParseError, NON_FIELD_IDENTS, walk, validate, r
 from ..super.research import validate_super_expressions
 from ..audit import record_pending_audit
 from ..records import ResearchRecordStore
+from ..candidate_qualification import CandidateQualificationService
 from ..simulation_intent import create_simulation_intent, transition_simulation_intent
 
 
@@ -374,20 +375,40 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         "candidate_status": "simulated_pending_audit",
         "pending": audit["pending"], "created_at": _now()}
     atomic_write_json(report_path, report)
-    branch.update(status="simulated_pending_audit", receipt_ref=str(readback_path),
+    qualification = CandidateQualificationService(
+        gateway, state_root, config).qualify_live(
+            workflow="optimization", alpha_id=rows[0]["alpha_id"],
+            candidate_ref=branch["branch_id"], source_ref=str(report_path),
+            evidence_refs={"source_snapshot": source_info["snapshot_ref"],
+                           "simulation_intent": str(intent_path),
+                           "readback": str(readback_path), "audit": str(audit_path),
+                           "optimization_report": str(report_path)})
+    report["candidate_id"] = qualification["candidate_id"]
+    report["candidate_status"] = qualification["candidate_status"]
+    report["preferred_status"] = qualification["preferred"]["status"]
+    report["candidate_record_ref"] = qualification["candidate_ref"]
+    report["preferred_record_ref"] = qualification["preferred_ref"]
+    atomic_write_json(report_path, report)
+    branch.update(status="candidate_qualified", receipt_ref=str(readback_path),
                   simulation_intent_ref=str(intent_path), response_ref=str(response_path),
                   audit_ref=str(audit_path), runner=result.get("runner"),
-                  report_ref=str(report_path),
-                  candidate_alpha_id=rows[0]["alpha_id"],
+                  report_ref=str(report_path), candidate_alpha_id=rows[0]["alpha_id"],
+                  candidate_id=qualification["candidate_id"],
+                  candidate_status=qualification["candidate_status"],
+                  preferred_status=qualification["preferred"]["status"],
+                  candidate_record_ref=qualification["candidate_ref"],
+                  preferred_record_ref=qualification["preferred_ref"],
                   budget={"limits": {"experiments": 1},
                           "reserved": {"experiments": 0},
                           "used": {"experiments": 1}},
                   source_unchanged_verified=True)
     _put_advanced(store, branch)
-    return {"branch_id": branch["branch_id"],
-            "branch_ref": branch_info["branch_ref"],
-            "source_alpha_id": alpha_id,
-            "candidate_alpha_id": rows[0]["alpha_id"],
-            "report_ref": str(report_path),
-            "source_unchanged_verified": True,
+    return {"branch_id": branch["branch_id"], "branch_ref": branch_info["branch_ref"],
+            "source_alpha_id": alpha_id, "candidate_alpha_id": rows[0]["alpha_id"],
+            "candidate_id": qualification["candidate_id"],
+            "candidate_status": qualification["candidate_status"],
+            "preferred_status": qualification["preferred"]["status"],
+            "candidate_ref": qualification["candidate_ref"],
+            "preferred_ref": qualification["preferred_ref"],
+            "report_ref": str(report_path), "source_unchanged_verified": True,
             "status": branch["status"]}

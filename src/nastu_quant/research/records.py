@@ -20,6 +20,8 @@ SCHEMA_VERSIONS = {
     "optimization_source": 1,
     "candidate_branch": 1,
     "super_run": 1,
+    "candidate": 1,
+    "preferred": 1,
 }
 ID_PATTERN = re.compile(r"[0-9a-f]{16,64}\Z")
 IMMUTABLE_FIELDS = {
@@ -33,6 +35,8 @@ IMMUTABLE_FIELDS = {
                          "source_snapshot_ref", "source_snapshot_sha256",
                          "source_properties_sha256", "source_type", "created_at"),
     "super_run": ("run_id", "workflow", "region", "created_at"),
+    "candidate": ("candidate_id", "alpha_id", "workflow", "source_ref", "candidate_ref", "created_at"),
+    "preferred": ("candidate_id", "alpha_id", "workflow", "source_ref", "candidate_ref", "created_at"),
 }
 RECORD_IDS = {
     "campaign": "campaign_id",
@@ -41,6 +45,8 @@ RECORD_IDS = {
     "optimization_source": "source_id",
     "candidate_branch": "branch_id",
     "super_run": "run_id",
+    "candidate": "candidate_id",
+    "preferred": "candidate_id",
 }
 
 
@@ -163,6 +169,18 @@ def validate_record(kind: str, record: dict) -> None:
         _list(record.get("changes"), "changes")
         if not isinstance(record.get("effective_settings"), dict):
             raise ValueError("effective_settings must be an object")
+    elif kind in ("candidate", "preferred"):
+        _nonempty(record.get("alpha_id"), "alpha_id")
+        if record.get("workflow") not in ("regular", "super", "optimization"):
+            raise ValueError("workflow must be regular, super or optimization")
+        _nonempty(record.get("source_ref"), "source_ref")
+        _nonempty(record.get("candidate_ref"), "candidate_ref")
+        _list(record.get("failures"), "failures")
+        _list(record.get("pending"), "pending")
+        if not isinstance(record.get("metrics"), dict) or not isinstance(record.get("evidence_refs"), dict):
+            raise ValueError("metrics and evidence_refs must be objects")
+        if kind == "preferred" and record.get("status") not in ("PREFERRED", "NOT_PREFERRED", "PENDING_PREFERRED", "NOT_CANDIDATE"):
+            raise ValueError("invalid Preferred status")
     elif kind == "super_run":
         if record.get("workflow") != "super":
             raise ValueError("super run workflow must be super")
@@ -195,6 +213,15 @@ class ResearchRecordStore:
         if record[RECORD_IDS[kind]] != record_id:
             raise ValueError(f"research record ID disagrees with path: {path}")
         return record
+
+    def list(self, kind: str) -> list[dict]:
+        """Return validated records of one kind in stable ID order."""
+        if kind not in SCHEMA_VERSIONS:
+            raise ValueError(f"unknown research record kind: {kind}")
+        folder = self.root / kind
+        if not folder.exists():
+            return []
+        return [self.get(kind, path.stem) for path in sorted(folder.glob("*.json"))]
 
     def put(self, kind: str, record: dict, *, expected_updated_at=None) -> Path:
         """Create, or replace with an explicit last-read timestamp.
