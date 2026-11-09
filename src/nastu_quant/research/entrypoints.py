@@ -39,7 +39,7 @@ def _regular_scope(args, cfg):
     }
 
 
-def dispatch(command, args, cfg, root: Path, gateway, agent=None):
+def dispatch(command, args, cfg, root: Path, gateway, agent=None, execution_context=None):
     if command not in COMMANDS:
         raise ValueError(f"unknown research workflow command: {command}")
     if command == "recover-research":
@@ -52,7 +52,8 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None):
                 raise ValueError("Optimization model is unavailable")
             return run_optimization(gateway, agent.model, cfg, root,
                                     alpha_id=args.alpha_id,
-                                    objective=args.objective, region=region)
+                                    objective=args.objective, region=region,
+                                    execution_context=execution_context)
         return prepare_source(gateway, root, alpha_id=args.alpha_id,
                               objective=args.objective, region=region)
     if command in {"plan-super", "run-super"}:
@@ -64,7 +65,7 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None):
                 raise ValueError("Super research model is unavailable")
             return run_super_research(gateway, agent.model, cfg, root,
                                       region=region, objective=args.objective,
-                                      delay=delay)
+                                      delay=delay, execution_context=execution_context)
         return prepare_super_run(gateway, root, region=region,
                                  objective=args.objective, delay=delay)
     scope = _regular_scope(args, cfg)
@@ -73,7 +74,7 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None):
             raise ValueError("Regular Campaign executor is unavailable")
         return run_regular_campaign(
             agent, gateway, objective=args.objective, max_batches=args.max_batches,
-            ppa_profile=args.ppa, **scope)
+            ppa_profile=args.ppa, execution_context=execution_context, **scope)
     plan_id = uuid4().hex
     gateway.call("set_case", case_key=plan_id, run_id=uuid4().hex)
     result = discover_regular_scope(gateway, **scope)

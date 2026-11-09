@@ -206,7 +206,8 @@ def _source_dataset(gateway, settings, source_fields):
 
 
 def run_optimization(gateway, model, config: dict, state_root: Path, *,
-                     alpha_id: str, objective: str, region: str | None = None):
+                     alpha_id: str, objective: str, region: str | None = None,
+                     execution_context=None):
     """Simulate one independent candidate, retaining immutable source evidence."""
     if not isinstance(objective, str) or not objective.strip():
         raise OptimizationError("optimization objective is required")
@@ -294,6 +295,10 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
         batch_id=batch_id, request=request, settings=settings)
+    if execution_context is not None:
+        bind_target = execution_context.get("bind_recovery_target")
+        if callable(bind_target):
+            bind_target("simulation_intent", intent_path)
     branch.update(status="simulation_prepared", prereg_ref=str(prereg_path),
                   simulation_intent_ref=str(intent_path))
     _put_advanced(store, branch)

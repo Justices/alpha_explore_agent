@@ -26,7 +26,7 @@ class MockWorkflowAdapter:
         self.agent = agent
         self.dispatcher = dispatcher
 
-    def run(self, workflow, step, request, checkpoints):
+    def run(self, workflow, step, request, checkpoints, context=None):
         if workflow not in ("regular", "super", "optimization"):
             raise OrchestrationError("unknown workflow")
         if step == "validate":
@@ -46,11 +46,16 @@ class MockWorkflowAdapter:
                 universe=request.get("universe"),
                 category=request.get("category"),
                 dataset=request.get("dataset_ids"),
-                max_batches=1,
+                max_batches=request.get("max_batches", 1),
                 ppa=bool(request.get("ppa", False)),
             )
-            result = self.dispatcher(command, args, self.config, self.root,
-                                     self.gateway, self.agent)
+            if context is None:
+                result = self.dispatcher(command, args, self.config, self.root,
+                                         self.gateway, self.agent)
+            else:
+                result = self.dispatcher(command, args, self.config, self.root,
+                                         self.gateway, self.agent,
+                                         execution_context=context)
             if not isinstance(result, dict):
                 raise OrchestrationError("research executor returned non-object")
             return result

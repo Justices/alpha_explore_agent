@@ -145,7 +145,8 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
 
 
 def run_super_research(gateway, model, config: dict, state_root: Path, *,
-                       region: str, objective: str, delay: int | None = None):
+                       region: str, objective: str, delay: int | None = None,
+                       execution_context=None):
     """One evidence-registered native Super experiment; no auto-submission."""
     run_id = uuid4().hex
     gateway.call("set_case", case_key=run_id, run_id=run_id)
@@ -228,6 +229,10 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     create_simulation_intent(
         intent_path, workflow="super", run_id=run_id, batch_id=batch_id,
         request=request, settings=settings)
+    if execution_context is not None:
+        bind_target = execution_context.get("bind_recovery_target")
+        if callable(bind_target):
+            bind_target("simulation_intent", intent_path)
     run["simulation_intent_ref"] = str(intent_path)
     run["status"] = "simulation_prepared"
     atomic_write_json(run_path, run)

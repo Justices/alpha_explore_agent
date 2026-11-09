@@ -95,7 +95,7 @@ class MainOrchestrator:
             "workflow": workflow, "request": copy.deepcopy(request),
             "request_sha256": _hash(request), "status": "CREATED",
             "steps": {step: "PENDING" for step in STEPS},
-            "checkpoints": {}, "result": None, "failure": None,
+            "checkpoints": {}, "result": None, "failure": None, "recovery_target": None,
             "budget": {"limit": budget, "used": 0, "reserved": 0},
             "created_at": now, "updated_at": now,
         }
@@ -105,6 +105,32 @@ class MainOrchestrator:
         prior = task["updated_at"]
         task.update(changes)
         return self._save(task, expected=prior)
+
+    def bind_recovery_target(self, task_id, kind, reference):
+        """Persist the exact workflow artifact needed to recover an execute step."""
+        task = self.load(task_id)
+        if task.get("status") != "RUNNING" or task.get("steps", {}).get("execute") != "RUNNING":
+            raise OrchestrationError("recovery target can only be bound during execute")
+        expected_kind = "regular_batch" if task["workflow"] == "regular" else "simulation_intent"
+        if kind != expected_kind:
+            raise OrchestrationError("recovery target kind does not match workflow")
+        path = Path(reference).expanduser().resolve()
+        if not path.is_relative_to(self.state_root) or not path.exists():
+            raise OrchestrationError("recovery target must exist under the configured state root")
+        if kind == "regular_batch":
+            if not path.is_dir() or not (path / "simulation_intent.json").is_file():
+                raise OrchestrationError("Regular recovery target must be a batch directory with an intent")
+        else:
+            if not path.is_file():
+                raise OrchestrationError("simulation intent recovery target must be a file")
+            try:
+                intent = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as exc:
+                raise OrchestrationError("simulation intent is unreadable") from exc
+            if intent.get("workflow") != task["workflow"]:
+                raise OrchestrationError("simulation intent workflow does not match task")
+        return self._transition(task, recovery_target={
+            "kind": kind, "ref": str(path), "bound_at": _now()})
 
     def execute(self, task_id):
         if self.adapter is None:
@@ -127,9 +153,15 @@ class MainOrchestrator:
                 task["budget"]["reserved"] += 1
             task = self._transition(task, status="RUNNING")
             try:
+                context = {
+                    "task_id": task_id,
+                    "bind_recovery_target": lambda kind, reference:
+                        self.bind_recovery_target(task_id, kind, reference),
+                }
                 outcome = self.adapter.run(task["workflow"], step,
                                            copy.deepcopy(task["request"]),
-                                           copy.deepcopy(task["checkpoints"]))
+                                           copy.deepcopy(task["checkpoints"]),
+                                           context=context)
                 if not isinstance(outcome, dict):
                     raise OrchestrationError("adapter must return a JSON object")
                 # Checkpoint must be durable and serializable before marking DONE.
@@ -181,7 +213,7 @@ class OfflineResearchAdapter:
             raise OrchestrationError("fixtures must be an object")
         self.fixtures = fixtures
 
-    def run(self, workflow, step, request, checkpoints):
+    def run(self, workflow, step, request, checkpoints, context=None):
         key = workflow + "." + step
         if key not in self.fixtures:
             raise OrchestrationError("missing offline fixture: " + key)

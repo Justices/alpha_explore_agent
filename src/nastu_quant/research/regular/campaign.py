@@ -195,7 +195,7 @@ def _reconcile_active(agent, state):
         "item_index": index, "dataset_id": item["dataset_id"],
         "batch_dir": str(batch_dir),
         "alpha_ids": result.get("alpha_ids", []),
-        "candidate_status": "pending_reaudit",
+        "candidate_status": result.get("candidate_status") or "pending_reaudit",
         "completed_at": _now(), "reconciled": True})
     state["active_item"] = None
     state.pop("active_started_at", None)
@@ -206,7 +206,8 @@ def _reconcile_active(agent, state):
 
 def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                          category=None, delay=None, universe=None,
-                         max_batches, ppa_profile=False):
+                         max_batches, ppa_profile=False, execution_context=None,
+                         recovery_only=False):
     """Execute one batch per eligible item, then cycle while budget remains.
 
     Persist progress before and after each batch. An interrupted batch is
@@ -224,6 +225,8 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
     state_root = Path(agent.runs_root).resolve().parent
     path = (state_root / "state" /
             "research_v1_1" / "campaign_runs" / f"{campaign_id}.json")
+    if recovery_only and not path.exists():
+        raise ValueError("Campaign state is missing; recovery cannot reconstruct it safely")
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
         if "plan_evidence_ref" not in state:
@@ -237,6 +240,23 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             state["updated_at"] = _now()
             _sync_subtasks(state, state_root)
             atomic_write_json(path, state)
+        if recovery_only:
+            if state.get("active_item") is not None:
+                raise ValueError("Campaign active item remains unresolved after batch recovery")
+            state["remaining_items"] = [
+                item for index, item in enumerate(state["items"])
+                if index not in {entry["item_index"] for entry in state["completed"]}]
+            state["updated_at"] = _now()
+            _sync_subtasks(state, state_root)
+            atomic_write_json(path, state)
+            return {"campaign_id": campaign_id, "status": state["status"],
+                    "batches_completed": len(state["completed"]),
+                    "budget": state["budget"], "completed": state["completed"],
+                    "remaining_items": state["remaining_items"],
+                    "subtasks": state["subtasks"],
+                    "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
+                    "unresolved": state["plan"]["unresolved"],
+                    "state_path": str(path)}
     else:
         gateway.call("set_case", case_key=campaign_id,
                      run_id=campaign_id)
@@ -305,11 +325,15 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         state["updated_at"] = _now()
         atomic_write_json(path, state)
         try:
+            run_kwargs = {
+                "fixed_scope": {"region": region, "delay": item["delay"],
+                                "universe": item["universe"]},
+                "ppa_profile": ppa_profile,
+            }
+            if execution_context is not None:
+                run_kwargs["execution_context"] = execution_context
             result = agent.run_once(
-                objective, dataset_id=item["dataset_id"],
-                fixed_scope={"region": region, "delay": item["delay"],
-                             "universe": item["universe"]},
-                ppa_profile=ppa_profile)
+                objective, dataset_id=item["dataset_id"], **run_kwargs)
         except Exception as exc:
             state["status"] = "unresolved"
             state["error"] = str(exc)

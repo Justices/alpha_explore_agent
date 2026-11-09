@@ -1578,7 +1578,7 @@ class ResearchAgent:
                  resume_batch_dir: Path = None, recovered_probe_results=None,
                  cached_context=None, fixed_scope=None, diagnosis_id=None,
                  remedy_id=None, allow_remedy_round_overrun=False,
-                 ppa_profile=False) -> dict:
+                 ppa_profile=False, execution_context=None) -> dict:
         self._begin_session()
         if not objective or not objective.strip():
             raise ResearchError("research objective is required")
@@ -2054,6 +2054,10 @@ class ResearchAgent:
             "runner": {"case_key": platform_case_key,
                        "run_id": platform_run_id,
                        "batch_id": batch_dir.name, "label": "production"}})
+        if execution_context is not None:
+            bind_target = execution_context.get("bind_recovery_target")
+            if callable(bind_target):
+                bind_target("regular_batch", batch_dir)
 
         raw = self._simulate(runner_variants, simulation_settings,
                              dataset_id, batch_dir, "production")
