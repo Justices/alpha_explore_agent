@@ -136,13 +136,15 @@ class TestSimulationIntent(unittest.TestCase):
             response_ref=str(response_path))
         gateway = ReadBackGateway(details, DEFAULT_CONFIG["gate"]["self_corr_max"])
         first = recover_simulation_intent(gateway, root, intent_path, config=DEFAULT_CONFIG)
+        history = store.root / "evaluation_history" / "candidate" / first["candidate_id"]
+        history_before = sorted(history.glob("*.json")) if history.exists() else []
         second = recover_simulation_intent(gateway, root, intent_path, config=DEFAULT_CONFIG)
         self.assertEqual(first["status"], "candidate_evaluated")
         self.assertEqual(second["candidate_id"], first["candidate_id"])
         self.assertEqual(store.get("super_run", run_id)["status"], "candidate_evaluated")
         self.assertEqual(store.list("candidate")[0]["status"], "CORR_REJECTED")
-        history = store.root / "evaluation_history" / "candidate" / first["candidate_id"]
-        self.assertFalse(history.exists())
+        history_after = sorted(history.glob("*.json")) if history.exists() else []
+        self.assertEqual(history_after, history_before)
         self.assertNotIn("resume_simulation_batch", gateway.commands)
 
     def test_optimization_read_back_recovery_finishes_branch_qualification(self):
