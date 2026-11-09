@@ -153,6 +153,12 @@ class CandidateQualificationService:
             existing_preferred = self.store.get("preferred", candidate_id)
         except FileNotFoundError:
             existing_candidate, existing_preferred = None, None
+        # source_ref identifies the immutable originating research record.
+        # A fresh re-audit is evidence, not a new source; keep the original
+        # source_ref and attach the new audit under evidence_refs.
+        if existing_candidate is not None:
+            candidate["source_ref"] = existing_candidate["source_ref"]
+            preferred_record["source_ref"] = existing_candidate["source_ref"]
         if (existing_candidate is not None and existing_preferred is not None
                 and same_assessment(existing_candidate, candidate)
                 and same_assessment(existing_preferred, preferred_record)):
