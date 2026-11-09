@@ -30,7 +30,8 @@ IMMUTABLE_FIELDS = {
     "optimization_source": ("source_id", "alpha_id", "source_type",
                             "snapshot_ref", "created_at"),
     "candidate_branch": ("branch_id", "source_id", "source_alpha_id",
-                         "source_snapshot_ref", "source_type", "created_at"),
+                         "source_snapshot_ref", "source_snapshot_sha256",
+                         "source_properties_sha256", "source_type", "created_at"),
     "super_run": ("run_id", "workflow", "region", "created_at"),
 }
 RECORD_IDS = {

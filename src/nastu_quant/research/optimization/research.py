@@ -292,15 +292,13 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
         batch_id=batch_id, request=request, settings=settings)
-    previous = branch["updated_at"]
     branch.update(status="simulation_prepared", prereg_ref=str(prereg_path),
-                  simulation_intent_ref=str(intent_path), updated_at=_now())
-    store.put("candidate_branch", branch, expected_updated_at=previous)
+                  simulation_intent_ref=str(intent_path))
+    _put_advanced(store, branch)
     transition_simulation_intent(
         intent_path, expected_status="PREPARED", status="POSTING")
-    previous = branch["updated_at"]
-    branch.update(status="simulation_posting", updated_at=_now())
-    store.put("candidate_branch", branch, expected_updated_at=previous)
+    branch.update(status="simulation_posting")
+    _put_advanced(store, branch)
     try:
         if family == "regular":
             result = gateway.call("simulate_batch", batch_id=batch_id,
@@ -313,8 +311,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     except Exception:
         transition_simulation_intent(
             intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
-        previous = branch["updated_at"]
-        branch.update(status="outcome_unknown", updated_at=_now())
+        branch.update(status="outcome_unknown")
         _put_advanced(store, branch)
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
@@ -341,7 +338,6 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     if (not isinstance(latest_source, dict) or
             _source_properties_digest(latest_source) !=
             source_info["source_properties_sha256"]):
-        previous = branch["updated_at"]
         branch.update(status="source_integrity_unresolved",
                       receipt_ref=str(readback_path),
                       simulation_intent_ref=str(intent_path),
