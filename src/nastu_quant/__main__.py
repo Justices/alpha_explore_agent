@@ -208,7 +208,9 @@ def main(argv=None):
                 except (OSError, ValueError):
                     v11_campaigns.append({"path": str(path), "status": "unreadable"})
         def _record_summaries(kind):
-            folder = root / "state" / "research_v1_1" / kind
+            storage_kind = {"candidate_evaluations": "candidate",
+                            "preferred_evaluations": "preferred"}.get(kind, kind)
+            folder = root / "state" / "research_v1_1" / storage_kind
             output = []
             if folder.exists():
                 for record_path in sorted(folder.glob("*.json")):
