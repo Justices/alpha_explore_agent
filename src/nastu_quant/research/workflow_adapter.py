@@ -47,9 +47,9 @@ class MockWorkflowAdapter:
                 category=request.get("category"),
                 dataset=request.get("dataset_ids"),
                 max_batches=request.get("max_batches", 1),
-                ppa=bool(request.get("ppa", False)),
+                ppa=bool(request.get("ppa_profile", request.get("ppa", False))),
             )
-            if context is None:
+            if context is None or self.dispatcher is not dispatch:
                 result = self.dispatcher(command, args, self.config, self.root,
                                          self.gateway, self.agent)
             else:

@@ -265,7 +265,7 @@ class RecoveryCoordinator:
                 dataset_ids=request.get("dataset_ids"), category=request.get("category"),
                 delay=request.get("delay"), universe=request.get("universe"),
                 max_batches=request.get("max_batches", 1),
-                ppa_profile=bool(request.get("ppa_profile", False)),
+                ppa_profile=bool(request.get("ppa_profile", request.get("ppa", False))),
                 recovery_only=True)
 
         journal = self.journal_for(target["ref"])
