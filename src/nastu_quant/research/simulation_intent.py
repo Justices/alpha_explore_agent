@@ -186,12 +186,14 @@ def recover_simulation_intent(gateway, state_root, intent_path):
         def source_fingerprint(value):
             family = str(value.get("type") or "").upper()
             settings = value.get("settings") if isinstance(value.get("settings"), dict) else {}
+            def code(item):
+                return item.get("code") if isinstance(item, dict) else item
             if family == "REGULAR":
-                definition = {"regular": value.get("regular")}
+                definition = {"regular": code(value.get("regular"))}
             else:
                 block = value.get("super") if isinstance(value.get("super"), dict) else {}
-                definition = {"selection": value.get("selection") or block.get("selection"),
-                              "combo": value.get("combo") or block.get("combo")}
+                definition = {"selection": code(value.get("selection") or block.get("selection")),
+                              "combo": code(value.get("combo") or block.get("combo"))}
             return hashlib.sha256(json.dumps(
                 {"id": value.get("id"), "type": family, "settings": settings,
                  **definition}, ensure_ascii=False, sort_keys=True,
