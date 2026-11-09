@@ -793,6 +793,17 @@ class TestIndependentRuntime(unittest.TestCase):
             self.runtime.dispatch("check_correlation", {"alpha_id": "A1", "self_corr_max": 0.7})
         self.assertFalse(any("/correlations/" in call[1] for call in self.client.calls))
 
+    def test_platform_correlation_rejects_failed_local_prefilter(self):
+        self._set_case_pnl()
+        self.client.pnl["B1"] = deepcopy(self.client.pnl["A1"])
+        local = self.runtime.dispatch("check_local_self_correlation", {
+            "alpha_id": "A1", "self_corr_max": 0.7})
+        self.assertEqual(local["status"], "fail")
+        with self.assertRaises(PlatformError):
+            self.runtime.dispatch("check_correlation", {
+                "alpha_id": "A1", "self_corr_max": 0.7})
+        self.assertFalse(any("/correlations/" in call[1] for call in self.client.calls))
+
     def test_audit_accepts_case_pnl_pairwise_evidence(self):
         self._admit()
         self._set_case_pnl()
