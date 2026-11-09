@@ -12,6 +12,8 @@ from nastu_quant.agent import ResearchAgent, ResearchError
 from nastu_quant.platform_runtime import PlatformRuntime
 from nastu_quant.config import DEFAULT_CONFIG
 from nastu_quant.recovery import SETTING_KEYS
+from nastu_quant.research.orchestrator import MainOrchestrator
+from nastu_quant.research.workflow_adapter import MockWorkflowAdapter
 
 
 class ScriptedModel:
@@ -283,6 +285,27 @@ class TestResearchAgent(unittest.TestCase):
                                  "evidence_refs": ["readback", "correlation"]},
             "decide_next": {"action": "continue", "reason": "independent field branch"},
         })
+
+    def test_real_regular_campaign_through_main_orchestrator_mock_gateway(self):
+        self.gateway.is_offline_mock = True
+        agent = ResearchAgent(self.gateway, self.model, self.config,
+                              Path(self.tmp.name))
+        adapter = MockWorkflowAdapter(Path(self.tmp.name).parent, self.config,
+                                      self.gateway, agent)
+        runner = MainOrchestrator(Path(self.tmp.name).parent, adapter=adapter)
+        task = runner.create("regular", {
+            "objective": "offline campaign integration",
+            "region": "GLB", "delay": 1, "universe": "TOP3000",
+            "dataset_ids": ["risk60"]})
+        done = runner.execute(task["task_id"])
+        self.assertEqual(done["status"], "COMPLETED", done.get("failure"))
+        self.assertEqual(done["budget"]["used"], 1)
+        self.assertEqual(len(done["checkpoints"]["execute"]["completed"]), 1)
+        calls = [name for name, _ in self.gateway.calls]
+        self.assertEqual(calls.count("simulate_batch"), 1)
+        self.assertNotIn("submit_alpha", calls)
+        self.assertEqual(runner.resume(task["task_id"]), done)
+        self.assertEqual([name for name, _ in self.gateway.calls].count("simulate_batch"), 1)
 
     def test_run_once_saves_prereg_before_single_platform_batch(self):
         agent = ResearchAgent(self.gateway, self.model, self.config,
