@@ -3,9 +3,14 @@
 No network, no live BRAIN simulation, and no Alpha submission.
 """
 import copy
+import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nastu_quant.config import DEFAULT_CONFIG
 from nastu_quant.gatekeeper import correlation_verdict
@@ -28,6 +33,44 @@ class DummyGateway:
         if command == "get_alpha_details":
             return self.details
         raise AssertionError("unexpected platform call " + command)
+
+
+class PairwiseGateway:
+    def __init__(self, details, local_status="pass"):
+        self.details = details
+        self.local_status = local_status
+        self.commands = []
+        self.contenders = None
+
+    def call(self, command, **kwargs):
+        self.commands.append((command, kwargs))
+        if command == "set_case":
+            return None
+        if command == "get_alpha_details":
+            return copy.deepcopy(self.details)
+        if command == "check_local_self_correlation":
+            limit = kwargs["self_corr_max"]
+            return {"status": self.local_status, "complete": True,
+                    "comparison_count": 1, "window_years": 4,
+                    "limit": limit, "value": limit if self.local_status == "fail" else 0.1}
+        if command == "get_user_alphas":
+            return {"count": 1, "results": [{
+                "id": "A_OTHER", "status": "ACTIVE",
+                "settings": {"region": "GLB", "delay": 1},
+                "classifications": []}]}
+        if command == "check_correlation":
+            self.contenders = kwargs["contender_ids"]
+            return {
+                "checks": {
+                    "production": {"correlation_data": {"max": 0.1}},
+                    "self": {"correlation_data": {
+                        "records": [[0.1]], "count": 1,
+                        "schema": {"properties": [{"name": "correlation"}]}}},
+                },
+                "case_pairwise": {"A_OTHER": {
+                    "source": "daily_pnl", "observations": 3, "correlation": 0.1}},
+            }
+        raise AssertionError("unexpected gateway call " + command)
 
 
 class TestGlobalCandidatePool(unittest.TestCase):
@@ -138,6 +181,121 @@ class TestGlobalCandidatePool(unittest.TestCase):
         self.assertEqual(verdict["candidate_status"], "RA_FAILED")
         self.assertEqual(gateway.commands,
                          ["set_case", "get_alpha_details"])
+
+    def test_missing_preferred_is_pending_not_not_candidate(self):
+        identity = "1" * 32
+        _upsert(self.store, "candidate", self.sample(
+            kind="candidate", candidate_id=identity,
+            workflow="regular", status="CANDIDATE"))
+        self.assertEqual(self.pool.build_index()["entries"][0]["preferred_status"],
+                         "PENDING_PREFERRED")
+
+    def test_policy_change_invalidates_previously_qualified_candidate(self):
+        identity = "2" * 32
+        _upsert(self.store, "candidate", self.sample(
+            kind="candidate", candidate_id=identity,
+            workflow="regular", status="CANDIDATE"))
+        _upsert(self.store, "preferred", self.sample(
+            kind="preferred", candidate_id=identity,
+            workflow="regular", status="PREFERRED"))
+        entry = self.pool.build_index(current_policy_sha256="c" * 64)["entries"][0]
+        self.assertEqual(entry["candidate_status"], "POLICY_STALE")
+        self.assertEqual(entry["preferred_status"], "NOT_CANDIDATE")
+        self.assertTrue(entry["requires_reaudit"])
+
+    def test_corrupt_derived_index_is_rebuilt_from_records(self):
+        self.store.root.mkdir(parents=True, exist_ok=True)
+        self.pool.index_path.write_text("{broken", encoding="utf-8")
+        rebuilt = self.pool.sync_index()
+        self.assertEqual(json.loads(self.pool.index_path.read_text(encoding="utf-8")), rebuilt)
+
+    def test_local_self_failure_is_rejection_not_pending(self):
+        details = {
+            "id": "A_SAME", "type": "SUPER",
+            "settings": {"region": "GLB", "delay": 1},
+            "is": {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]},
+        }
+        gateway = PairwiseGateway(details, local_status="fail")
+        service = CandidateQualificationService(
+            gateway, self.root, copy.deepcopy(DEFAULT_CONFIG))
+        verdict = service.qualify_live(
+            workflow="super", alpha_id="A_SAME",
+            candidate_ref="run-2", source_ref="readback.json")
+        self.assertEqual(verdict["candidate_status"], "CORR_REJECTED")
+        self.assertNotIn("check_correlation", [name for name, _ in gateway.commands])
+
+    def test_super_and_optimization_discover_pairwise_contenders(self):
+        details = {
+            "id": "A_SAME", "type": "SUPER",
+            "settings": {"region": "GLB", "delay": 1},
+            "is": {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]},
+        }
+        for workflow in ("super", "optimization"):
+            with self.subTest(workflow=workflow):
+                gateway = PairwiseGateway(details)
+                service = CandidateQualificationService(
+                    gateway, self.root, copy.deepcopy(DEFAULT_CONFIG))
+                service.qualify_live(
+                    workflow=workflow, alpha_id="A_SAME",
+                    candidate_ref=("a" if workflow == "super" else "b") * 32,
+                    source_ref="readback.json")
+                self.assertEqual(gateway.contenders, ["A_OTHER"])
+
+    def test_pairwise_and_platform_check_keep_distinct_statuses(self):
+        service = CandidateQualificationService(
+            DummyGateway({}), self.root, copy.deepcopy(DEFAULT_CONFIG))
+        pairwise = service._persist(
+            workflow="super", alpha_id="A_PAIR", candidate_ref="c" * 32,
+            source_ref="pairwise.json",
+            details={"id": "A_PAIR", "settings": {"region": "GLB"},
+                     "is": {"checks": []}},
+            gate={"status": "METRICS_FAILED", "failures": ["pairwise:A_OTHER"],
+                  "pending": []}, correlations={}, evidence_refs={})
+        self.assertEqual(pairwise["candidate_status"], "PAIRWISE_CONFLICT")
+        platform = service._persist(
+            workflow="super", alpha_id="A_PLATFORM", candidate_ref="d" * 32,
+            source_ref="platform.json",
+            details={"id": "A_PLATFORM", "settings": {"region": "GLB"},
+                     "is": {"checks": [{"name": "CUSTOM_CHECK", "result": "FAIL"}]}},
+            gate={"status": "CANDIDATE", "failures": [], "pending": []},
+            correlations={}, evidence_refs={})
+        self.assertEqual(platform["candidate_status"], "PLATFORM_CHECK_FAILED")
+
+    def test_candidate_stays_hidden_if_preferred_write_fails_then_retry_completes(self):
+        service = CandidateQualificationService(
+            DummyGateway({}), self.root, copy.deepcopy(DEFAULT_CONFIG))
+        details = {"id": "A_TX", "settings": {"region": "GLB"}, "is": {"checks": []}}
+        module = __import__("nastu_quant.research.candidate_qualification",
+                            fromlist=["_upsert"])
+        original = module._upsert
+        failed = {"value": False}
+        def fail_preferred_once(store, kind, record):
+            if kind == "preferred" and not failed["value"]:
+                failed["value"] = True
+                raise OSError("injected preferred write failure")
+            return original(store, kind, record)
+        with patch("nastu_quant.research.candidate_qualification._upsert",
+                   side_effect=fail_preferred_once):
+            with self.assertRaises(OSError):
+                service._persist(
+                    workflow="regular", alpha_id="A_TX", candidate_ref="e" * 32,
+                    source_ref="tx.json", details=details,
+                    gate={"status": "CANDIDATE", "failures": [], "pending": []},
+                    correlations={}, evidence_refs={})
+        staged = self.store.list("candidate")[0]
+        self.assertEqual(staged["status"], "EVALUATION_PENDING")
+        self.assertEqual(self.pool.build_index()["entries"][0]["preferred_status"],
+                         "PENDING_PREFERRED")
+        completed = service._persist(
+            workflow="regular", alpha_id="A_TX", candidate_ref="e" * 32,
+            source_ref="tx.json", details=details,
+            gate={"status": "CANDIDATE", "failures": [], "pending": []},
+            correlations={}, evidence_refs={})
+        self.assertEqual(completed["candidate_status"], "CANDIDATE")
+        self.assertEqual(self.store.get("candidate", completed["candidate_id"])["status"],
+                         "CANDIDATE")
+        self.assertEqual(self.store.get("preferred", completed["candidate_id"])["status"],
+                         completed["preferred"]["status"])
 
     def test_unversioned_legacy_candidate_requires_reaudit(self):
         identity = "f" * 32
