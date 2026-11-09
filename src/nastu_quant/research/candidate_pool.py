@@ -33,9 +33,13 @@ def _latest(candidate_rows, preferred_by_id):
     newest = sorted(candidate_rows,
                     key=lambda row: (row["updated_at"], row["candidate_id"]))[-1]
     preferred = preferred_by_id.get(newest["candidate_id"])
+    sha = newest.get("evidence_sha256")
+    policy = newest.get("policy_sha256")
     same_evidence = bool(preferred and
-                         preferred.get("evidence_sha256") == newest.get("evidence_sha256") and
-                         preferred.get("policy_sha256") == newest.get("policy_sha256"))
+                         isinstance(sha, str) and len(sha) == 64 and
+                         isinstance(policy, str) and len(policy) == 64 and
+                         preferred.get("evidence_sha256") == sha and
+                         preferred.get("policy_sha256") == policy)
     preferred_status = preferred["status"] if same_evidence else "NOT_CANDIDATE"
     return newest, preferred_status
 
@@ -112,7 +116,8 @@ class CandidatePool:
         Exact evidence and policy digests are mandatory. Callers must obtain
         current evidence independently and MUST NOT use this to skip RA/PC/SC.
         """
-        if not all(isinstance(v, str) and len(v) == 64
+        if not all(isinstance(v, str) and len(v) == 64 and
+                   all(ch in "0123456789abcdef" for ch in v)
                    for v in (evidence_sha256, policy_sha256)):
             return None
         for row in reversed(sorted(self.store.list("candidate"),

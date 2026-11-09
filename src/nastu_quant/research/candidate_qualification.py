@@ -179,13 +179,24 @@ class CandidateQualificationService:
                              evidence_refs=refs)
 
     def qualify_live(self, *, workflow, alpha_id, candidate_ref, source_ref,
-                     contender_ids=None, evidence_refs=None):
+                     contender_ids=None, evidence_refs=None, fallback_details=None):
         """Read BRAIN evidence in strict RA -> correlation order; never writes Alpha."""
         if workflow not in {"regular", "super", "optimization"}:
             raise ValueError("unsupported Candidate workflow")
         self.gateway.call("set_case", case_key=str(candidate_ref), run_id=str(candidate_ref))
-        details = self.gateway.call("get_alpha_details", alpha_id=alpha_id)
+        try:
+            details = self.gateway.call("get_alpha_details", alpha_id=alpha_id)
+        except Exception:
+            details = None
         if not isinstance(details, dict) or details.get("id") != alpha_id:
+            if (isinstance(fallback_details, dict)
+                    and fallback_details.get("id") == alpha_id):
+                return self.qualify_from_evidence(
+                    workflow=workflow, alpha_id=alpha_id,
+                    candidate_ref=candidate_ref, source_ref=source_ref,
+                    details=fallback_details, correlations=None,
+                    evidence_refs=evidence_refs,
+                    external_pending=["live_alpha_readback_unavailable"])
             raise ValueError("Alpha details are unavailable")
         if ra_correlation_check_state(details) != "pass":
             return self.qualify_from_evidence(
