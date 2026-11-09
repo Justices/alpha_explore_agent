@@ -35,5 +35,7 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_independent_runtime.py'
       - name: CLI (mock only)
         run: python -m unittest discover -s tests -p 'test_cli.py'
+      - name: Orchestrator (mock only)
+        run: python -m unittest discover -s tests -p 'test_orchestrator.py'
       - name: Full offline suite
         run: python -m unittest discover -s tests
