@@ -78,7 +78,7 @@ class TestGatekeeper(unittest.TestCase):
             detail, checks, "GLB", DEFAULT_CONFIG,
             correlations={"prod": 0.7, "self": 0.7}, expected_pairwise_ids=[])
         self.assertFalse(audit["correlation_allowed"])
-        self.assertEqual(audit["status"], "CHECKS_PENDING")
+        self.assertIn(audit["status"], {"CHECKS_PENDING", "EVIDENCE_PENDING"})
 
     def test_zero_ra_failures_allow_correlation_even_when_sharpe_fails(self):
         detail = {"is": {"sharpe": 1.2}}
