@@ -389,7 +389,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     report["candidate_record_ref"] = qualification["candidate_ref"]
     report["preferred_record_ref"] = qualification["preferred_ref"]
     atomic_write_json(report_path, report)
-    branch.update(status="candidate_qualified", receipt_ref=str(readback_path),
+    branch.update(status="candidate_evaluated", receipt_ref=str(readback_path),
                   simulation_intent_ref=str(intent_path), response_ref=str(response_path),
                   audit_ref=str(audit_path), runner=result.get("runner"),
                   report_ref=str(report_path), candidate_alpha_id=rows[0]["alpha_id"],

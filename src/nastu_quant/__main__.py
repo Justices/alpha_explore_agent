@@ -215,10 +215,14 @@ def main(argv=None):
                     try:
                         item = json.loads(record_path.read_text(encoding="utf-8"))
                         output.append({
-                            "id": item.get("run_id") or item.get("branch_id") or
+                            "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                                   item.get("source_id"),
-                            "source_alpha_id": item.get("source_alpha_id") or
-                                               item.get("alpha_id"),
+                            "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
+                            "workflow": item.get("workflow"),
+                            "candidate_status": item.get("candidate_status") or
+                                                (item.get("status") if kind == "candidate" else None),
+                            "preferred_status": item.get("preferred_status") or
+                                                (item.get("status") if kind == "preferred" else None),
                             "candidate_alpha_id": item.get("candidate_alpha_id"),
                             "status": item.get("status"),
                             "simulation_intent_ref": item.get("simulation_intent_ref"),

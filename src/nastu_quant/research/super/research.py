@@ -297,7 +297,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["candidate_status"] = qualification["candidate_status"]
     run["preferred_status"] = qualification["preferred"]["status"]
     atomic_write_json(run_path, run)
-    persist_shared(status="candidate_qualified",
+    persist_shared(status="candidate_evaluated",
                    candidate_alpha_id=run["alpha_id"],
                    candidate_id=qualification["candidate_id"],
                    candidate_status=qualification["candidate_status"],

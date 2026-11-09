@@ -327,3 +327,25 @@ Fitness >= 1.0, Turnover in [0.01, 0.70], maximum weight <= 0.10, and
 `PENDING_PREFERRED`; failed criteria become `NOT_PREFERRED`. Drawdown and
 Coverage are recorded for analysis but have no threshold until explicitly
 approved. Preferred selection does not submit Alpha.
+
+
+### Shared Candidate Qualification and Pools
+
+Regular, BRAIN-native Super, and Alpha Optimization now use
+`CandidateQualificationService` as their common Candidate/Preferred
+lifecycle. Regular passes its reconciled canonical audit evidence; Super and
+Optimization use read-only platform detail, RA, local self-correlation, and
+production/self-correlation calls through the existing gateway.
+
+The service checks RA first. If RA is failed, pending, missing or unreadable,
+it does not request production/self correlations. Only after RA is terminal
+PASS does it run the existing local self-correlation prefilter and then query
+PC/SC. PC and SC must both be strictly below 0.70. Candidate qualification
+also retains the configured metric gates and platform-check completeness.
+Only final `CANDIDATE` records can become `PREFERRED`.
+
+Every workflow candidate receives a versioned Candidate Pool record and a
+corresponding Preferred Pool evaluation record, with stable IDs, workflow,
+source/candidate lineage, metrics, failure/pending reasons and evidence refs.
+The `status` command lists both pools. These paths only read BRAIN Alpha
+evidence; they do not submit or modify Alphas.
