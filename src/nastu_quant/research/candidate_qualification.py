@@ -185,7 +185,8 @@ class CandidateQualificationService:
     def qualify_from_evidence(self, *, workflow, alpha_id, candidate_ref,
                               source_ref, details, correlations=None, pairwise=None,
                               expected_pairwise_ids=None, evidence_refs=None,
-                              external_failures=None, external_pending=None):
+                              external_failures=None, external_pending=None,
+                              external_status=None):
         """Deterministic qualification for already-collected evidence."""
         if workflow not in {"regular", "super", "optimization"}:
             raise ValueError("unsupported Candidate workflow")
@@ -210,7 +211,10 @@ class CandidateQualificationService:
         gate["pending"] = sorted(set(gate.get("pending", []) + (external_pending or [])))
         if gate["failures"] or gate["pending"]:
             gate["status"] = ("RA_FAILED" if any(x.startswith("ra:") or x == "ra_fail_count" for x in gate["failures"])
-                              else "EVIDENCE_PENDING" if gate["pending"] and not gate["failures"]
+                              else (external_status if external_status in {
+                                  "PENDING_FULL_AUDIT", "ROBUSTNESS_REVIEW", "REVIEW_PENDING",
+                                  "CHECKS_PENDING", "EVIDENCE_PENDING"} else "EVIDENCE_PENDING")
+                              if gate["pending"] and not gate["failures"]
                               else "METRICS_FAILED")
         corr = {"prod": (correlations or {}).get("prod"),
                 "self": (correlations or {}).get("self"), "pairwise": pairwise or {}}
