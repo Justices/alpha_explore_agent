@@ -50,6 +50,29 @@ This is an **entrypoint contract integration**, not a complete simulated
 end-to-end exercise of the three existing executors. Those executors require
 richer mock gateway/model responses and have their own test suites.
 
+## Expanded offline executor integration
+
+The `tests/test_research_agent.py` suite now drives a real Regular Campaign
+through `MainOrchestrator → MockWorkflowAdapter → entrypoints.dispatch →
+run_regular_campaign → ResearchAgent`, with the existing scripted model and
+FakeGateway. It verifies one mock Simulation batch, durable campaign result,
+budget accounting, and no replay on task resume.
+
+`tests/test_full_mock_orchestration.py` drives the **actual** Super and
+Optimization executor implementations with an offline scripted gateway and
+scripted model decisions. It retains the real preregistration, simulation
+intent, readback, CandidateQualificationService, versioned Candidate/Preferred
+records, and policy-aware pool snapshot. The mock Alpha readback is deliberately
+unavailable, so the qualification service must fail closed to
+`EVIDENCE_PENDING`; these tests do not claim a passing RA/PC/SC verdict.
+A lost mock Simulation response must block the task and never replay it.
+
+The fake gateway and fake model require explicit offline markers for these
+real entrypoint tests. There is no production orchestrator adapter or live
+authentication in this path. Further tests should simulate complete RA,
+local self-correlation, platform PC/SC and pairwise evidence using a mock
+gateway before any production integration is considered.
+
 ## Remaining production integration boundary
 
 The current adapter is a **fixture-only contract**, not a production connection to the existing Regular Campaign, native Super, or Optimization executors. Before enabling a live adapter, implement an explicit operation policy, reconcile saved Simulation intents/receipts with the existing recovery API, validate budget accounting against the actual runner, and run a separate approval-controlled test. Automatic Alpha submission is out of scope. No live permission is implied by successful offline tests.
