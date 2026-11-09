@@ -357,9 +357,9 @@ class TestCanonicalAuditPolicy(unittest.TestCase):
         self.assertEqual(self._run()["status"], "CANDIDATE")
 
     def test_self_correlation_at_project_limit_is_rejected(self):
-        self.correlations["self"] = 0.7
+        self.correlations["self"] = 0.8
         self.audit.update({"candidate_eligible": False, "candidate_status": "failed",
-                           "self_corr": 0.7,
+                           "self_corr": 0.8,
                            "gate_failures": ["individual_correlation_exceeded"]})
         self.assertEqual(self._run()["status"], "CORR_REJECTED")
 
