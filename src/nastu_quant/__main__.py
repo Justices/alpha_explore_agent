@@ -16,6 +16,7 @@ from .research.entrypoints import COMMANDS as RESEARCH_COMMANDS, dispatch as dis
 from .research.records import ResearchRecordStore
 from .research.candidate_pool import CandidatePool, policy_hash
 from .research.orchestrator import MainOrchestrator, OfflineResearchAdapter, OrchestrationError
+from .research.recovery import RecoveryCoordinator
 from .config import DEFAULT_CONFIG
 
 
@@ -399,7 +400,7 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists() and args.command != "recover-research":
+    if stop_flag.exists() and args.command not in {"recover", "recover-research"}:
         print("research is stopped; no new platform work will start", file=sys.stderr)
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"
@@ -444,7 +445,8 @@ def main(argv=None):
                                     diagnosis_id=args.diagnosis_id, remedy_id=args.remedy_id,
                                     allow_remedy_round_overrun=args.allow_remedy_round_overrun)
         else:
-            result = agent.recover(args.batch_dir)
+            result = RecoveryCoordinator(root).recover(
+                args.batch_dir, gateway=gateway, agent=agent, config=cfg)
         if args.command == "run":
             print(json.dumps(result, ensure_ascii=False))
         else:

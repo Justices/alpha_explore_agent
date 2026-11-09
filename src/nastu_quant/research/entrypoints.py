@@ -12,7 +12,7 @@ from .regular.planner import discover_regular_scope
 from .regular.campaign import run_regular_campaign
 from .super.research import prepare_super_run, run_super_research
 from .optimization.research import prepare_source, run_optimization
-from .simulation_intent import recover_simulation_intent
+from .recovery import RecoveryCoordinator
 
 
 COMMANDS = {"plan-regular", "run-campaign", "plan-super", "run-super", "plan-optimization", "run-optimization", "recover-research"}
@@ -43,7 +43,7 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None):
     if command not in COMMANDS:
         raise ValueError(f"unknown research workflow command: {command}")
     if command == "recover-research":
-        return recover_simulation_intent(gateway, root, args.intent_path, config=cfg)
+        return RecoveryCoordinator(root).recover(args.intent_path, gateway=gateway, config=cfg)
     if command in {"plan-optimization", "run-optimization"}:
         region = _constraint(args.region, (cfg.get("scope") or {}).get("region"),
                              "Region")
