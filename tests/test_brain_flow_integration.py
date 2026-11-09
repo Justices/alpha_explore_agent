@@ -356,12 +356,12 @@ class TestCanonicalAuditPolicy(unittest.TestCase):
                            "gate_failures": ["individual_correlation_exceeded"]})
         self.assertEqual(self._run()["status"], "CANDIDATE")
 
-    def test_self_correlation_at_project_limit_is_allowed(self):
-        self.correlations["self"] = 0.8
+    def test_self_correlation_at_project_limit_is_rejected(self):
+        self.correlations["self"] = 0.7
         self.audit.update({"candidate_eligible": False, "candidate_status": "failed",
-                           "self_corr": 0.8,
+                           "self_corr": 0.7,
                            "gate_failures": ["individual_correlation_exceeded"]})
-        self.assertEqual(self._run()["status"], "CANDIDATE")
+        self.assertEqual(self._run()["status"], "CORR_REJECTED")
 
     def test_pairwise_correlation_at_project_limit_conflicts(self):
         self.audit.update({"candidate_eligible": False, "candidate_status": "pairwise_conflict",
