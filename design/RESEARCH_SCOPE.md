@@ -118,7 +118,35 @@ automatic mutation of the source. How to reconcile specific optimization
 actions and branch limits with existing requirements is an implementation
 decision requiring review.
 
-## 6. Outputs and evidence
+## 6. Preferred Selection (second-stage Candidate selection)
+
+Candidate qualification is the prerequisite, not a synonym for Preferred.
+The existing Candidate gate remains authoritative: a result must satisfy
+the configured Sharpe threshold, readable RA checks with zero failures,
+production/self correlation limits, pairwise de-duplication and all existing
+evidence requirements before it receives Candidate status.
+
+Only a result whose final status is exactly `CANDIDATE` enters Preferred
+Selection. The initial `preferred-v1` policy applies these additional
+criteria:
+
+- Sharpe >= 1.25;
+- Fitness >= 1.0;
+- Turnover between 0.01 and 0.70 inclusive;
+- maximum weight <= 0.10;
+- `LOW_SUB_UNIVERSE_SHARPE` platform check is PASS.
+
+A failed criterion yields `NOT_PREFERRED`; missing or unsettled evidence
+yields `PENDING_PREFERRED`. A non-Candidate is `NOT_CANDIDATE` and is not
+evaluated for Preferred. Preferred selection never changes Candidate status,
+does not bypass the Candidate gate, and does not submit an Alpha.
+
+Drawdown and Coverage are retained as informational metrics in the Preferred
+record. Their thresholds are not fixed in this policy and must not be inferred.
+Preferred thresholds are explicit configuration under `preferred`; changes
+require policy approval and a configuration change record.
+
+## 7. Outputs and evidence
 
 Each run should produce a reviewable record containing:
 
@@ -128,7 +156,7 @@ Each run should produce a reviewable record containing:
   eligible, completed, skipped, blocked and unexamined scope;
 - hypotheses and pre-backtest evidence, simulation intent and receipts,
   recovery identifiers, results and applicable check outcomes;
-- separate states for draft, simulated, pending, failed, Candidate and, only
+- separate states for draft, simulated, pending, failed, Candidate, Preferred and, only
   when independently evidenced, submitted or active; PPA qualification and
   platform classification are separate fields when applicable;
 - stop reason, budget consumption, failures, unknowns and actionable next steps.
@@ -139,7 +167,7 @@ correlation rules and user resolution of pairwise conflicts remain in force
 where applicable. Never repost a possibly submitted simulation; recover and
 reconcile it under the existing contract.
 
-## 7. Budgets, stopping and completeness
+## 8. Budgets, stopping and completeness
 
 Configure bounded resources before execution, including applicable simulation
 or batch limits and any time, cost, concurrency or per-subtask limits. Record
@@ -158,7 +186,7 @@ completed Candidate. Existing bounded-loop and target behavior is described
 in the README; this document does not change it or establish new default
 budget values or automatic stopping targets.
 
-## 8. Dependencies and exclusions
+## 9. Dependencies and exclusions
 
 Live BRAIN evidence governs available Regions, Datasets, Category/Delay/
 Universe combinations, fields, operators, simulation settings, Super
@@ -174,7 +202,7 @@ diagnostic probes as performance evidence. This scope supersedes conflicting
 historical research-scope rules; it does not set numeric thresholds or claim
 an unverified platform capability or implementation.
 
-## 9. Open items and implementation status
+## 10. Open items and implementation status
 
 - Define and validate the BRAIN-native Super interfaces, input eligibility,
   supported constraints, evidence and Super-specific audit.

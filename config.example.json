@@ -27,6 +27,14 @@
     "self_corr_max": 0.7,
     "pairwise_corr_max": 0.4
   },
+  "preferred": {
+    "sharpe_min": 1.25,
+    "fitness_min": 1.0,
+    "turnover_min": 0.01,
+    "turnover_max": 0.7,
+    "weight_max": 0.1,
+    "require_sub_universe_pass": true
+  },
   "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
   "knowledge": {
     "construction_advisory_path": null,

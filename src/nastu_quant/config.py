@@ -43,6 +43,14 @@ DEFAULT_CONFIG = {
         "self_corr_max": 0.70,       # current rule: inclusive
         "pairwise_corr_max": 0.40,   # strict less-than
     },
+    "preferred": {
+        "sharpe_min": 1.25,
+        "fitness_min": 1.0,
+        "turnover_min": 0.01,
+        "turnover_max": 0.70,
+        "weight_max": 0.10,
+        "require_sub_universe_pass": True,
+    },
     "probe": {"windows": [5, 66]},
     "exec": {"multisim_wait_threshold_s": 1200},
     "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
@@ -56,7 +64,7 @@ DEFAULT_CONFIG = {
     },
 }
 
-SCOPE_KEYS = {"scope", "gate"}  # changes to these sections need approval
+SCOPE_KEYS = {"scope", "gate", "preferred"}  # changes to these sections need approval
 
 
 def config_path() -> Path:

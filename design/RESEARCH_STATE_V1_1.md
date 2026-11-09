@@ -205,3 +205,20 @@ The current V1.1 feature branch persists Campaign, Dataset Subtask and Combinati
 `recover-research <intent-path>` reconciles an interrupted Super or Optimization intent through the existing platform `resume_simulation_batch` command. The runtime validates its saved request/admission/receipt hashes and resumes the platform runner; it does not issue a new `simulate_super` or `simulate_batch` call. An unknown result without a valid platform recovery location remains unresolved. This command is exposed through the main CLI and the `status` command lists Super runs, Optimization sources and candidate branches.
 
 This implementation status is specific to the feature branch and has not been validated against a live BRAIN account in this pass. Candidate audit remains pending unless the full applicable family audit has actually been completed. Automated tests were deferred at the user's request; run the repository checks before merging.
+
+
+## Candidate and Preferred are separate states
+
+Candidate is awarded only by the existing Candidate Qualification gate:
+the existing Sharpe precondition, complete readable RA checks with zero
+failures, production/self correlation limits, pairwise de-duplication and
+all required evidence. Preferred is a second-stage selection and can only
+evaluate a record whose final Candidate status is exactly `CANDIDATE`.
+
+The `preferred-v1` policy currently requires Sharpe >= 1.25, Fitness >= 1.0,
+Turnover in [0.01, 0.70], maximum weight <= 0.10, and a PASS result for
+`LOW_SUB_UNIVERSE_SHARPE`. Missing measurements or unsettled checks produce
+`PENDING_PREFERRED`; failed criteria produce `NOT_PREFERRED`. A non-Candidate
+is `NOT_CANDIDATE`. Preferred never changes Candidate status or submits an
+Alpha. Drawdown and Coverage are recorded as informational metrics until
+explicit thresholds are approved.

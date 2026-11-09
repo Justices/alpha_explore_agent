@@ -18,6 +18,7 @@ from .gatekeeper import evaluate_candidate, local_self_correlation_state, parse_
 from .ppa import (PPA_MAX_FIELDS, PPA_MAX_OPERATORS, PPA_MIN_SHARPE,
                   ppa_gate_kwargs, ppa_requested)
 from .audit_policy import reconcile_audit_evidence
+from .preferred import evaluate_preferred
 from .config import DEFAULT_CONFIG
 from .campaign import CampaignStore
 from .diagnosis import DiagnosisError, diagnose_batch
@@ -728,6 +729,14 @@ class ResearchAgent:
                 verdict["status"] = "METRICS_FAILED"
             elif verdict["pending"] and verdict.get("status") == "CANDIDATE":
                 verdict["status"] = "PENDING_FULL_AUDIT"
+            # Preferred is strictly downstream of a fully reconciled Candidate.
+            # It cannot promote a pending/failed Alpha or alter Candidate status.
+            preferred = evaluate_preferred(
+                result.get("raw_details"),
+                candidate_status=verdict.get("status"),
+                config=self.config)
+            verdict["preferred"] = preferred
+            verdict["preferred_status"] = preferred["status"]
         return by_id
 
     def _refresh_retained_contenders(self, contenders, current_ids, scope, self_limit, batch_dir):
