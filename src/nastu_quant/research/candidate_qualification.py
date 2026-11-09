@@ -181,13 +181,14 @@ class CandidateQualificationService:
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
                 source_ref=source_ref, details=details, correlations=None,
                 evidence_refs=refs)
-            if local_state == "fail":
-                result["candidate_status"] = "CORR_REJECTED"
-                result["candidate_failures"] = sorted(set(result["candidate_failures"] + ["local_self_correlation"]))
-            else:
-                result["candidate_status"] = "EVIDENCE_PENDING"
-                result["candidate_pending"] = sorted(set(result["candidate_pending"] + ["local_self_correlation_unavailable"]))
-            return result
+            # Persist the local prefilter outcome through the same pool writer.
+            return self.qualify_from_evidence(
+                workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                source_ref=source_ref, details=details, correlations=None,
+                evidence_refs=refs,
+                external_failures=(["local_self_correlation"] if local_state == "fail" else []),
+                external_pending=([] if local_state == "fail" else
+                                  ["local_self_correlation_unavailable"]))
         raw = self.gateway.call("check_correlation", alpha_id=alpha_id,
                                 contender_ids=contender_ids or [],
                                 self_corr_max=self.config["gate"]["self_corr_max"])

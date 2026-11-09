@@ -217,3 +217,28 @@ an unverified platform capability or implementation.
   configuration, CLI and validation through their normal approval process.
 
 The implementation now includes a multi-Dataset Regular Campaign planner and serial executor, independent Dataset subtask and scope-combination records, Campaign coverage evidence, BRAIN-native Super preparation/execution with shared run records, and Alpha-ID Optimization source snapshots, independent candidate branches, simulation intents, read-back receipts, source-definition integrity checks, and optimization reports. These are implementation capabilities, not a claim of live BRAIN end-to-end verification. Super and Optimization simulation ambiguity is preserved as `OUTCOME_UNKNOWN`; a platform reconciliation API has not been assumed. Candidate audit remains pending until the complete applicable family audit is obtained. The CLI status output exposes V1.1 Campaign, Super, source, and candidate-branch records. Automated tests were explicitly deferred for this implementation pass and must be run before merge. Historical design passages with fixed scope, universal PPA-like limits or other superseded assumptions must not be taken as current behavior.
+
+
+## Shared Candidate Qualification Service and Pools
+
+All three research workflows now route their final candidate evidence through
+`CandidateQualificationService`. Regular supplies its canonical audit
+readback and reconciled correlation evidence; Super and Optimization use the
+same service to fetch the candidate details, verify terminal RA checks, run
+the existing local self-correlation prefilter, and only then request platform
+production/self correlations. A non-passing or unreadable RA state never
+triggers correlation requests. PC and SC must each be strictly below 0.70.
+
+The service persists one versioned Candidate record and one Preferred record
+per workflow candidate. The records retain workflow, Alpha ID, candidate
+branch/batch reference, source evidence, failures, pending items, metrics and
+audit evidence references. Only Candidate status exactly `CANDIDATE` is
+eligible for Preferred evaluation. Preferred uses the configured
+`preferred-v1` policy; missing evidence remains pending. Pool listings are
+available through `ResearchRecordStore.list("candidate")` and
+`ResearchRecordStore.list("preferred")`, and the operational status command
+includes both pools.
+
+The service performs read-only BRAIN calls; it does not submit or mutate
+Alpha records. Live platform verification and automated tests remain separate
+release gates.

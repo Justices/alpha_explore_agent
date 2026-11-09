@@ -236,7 +236,9 @@ def main(argv=None):
                           "v11_campaigns": v11_campaigns,
                           "v11_super_runs": _record_summaries("super_run"),
                           "v11_optimization_sources": _record_summaries("optimization_source"),
-                          "v11_candidate_branches": _record_summaries("candidate_branch")},
+                          "v11_candidate_branches": _record_summaries("candidate_branch"),
+                          "v11_candidates": _record_summaries("candidate"),
+                          "v11_preferred": _record_summaries("preferred")},
                          ensure_ascii=False))
         return 0
     if args.command == "void":
