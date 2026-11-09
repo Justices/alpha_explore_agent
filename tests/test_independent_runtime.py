@@ -957,7 +957,8 @@ class TestIndependentRuntime(unittest.TestCase):
 
         second = agent.run_once("forecast future returns", dataset_id="analyst69")
         case = json.loads(Path(second["case_path"]).read_text(encoding="utf-8"))
-        self.assertEqual(case["contenders"]["A1"]["status"], "CANDIDATE")
+        self.assertEqual(case["contenders"]["A1"]["status"], "CANDIDATE",
+                         case["contenders"]["A1"])
         clean = json.loads((Path(second["batch_dir"]) / "retained_candidate_audits.json")
                            .read_text(encoding="utf-8"))
         self.assertEqual(clean["A1"]["status"], "CANDIDATE")
