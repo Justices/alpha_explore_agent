@@ -10,6 +10,7 @@ from ...model_client import DecisionRecorder
 from ...state_store import atomic_write_json
 from ...validator import Parser, ParseError
 from ..audit import record_pending_audit
+from ..simulation_intent import create_simulation_intent, transition_simulation_intent
 
 
 class SuperScopeError(ValueError):
@@ -188,27 +189,59 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         "registered_at": datetime.now(timezone.utc).isoformat()}
     prereg_path = run_path.with_name(f"{run_id}_{batch_id}_prereg.json")
     atomic_write_json(prereg_path, prereg)
-    run["status"] = "simulation_pending"
     run["prereg_ref"] = str(prereg_path)
     run["batch_id"] = batch_id
+    intent_path = run_path.with_name(f"{run_id}_{batch_id}_simulation_intent.json")
+    request = {
+        "selection": proposal["selection"], "combo": proposal["combo"],
+        "research": {key: proposal[key] for key in
+                     ("hypothesis", "rationale", "failure_criterion")},
+    }
+    create_simulation_intent(
+        intent_path, workflow="super", run_id=run_id, batch_id=batch_id,
+        request=request, settings=settings)
+    run["simulation_intent_ref"] = str(intent_path)
+    run["status"] = "simulation_prepared"
     atomic_write_json(run_path, run)
-    result = gateway.call(
-        "simulate_super", batch_id=batch_id, settings=settings,
-        selection=proposal["selection"], combo=proposal["combo"],
-        research={key: proposal[key] for key in
-                  ("hypothesis", "rationale", "failure_criterion")})
+    transition_simulation_intent(
+        intent_path, expected_status="PREPARED", status="POSTING")
+    run["status"] = "simulation_posting"
+    atomic_write_json(run_path, run)
+    try:
+        result = gateway.call(
+            "simulate_super", batch_id=batch_id, settings=settings,
+            selection=proposal["selection"], combo=proposal["combo"],
+            research=request["research"])
+    except Exception:
+        transition_simulation_intent(
+            intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
+        run["status"] = "outcome_unknown"
+        atomic_write_json(run_path, run)
+        raise
+    response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
+                                default=str).encode("utf-8")
+    transition_simulation_intent(
+        intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
+        response_sha256=__import__("hashlib").sha256(response_bytes).hexdigest())
     rows = result.get("results") if isinstance(result, dict) else None
-    if not isinstance(rows, list) or len(rows) != 1 or not rows[0].get("alpha_id"):
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("alpha_id"):
+        transition_simulation_intent(
+            intent_path, expected_status="RESPONSE_RECEIVED", status="OUTCOME_UNKNOWN")
+        run["status"] = "outcome_unknown"
+        atomic_write_json(run_path, run)
         raise SuperScopeError("Super simulation readback is incomplete")
-    run["status"] = "simulated_pending_audit"
     run["alpha_id"] = rows[0]["alpha_id"]
     run["runner"] = result.get("runner")
     run["readback_ref"] = str(run_path.with_name(f"{run_id}_{batch_id}_readback.json"))
     atomic_write_json(Path(run["readback_ref"]), rows[0])
+    transition_simulation_intent(
+        intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
+        receipt_ref=run["readback_ref"])
     audit_path = run_path.with_name(f"{run_id}_{batch_id}_audit.json")
     atomic_write_json(audit_path, record_pending_audit(
         rows[0]["details"], workflow="super"))
     run["audit_ref"] = str(audit_path)
+    run["status"] = "simulated_pending_audit"
     atomic_write_json(run_path, run)
     return {"run_id": run_id, "alpha_id": run["alpha_id"],
             "status": run["status"], "record_ref": str(run_path)}

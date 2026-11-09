@@ -14,6 +14,7 @@ from ...validator import Parser, ParseError, NON_FIELD_IDENTS, walk, validate, r
 from ..super.research import validate_super_expressions
 from ..audit import record_pending_audit
 from ..records import ResearchRecordStore
+from ..simulation_intent import create_simulation_intent, transition_simulation_intent
 
 
 class OptimizationError(ValueError):
@@ -245,34 +246,67 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     atomic_write_json(prereg_path, {"source": source_info, "proposal": proposal,
                                     "dataset_id": dataset_id, "settings": settings,
                                     "registered_at": _now()})
-    previous = branch["updated_at"]
-    branch.update(status="simulation_pending", prereg_ref=str(prereg_path),
-                  updated_at=_now())
-    store.put("candidate_branch", branch, expected_updated_at=previous)
     batch_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
     if family == "regular":
-        result = gateway.call("simulate_batch", batch_id=batch_id,
-                              label="production", dataset_id=dataset_id,
-                              settings=settings,
-                              variants=[{"name": "optimization_candidate",
-                                         "expression": expression,
-                                         "research": research}])
+        request = {"dataset_id": dataset_id, "label": "production",
+                   "variants": [{"name": "optimization_candidate",
+                                 "expression": expression, "research": research}]}
     else:
-        result = gateway.call("simulate_super", batch_id=batch_id,
-                              settings=settings, selection=selection,
-                              combo=combo, research=research)
+        request = {"selection": selection, "combo": combo, "research": research}
+    intent_path = prereg_path.with_name(f"{run_id}_simulation_intent.json")
+    create_simulation_intent(
+        intent_path, workflow="optimization", run_id=run_id,
+        batch_id=batch_id, request=request, settings=settings)
+    previous = branch["updated_at"]
+    branch.update(status="simulation_prepared", prereg_ref=str(prereg_path),
+                  simulation_intent_ref=str(intent_path), updated_at=_now())
+    store.put("candidate_branch", branch, expected_updated_at=previous)
+    transition_simulation_intent(
+        intent_path, expected_status="PREPARED", status="POSTING")
+    previous = branch["updated_at"]
+    branch.update(status="simulation_posting", updated_at=_now())
+    store.put("candidate_branch", branch, expected_updated_at=previous)
+    try:
+        if family == "regular":
+            result = gateway.call("simulate_batch", batch_id=batch_id,
+                                  label="production", dataset_id=dataset_id,
+                                  settings=settings, variants=request["variants"])
+        else:
+            result = gateway.call("simulate_super", batch_id=batch_id,
+                                  settings=settings, selection=selection,
+                                  combo=combo, research=research)
+    except Exception:
+        transition_simulation_intent(
+            intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
+        previous = branch["updated_at"]
+        branch.update(status="outcome_unknown", updated_at=_now())
+        store.put("candidate_branch", branch, expected_updated_at=previous)
+        raise
+    response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
+                                default=str).encode("utf-8")
+    transition_simulation_intent(
+        intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
+        response_sha256=hashlib.sha256(response_bytes).hexdigest())
     rows = result.get("results") if isinstance(result, dict) else None
-    if not isinstance(rows, list) or len(rows) != 1 or not rows[0].get("alpha_id"):
+    if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("alpha_id"):
+        transition_simulation_intent(
+            intent_path, expected_status="RESPONSE_RECEIVED", status="OUTCOME_UNKNOWN")
+        previous = branch["updated_at"]
+        branch.update(status="outcome_unknown", updated_at=_now())
+        store.put("candidate_branch", branch, expected_updated_at=previous)
         raise OptimizationError("candidate simulation readback is incomplete")
     readback_path = prereg_path.with_name(f"{run_id}_readback.json")
     atomic_write_json(readback_path, rows[0])
+    transition_simulation_intent(
+        intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
+        receipt_ref=str(readback_path))
     audit_path = prereg_path.with_name(f"{run_id}_audit.json")
     atomic_write_json(audit_path, record_pending_audit(
         rows[0]["details"], workflow="optimization", source=details))
     previous = branch["updated_at"]
     branch.update(status="simulated_pending_audit", receipt_ref=str(readback_path),
-                  audit_ref=str(audit_path), candidate_alpha_id=rows[0]["alpha_id"],
-                  updated_at=_now())
+                  simulation_intent_ref=str(intent_path), audit_ref=str(audit_path),
+                  candidate_alpha_id=rows[0]["alpha_id"], updated_at=_now())
     store.put("candidate_branch", branch, expected_updated_at=previous)
     return {"branch_id": branch["branch_id"],
             "branch_ref": branch_info["branch_ref"],
