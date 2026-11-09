@@ -313,6 +313,8 @@ class TestGlobalCandidatePool(unittest.TestCase):
         self.assertFalse(correlation_verdict(0.7, 0.4, {}, cfg)[0])
         self.assertFalse(correlation_verdict(0.4, -0.7, {}, cfg)[0])
         self.assertTrue(correlation_verdict(0.69, -0.69, {}, cfg)[0])
+        self.assertFalse(correlation_verdict(0.1, 0.1, {"A_OTHER": 0.4}, cfg)[0])
+        self.assertTrue(correlation_verdict(0.1, 0.1, {"A_OTHER": 0.399}, cfg)[0])
 
 
 if __name__ == "__main__":
