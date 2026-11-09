@@ -2,6 +2,7 @@
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
@@ -32,6 +33,41 @@ class WorkflowAdapterTests(unittest.TestCase):
             return output
         return MockWorkflowAdapter(self.root, DEFAULT_CONFIG, FakeGateway(),
                                    object(), dispatcher=fake_dispatch)
+
+    def test_actual_dispatch_routes_existing_executor_functions(self):
+        # Exercise real entrypoints.dispatch, not a replacement dispatcher.
+        outputs = {
+            "regular": {"status": "budget_complete", "completed": [
+                {"alpha_ids": ["A1"], "candidate_status": {"A1": "EVIDENCE_PENDING"}}]},
+            "super": {"candidate_id": "C1", "candidate_status": "EVIDENCE_PENDING",
+                      "preferred_status": "PENDING_PREFERRED",
+                      "candidate_ref": "c.json", "preferred_ref": "p.json"},
+            "optimization": {"candidate_id": "C2", "candidate_status": "EVIDENCE_PENDING",
+                             "preferred_status": "PENDING_PREFERRED",
+                             "candidate_ref": "c2.json", "preferred_ref": "p2.json"},
+        }
+        functions = {
+            "regular": "run_regular_campaign",
+            "super": "run_super_research",
+            "optimization": "run_optimization",
+        }
+        for workflow in outputs:
+            with self.subTest(workflow=workflow):
+                agent = type("Agent", (), {"model": object()})()
+                adapter = MockWorkflowAdapter(self.root, DEFAULT_CONFIG,
+                                              FakeGateway(), agent)
+                request = {"objective": "offline"}
+                if workflow == "optimization":
+                    request["alpha_id"] = "SOURCE"
+                with patch("nastu_quant.research.entrypoints." + functions[workflow],
+                           return_value=outputs[workflow]) as mocked:
+                    result = adapter.run(workflow, "execute", request, {})
+                    self.assertEqual(result, outputs[workflow])
+                    mocked.assert_called_once()
+                    if workflow == "regular":
+                        self.assertEqual(mocked.call_args.kwargs["max_batches"], 1)
+                    if workflow == "optimization":
+                        self.assertEqual(mocked.call_args.kwargs["alpha_id"], "SOURCE")
 
     def test_rejects_gateway_without_offline_marker(self):
         with self.assertRaises(OrchestrationError):
