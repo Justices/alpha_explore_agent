@@ -35,6 +35,39 @@ def _code(value):
     return value.get("code") if isinstance(value, dict) else value
 
 
+def _source_properties(details):
+    """Only immutable Alpha definition fields, excluding changing performance metrics."""
+    family = str(details.get("type") or "").upper()
+    settings = details.get("settings") if isinstance(details.get("settings"), dict) else {}
+    if family == "REGULAR":
+        definition = {"regular": _code(details.get("regular"))}
+    else:
+        block = details.get("super") if isinstance(details.get("super"), dict) else {}
+        definition = {
+            "selection": _code(details.get("selection") or block.get("selection")),
+            "combo": _code(details.get("combo") or block.get("combo")),
+        }
+    return {"id": details.get("id"), "type": family,
+            "settings": settings, **definition}
+
+
+def _source_properties_digest(details):
+    return _digest(_source_properties(details))
+
+
+def _put_advanced(store, record):
+    """Persist a branch transition with a strictly increasing timestamp."""
+    previous = store.get("candidate_branch", record["branch_id"])
+    prior = previous["updated_at"]
+    now = datetime.now(timezone.utc)
+    last = datetime.fromisoformat(prior)
+    if now <= last:
+        from datetime import timedelta
+        now = last + timedelta(microseconds=1)
+    record["updated_at"] = now.isoformat()
+    return store.put("candidate_branch", record, expected_updated_at=prior)
+
+
 def prepare_source(gateway, state_root: Path, *, alpha_id: str,
                    objective: str | None = None, region: str | None = None):
     """Capture current platform details without changing the source Alpha."""
@@ -74,6 +107,7 @@ def prepare_source(gateway, state_root: Path, *, alpha_id: str,
         "alpha_id": alpha_id, "source_type": family.lower(),
         "region": source_region, "objective": objective,
         "snapshot_ref": str(snapshot_path), "details_sha256": _digest(details),
+        "source_properties_sha256": _source_properties_digest(details),
         "observed_at": observed_at, "status": "captured",
         "created_at": observed_at, "updated_at": observed_at}
     path = ResearchRecordStore(state_root).put("optimization_source", captured)
@@ -122,6 +156,7 @@ def create_branch(state_root: Path, *, source_ref: str, objective: str,
         "source_alpha_id": source["alpha_id"],
         "source_snapshot_ref": str(snapshot_path),
         "source_snapshot_sha256": source["details_sha256"],
+        "source_properties_sha256": source["source_properties_sha256"],
         "source_type": source["source_type"],
         "objective": objective, "rationale": rationale,
         "changes": changes, "effective_settings": effective_settings,
@@ -280,7 +315,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
         previous = branch["updated_at"]
         branch.update(status="outcome_unknown", updated_at=_now())
-        store.put("candidate_branch", branch, expected_updated_at=previous)
+        _put_advanced(store, branch)
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
                                 default=str).encode("utf-8")
@@ -293,23 +328,66 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             intent_path, expected_status="RESPONSE_RECEIVED", status="OUTCOME_UNKNOWN")
         previous = branch["updated_at"]
         branch.update(status="outcome_unknown", updated_at=_now())
-        store.put("candidate_branch", branch, expected_updated_at=previous)
+        _put_advanced(store, branch)
         raise OptimizationError("candidate simulation readback is incomplete")
     readback_path = prereg_path.with_name(f"{run_id}_readback.json")
     atomic_write_json(readback_path, rows[0])
     transition_simulation_intent(
         intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
         receipt_ref=str(readback_path))
+    # Re-read the source definition after simulation. Performance metrics may
+    # change independently, so compare only identity, family, settings and code.
+    latest_source = gateway.call("get_alpha_details", alpha_id=alpha_id)
+    if (not isinstance(latest_source, dict) or
+            _source_properties_digest(latest_source) !=
+            source_info["source_properties_sha256"]):
+        previous = branch["updated_at"]
+        branch.update(status="source_integrity_unresolved",
+                      receipt_ref=str(readback_path),
+                      simulation_intent_ref=str(intent_path),
+                      candidate_alpha_id=rows[0]["alpha_id"],
+                      unresolved=["source_alpha_definition_changed_or_unreadable"])
+        _put_advanced(store, branch)
+        raise OptimizationError(
+            "source Alpha definition could not be verified unchanged after simulation")
     audit_path = prereg_path.with_name(f"{run_id}_audit.json")
-    atomic_write_json(audit_path, record_pending_audit(
-        rows[0]["details"], workflow="optimization", source=details))
-    previous = branch["updated_at"]
+    audit = record_pending_audit(
+        rows[0]["details"], workflow="optimization", source=details)
+    audit["source_properties_sha256"] = source_info["source_properties_sha256"]
+    audit["source_snapshot_sha256"] = source_info["details_sha256"]
+    atomic_write_json(audit_path, audit)
+    report_path = prereg_path.with_name(f"{run_id}_optimization_report.json")
+    report = {
+        "schema_version": 1, "workflow": "optimization",
+        "source_alpha_id": alpha_id, "source_type": family,
+        "source_ref": source_info["source_ref"],
+        "source_snapshot_ref": source_info["snapshot_ref"],
+        "source_snapshot_sha256": source_info["details_sha256"],
+        "source_properties_sha256": source_info["source_properties_sha256"],
+        "candidate_branch_id": branch["branch_id"],
+        "candidate_alpha_id": rows[0]["alpha_id"],
+        "objective": objective, "hypothesis": proposal["hypothesis"],
+        "rationale": proposal["rationale"], "changes": proposal["changes"],
+        "effective_settings": settings, "dataset_id": dataset_id,
+        "simulation_intent_ref": str(intent_path),
+        "readback_ref": str(readback_path), "audit_ref": str(audit_path),
+        "source_unchanged_verified": True,
+        "candidate_status": "simulated_pending_audit",
+        "pending": audit["pending"], "created_at": _now()}
+    atomic_write_json(report_path, report)
     branch.update(status="simulated_pending_audit", receipt_ref=str(readback_path),
                   simulation_intent_ref=str(intent_path), audit_ref=str(audit_path),
-                  candidate_alpha_id=rows[0]["alpha_id"], updated_at=_now())
-    store.put("candidate_branch", branch, expected_updated_at=previous)
+                  report_ref=str(report_path),
+                  candidate_alpha_id=rows[0]["alpha_id"],
+                  budget={"limits": {"experiments": 1},
+                          "reserved": {"experiments": 0},
+                          "used": {"experiments": 1}},
+                  source_unchanged_verified=True)
+    _put_advanced(store, branch)
     return {"branch_id": branch["branch_id"],
             "branch_ref": branch_info["branch_ref"],
             "source_alpha_id": alpha_id,
             "candidate_alpha_id": rows[0]["alpha_id"],
+            "report_ref": str(report_path),
+            "source_unchanged_verified": True,
             "status": branch["status"]}
