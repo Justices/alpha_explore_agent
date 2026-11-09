@@ -309,7 +309,7 @@ class PlatformRuntime:
         root = self._require_case()
         if not isinstance(batch_id, str) or not re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", batch_id):
             raise PlatformError("invalid batch ID")
-        if not isinstance(label, str) or not re.fullmatch(r"(?:production|probe_[1-9][0-9]*)", label):
+        if not isinstance(label, str) or not re.fullmatch(r"(?:production|super|probe_[1-9][0-9]*)", label):
             raise PlatformError("invalid batch label")
         folder = root / "batches"
         stem = f"{batch_id}_{label}"
@@ -428,6 +428,92 @@ class PlatformRuntime:
                 raise
             raise PlatformError(f"simulation is unresolved: {type(exc).__name__}") from exc
 
+    def run_super_simulation(self, params):
+        """Run one BRAIN-native Super simulation with the same recovery ledger."""
+        paths = self._batch_paths(params.get("batch_id"), "super")
+        settings = params.get("settings")
+        self.validate_super_settings(settings)
+        selection, combo = params.get("selection"), params.get("combo")
+        if any(not isinstance(code, str) or not code.strip()
+               for code in (selection, combo)):
+            raise PlatformError("Super selection and combo expressions are required")
+        research = params.get("research")
+        if (not isinstance(research, dict) or
+                any(not isinstance(research.get(key), str) or
+                    not research[key].strip() for key in
+                    ("hypothesis", "rationale", "failure_criterion"))):
+            raise PlatformError("pre-backtest Super research evidence is incomplete")
+        request = {"case_key": self.case_key, "run_id": self.run_id,
+                   "batch_id": params["batch_id"], "label": "super",
+                   "type": "SUPER", "settings": settings,
+                   "variants": [{"name": params.get("name") or "super_candidate",
+                                 "selection": selection, "combo": combo}],
+                   "research": research}
+        if paths["progress"].exists():
+            if (paths["output"].exists() and self._load(paths["request"]) == request
+                    and self._load(paths["progress"]).get("status") == "COMPLETE"):
+                return self.resume_simulation_batch({
+                    "case_key": self.case_key, "run_id": self.run_id,
+                    "batch_id": request["batch_id"], "label": "super"})
+            raise PlatformError("prior Super simulation may have been submitted; recover")
+        receipt = {"type": "SUPER", "settings": self._platform_settings(settings),
+                   "selection": selection, "combo": combo, "research": research,
+                   "created_at": datetime.now(timezone.utc).isoformat()}
+        try:
+            with SubmissionGate(self.state_root):
+                if paths["progress"].exists() or paths["post_started"].exists():
+                    raise PlatformError("prior Super simulation may have been submitted; recover")
+                atomic_write_json(paths["request"], request)
+                atomic_write_json(paths["receipt"], receipt)
+                progress = {"status": "PREPARED", "resume_url": None,
+                            "request_sha256": hashlib.sha256(
+                                paths["request"].read_bytes()).hexdigest(),
+                            "receipt_sha256": hashlib.sha256(
+                                paths["receipt"].read_bytes()).hexdigest()}
+                self._post_prepared(request, paths, progress)
+            return self._finish(request, paths, progress)
+        except Exception as exc:
+            if isinstance(exc, PlatformError):
+                raise
+            raise PlatformError(f"Super simulation is unresolved: {type(exc).__name__}") from exc
+
+    def validate_super_settings(self, settings):
+        if not isinstance(settings, dict):
+            raise PlatformError("Super settings must be an object")
+        regular = {key: settings.get(key) for key in
+                   ("instrument_type", "region", "universe", "delay", "decay",
+                    "neutralization", "truncation", "pasteurization",
+                    "unit_handling", "nan_handling", "language",
+                    "visualization", "test_period", "max_trade")}
+        self.validate_simulation_settings(regular)
+        if set(settings) - set(regular) - {
+                "selectionHandling", "selectionLimit", "componentActivation"}:
+            raise PlatformError("unsupported Super setting cannot be preserved")
+        schema = self._settings_schema()
+        for key in ("selectionHandling", "componentActivation"):
+            rule = schema.get(key)
+            choices = rule.get("choices") if isinstance(rule, dict) else None
+            allowed = {row.get("value") for row in choices if isinstance(row, dict)} if isinstance(choices, list) else set()
+            if settings.get(key) not in allowed:
+                raise PlatformError(f"{key} is not a live supported Super setting")
+        rule = schema.get("selectionLimit")
+        limit = settings.get("selectionLimit")
+        if (not isinstance(rule, dict) or type(limit) is not int
+                or not isinstance(rule.get("minValue"), (int, float))
+                or limit < rule["minValue"]
+                or isinstance(rule.get("maxValue"), (int, float))
+                and limit > rule["maxValue"]):
+            raise PlatformError("selectionLimit is not a live supported Super setting")
+        combos = self._setting_options()["instrument_options"]
+        if not any(row.get("InstrumentType") == regular["instrument_type"]
+                   and row.get("Region") == regular["region"]
+                   and row.get("Delay") == regular["delay"]
+                   and regular["universe"] in row.get("Universe", [])
+                   and regular["neutralization"] in row.get("Neutralization", [])
+                   for row in combos):
+            raise PlatformError("Super scope is not a live supported combination")
+        return {"compatible": True, "entry_point": "native_super_runtime"}
+
     def _post_prepared(self, request, paths, progress):
         """Start a proven-unsubmitted request while holding the submission gate."""
         if paths["post_started"].exists():
@@ -438,8 +524,14 @@ class PlatformRuntime:
             atomic_write_json(paths["progress"], progress)
             raise PlatformError("stop flag is set; no new simulation posted")
         settings = self._platform_settings(request["settings"])
-        payloads = [{"type": "REGULAR", "settings": settings, "regular": row["expression"]}
-                    for row in request["variants"]]
+        if request.get("type") == "SUPER":
+            payloads = [{"type": "SUPER", "settings": settings,
+                         "selection": row["selection"], "combo": row["combo"]}
+                        for row in request["variants"]]
+        else:
+            payloads = [{"type": "REGULAR", "settings": settings,
+                         "regular": row["expression"]}
+                        for row in request["variants"]]
         atomic_write_json(paths["post_started"], {"request_sha256": progress["request_sha256"],
                                                   "receipt_sha256": progress["receipt_sha256"]})
         progress.pop("unsubmitted_proof", None)
@@ -517,9 +609,28 @@ class PlatformRuntime:
             details = self._json(self._request("GET", "/alphas/" + alpha_id))
             if not isinstance(details, dict) or details.get("id") != alpha_id:
                 raise PlatformError("simulation Alpha readback is unavailable")
-            rows.append({"name": variant.get("name"), "expression": variant["expression"],
-                         "alpha_id": alpha_id, "success": True, "is": details.get("is"),
-                         "details": details})
+            if request.get("type") == "SUPER":
+                selected = details.get("selection")
+                combined = details.get("combo")
+                actual_settings = details.get("settings")
+                expected_settings = self._platform_settings(request["settings"])
+                if (details.get("type") != "SUPER"
+                        or not isinstance(selected, dict)
+                        or selected.get("code") != variant["selection"]
+                        or not isinstance(combined, dict)
+                        or combined.get("code") != variant["combo"]
+                        or not isinstance(actual_settings, dict)
+                        or any(actual_settings.get(key) != value
+                               for key, value in expected_settings.items())):
+                    raise PlatformError("Super Alpha readback does not match intent")
+                rows.append({"name": variant.get("name"),
+                             "selection": variant["selection"], "combo": variant["combo"],
+                             "alpha_id": alpha_id, "success": True,
+                             "is": details.get("is"), "details": details})
+            else:
+                rows.append({"name": variant.get("name"), "expression": variant["expression"],
+                             "alpha_id": alpha_id, "success": True, "is": details.get("is"),
+                             "details": details})
         atomic_write_json(paths["output"], rows)
         progress["output_sha256"] = hashlib.sha256(paths["output"].read_bytes()).hexdigest()
         progress["status"] = "COMPLETE"
@@ -896,6 +1007,8 @@ class PlatformRuntime:
             return self._json(self._request("GET", "/data-sets/" + _component(params.get("dataset_id"), "Dataset ID")))
         if command == "simulate_batch":
             return self.run_simulation_batch(params)
+        if command == "simulate_super":
+            return self.run_super_simulation(params)
         if command == "resume_simulation_batch":
             return self.resume_simulation_batch(params)
         if command == "check_local_self_correlation":

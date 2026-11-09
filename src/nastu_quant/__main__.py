@@ -12,6 +12,7 @@ from .knowledge import KnowledgeService
 from .paths import default_state_root, expand_path
 from .state_store import update_stop_flag
 from .submission_gate import SubmissionGateError
+from .research.entrypoints import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 
 
 def _path_argument(value):
@@ -36,6 +37,42 @@ def main(argv=None):
     series.add_argument("--diagnosis-id")
     series.add_argument("--remedy-id")
     series.add_argument("--allow-remedy-round-overrun", action="store_true")
+    planning = sub.add_parser("plan-regular", help="discover a Regular Campaign scope without simulation")
+    planning.add_argument("--region")
+    planning.add_argument("--dataset", action="append")
+    planning.add_argument("--category")
+    planning.add_argument("--delay", type=int)
+    planning.add_argument("--universe")
+    campaign = sub.add_parser("run-campaign", help="execute a bounded Regular Campaign")
+    campaign.add_argument("--objective", required=True)
+    campaign.add_argument("--region")
+    campaign.add_argument("--dataset", action="append")
+    campaign.add_argument("--category")
+    campaign.add_argument("--delay", type=int)
+    campaign.add_argument("--universe")
+    campaign.add_argument("--max-batches", type=int, required=True)
+    campaign.add_argument("--ppa", action="store_true",
+                          help="apply the optional PPA Profile")
+    optimization = sub.add_parser(
+        "plan-optimization", help="capture an existing Alpha as a read-only optimization baseline")
+    optimization.add_argument("--alpha-id", required=True)
+    optimization.add_argument("--objective")
+    optimization.add_argument("--region")
+    optimization_run = sub.add_parser(
+        "run-optimization", help="simulate one independent Alpha optimization candidate")
+    optimization_run.add_argument("--alpha-id", required=True)
+    optimization_run.add_argument("--objective", required=True)
+    optimization_run.add_argument("--region")
+    super_plan = sub.add_parser(
+        "plan-super", help="inspect BRAIN-native Super settings and active Alpha pool")
+    super_plan.add_argument("--region")
+    super_plan.add_argument("--objective", required=True)
+    super_plan.add_argument("--delay", type=int)
+    super_run = sub.add_parser(
+        "run-super", help="execute one native Super research experiment")
+    super_run.add_argument("--region")
+    super_run.add_argument("--objective", required=True)
+    super_run.add_argument("--delay", type=int)
     recovery = sub.add_parser("recover", help="reconcile an unfinished batch")
     recovery.add_argument("batch_dir", type=_path_argument)
     void = sub.add_parser("void", help="archive an unsubmitted draft")
@@ -153,9 +190,25 @@ def main(argv=None):
                     campaigns.append(json.loads(path.read_text(encoding="utf-8")))
                 except (OSError, ValueError):
                     campaigns.append({"path": str(path), "status": "unreadable"})
+        v11_campaigns = []
+        v11_root = root / "state" / "research_v1_1" / "campaign_runs"
+        if v11_root.exists():
+            for path in sorted(v11_root.glob("*.json")):
+                try:
+                    saved = json.loads(path.read_text(encoding="utf-8"))
+                    v11_campaigns.append({
+                        "campaign_id": saved.get("campaign_id"),
+                        "status": saved.get("status"),
+                        "batches_completed": len(saved.get("completed", [])),
+                        "subtasks": saved.get("subtasks", []),
+                        "active_item": saved.get("active_item"),
+                        "path": str(path)})
+                except (OSError, ValueError):
+                    v11_campaigns.append({"path": str(path), "status": "unreadable"})
         print(json.dumps({"stopped": stop_flag.exists(),
                           "unfinished_batches": unfinished,
-                          "campaigns": campaigns}, ensure_ascii=False))
+                          "campaigns": campaigns,
+                          "v11_campaigns": v11_campaigns}, ensure_ascii=False))
         return 0
     if args.command == "void":
         try:
@@ -225,7 +278,8 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        model = ConfiguredModelClient(cfg["model"])
+        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super"}
+                 else ConfiguredModelClient(cfg["model"]))
     except (OSError, ValueError, KeyError) as exc:
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
@@ -237,8 +291,9 @@ def main(argv=None):
             os.environ["BRAIN_CREDENTIALS_FILE"] = str(
                 expand_path(configured_credentials).resolve())
     gateway = Gateway()
-    agent = ResearchAgent(gateway, model, cfg, root / "runs",
-                          stop_flag=stop_flag)
+    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super"} else
+             ResearchAgent(gateway, model, cfg, root / "runs",
+                           stop_flag=stop_flag))
     lock = SingleWriterLock(root / "state" / "agent.lock")
     try:
         lock.__enter__()
@@ -247,6 +302,10 @@ def main(argv=None):
         return 2
     try:
         gateway.start()
+        if args.command in RESEARCH_COMMANDS:
+            result = dispatch_research(args.command, args, cfg, root, gateway, agent)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         if args.command == "run-once":
             result = agent.run_once(
                 args.objective, dataset_id=args.dataset,

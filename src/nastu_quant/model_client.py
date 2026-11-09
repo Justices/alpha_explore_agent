@@ -22,6 +22,29 @@ class ModelError(RuntimeError):
 
 
 TASK_INSTRUCTIONS = {
+    "optimize_alpha": (
+        "Propose exactly one independent optimization candidate for the supplied "
+        "existing BRAIN Alpha. Preserve its Region, Delay, Universe and all other "
+        "effective settings. Never request source Alpha mutation or submission. "
+        "For REGULAR return {expression, rationale, changes, hypothesis, "
+        "failure_criterion, research}; research must contain idea, "
+        "data_rationale, operator_rationale, field_relationship, "
+        "settings_rationale, expected_behavior, failure_criterion. Use only "
+        "source fields and live supported operators. For SUPER return "
+        "{selection, combo, rationale, changes, hypothesis, "
+        "failure_criterion}. Changes must be a nonempty list of descriptions. "
+        "Do not invent platform results or claim candidate eligibility."
+    ),
+    "construct_super": (
+        "Design one BRAIN-native Super Alpha using a selection expression over "
+        "submitted ACTIVE Alphas and a separate combo expression. Use only the "
+        "supplied live eligible Alpha pool and Super settings schema. Preserve "
+        "the user Region, objective, and any fixed Delay or other constraints. "
+        "Return {selection, combo, settings, hypothesis, rationale, "
+        "failure_criterion}. State a falsifiable economic or diversification "
+        "hypothesis and explain why the combo should improve on equal weighting. "
+        "Do not claim a platform check passed or invent supported settings."
+    ),
     "select_scope": (
         "Region is user-supplied and must never change. Choose supported Delay, Universe "
         "and Neutralization only from the provided live platform combinations. Choose "
@@ -30,8 +53,9 @@ TASK_INSTRUCTIONS = {
         "{delay, universe, neutralization, decay, truncation, pasteurization, reason}."
     ),
     "select_dataset": (
-        "Choose one dataset_id from the live exact-scope catalog. Explain its economic "
-        "relevance and field evidence. Do not change Region, Delay, Universe, or objective. "
+        "Choose one dataset_id from the supplied live eligible Dataset pool. Explain its economic "
+        "relevance and available evidence; do not invent field evidence. Preserve the supplied "
+        "Region, Category, Delay, Universe, and objective. "
         "Return {dataset_id, reason}."
     ),
     "plan_probes": (
@@ -55,7 +79,8 @@ TASK_INSTRUCTIONS = {
         "Each variant needs expression and ex-ante reason. These top-level rationale "
         "fields plus hypothesis, expected_sign, and failure_criterion must be substantive, "
         "nonempty research evidence suitable for the local pre-backtest receipt. "
-        "Use one Dataset, at most three fields per expression, one to eight variants; "
+        "Use one Dataset per expression and one to eight variants. Apply PPA field and "
+        "operator limits only when the user explicitly requests PPA; "
         "do not splice signals with + or *, use trade_when/add/multiply, or tune to prior results. "
         "If draft_proposal is present, review it against the supplied exact operator notes, "
         "preserve the hypothesis and field evidence, and return the complete proposal schema. "

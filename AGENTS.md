@@ -6,10 +6,11 @@ The brain-flow repository is a read-only reference for development; this agent
 must not require, import, or invoke it at runtime. Do not edit another
 repository's rules as part of this project.
 
-Files under `design/` are product requirements and historical design inputs.
-They inform implementation but do not silently override this file or the
-user's current request. Update this contract when an approved project rule
-changes.
+`design/RESEARCH_SCOPE.md` is the current approved research scope and product
+boundary for all three workflows. Apply it together with this contract; for
+research-scope conflicts, the approved scope document takes precedence.
+Older design files are historical inputs, not active rules. Do not inject
+superseded constraints from them. The user's current request takes precedence.
 
 ## Model and platform responsibilities
 
@@ -38,11 +39,15 @@ changes.
 
 - Region is required. Preserve every user-supplied Region, Dataset, objective,
   and other scope value. Never silently substitute scope.
-- Choose omitted scope dimensions only from current supported evidence and
-  record the choice and rationale. Fix all effective settings before
-  backtesting; a script default is not evidence.
-- Keep each expression within one Dataset and the platform's validated field
-  and operator constraints. Diagnostics answer predeclared material questions;
+- For Regular Campaigns, an omitted Dataset permits Agent selection from
+  current platform evidence with a recorded rationale. Omitted Category,
+  Delay, and Universe require discovery of every platform-valid combination
+  consistent with user constraints; budgets limit execution, not requested
+  coverage. Report every unexamined or unresolved combination. Fix all
+  effective settings before backtesting; a script default is not evidence.
+- Keep each Regular expression within one Dataset and the platform's validated
+  field and operator constraints. Super Alpha uses BRAIN's dedicated selection
+  and combo mechanism. Diagnostics answer predeclared material questions;
   their metrics are not Alpha performance evidence.
 - Ordinary Alpha research has no project-imposed PPA operator-count or
   data-field-count limit. Apply PPA rules only when the user explicitly asks

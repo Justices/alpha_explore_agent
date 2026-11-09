@@ -14,7 +14,7 @@ WHITELIST = {
     "get_platform_setting_options",
     "get_simulation_settings_schema",
     "get_datasets", "get_dataset_details", "get_datafields", "get_operators",
-    "set_case", "validate_simulation_settings", "simulate_batch",
+    "set_case", "validate_simulation_settings", "simulate_batch", "simulate_super",
     "resume_simulation_batch", "audit_alphas", "check_local_self_correlation",
     "get_alpha_details", "get_alpha_pnl", "get_alpha_yearly_stats",
     "check_correlation", "get_user_alphas",

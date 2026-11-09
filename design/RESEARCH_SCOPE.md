@@ -1,9 +1,10 @@
 # Research Scope V1.1 and Product Boundaries
 
-Status: confirmed product scope; design target, not a statement that all workflows
-are implemented. This document records the decisions for V1.1. It does not
-change runtime behavior, configuration, thresholds, or existing formal rules.
-The repository's [agent contract](../AGENTS.md) governs agent behavior; the
+Status: approved research scope V1.1 and product boundary, not a statement
+that all workflows are implemented. This document records the confirmed
+decisions. It does not set numeric thresholds. For research-scope conflicts
+with older files, this document takes precedence as stated in the
+[agent contract](../AGENTS.md). The
 [README](../README.md) describes the current implementation. The earlier
 [requirements](AGENT_REQUIREMENTS.md), [design](AGENT_DESIGN.md), and
 [knowledge design](AGENT_KNOWLEDGE_DESIGN.md) include historical assumptions;
@@ -169,8 +170,9 @@ must not invent platform facts or override deterministic failures.
 Excluded: automatic Alpha submission, automatic Alpha property changes,
 modification of the source Alpha, silently changing user constraints, using
 another repository as a runtime dependency or policy source, and treating
-diagnostic probes as performance evidence. No rule, numeric threshold, live
-platform capability or implementation is changed by this document.
+diagnostic probes as performance evidence. This scope supersedes conflicting
+historical research-scope rules; it does not set numeric thresholds or claim
+an unverified platform capability or implementation.
 
 ## 9. Open items and implementation status
 

@@ -1,7 +1,8 @@
 """Deterministic, provenance-first knowledge service for the research agent.
 
-L1 rules come from the current canonical AGENTS contract. Construction advice
-is injected as advisory material and can never override that contract. L2 is
+L1 rules come from the current AGENTS contract and approved research scope.
+Construction advice is injected as advisory material and can never override
+those sources. L2 is
 an exact lookup only. L3 indexes this agent's closed batch artifacts; it never
 queries or caches current platform state.
 """
@@ -27,6 +28,11 @@ VALIDITY = {"valid", "void", "falsified", "pending"}
 CORE_TAGS = ("dataset_id", "mechanism", "failure_signature", "field_generation")
 
 RULE_MAP = {
+    "optimize_alpha": [("canonical", "Model and platform responsibilities"),
+                       ("canonical", "Research scope and evidence"),
+                       ("advisory", "## 四、Alpha 优化方法论")],
+    "construct_super": [("canonical", "Model and platform responsibilities"),
+                        ("canonical", "Research scope and evidence")],
     "select_scope": [("canonical", "Research scope and evidence"),
                      ("canonical", "Model and platform responsibilities")],
     "select_dataset": [("canonical", "Research scope and evidence"),
@@ -53,6 +59,34 @@ RULE_MAP = {
     "review_candidate": [("canonical", "Research scope and evidence")],
     "decide_next": [("canonical", "Research scope and evidence"),
                     ("canonical", "Model and platform responsibilities")],
+}
+
+SCOPE_RULE_MAP = {
+    "optimize_alpha": ("1. Product purpose and workflows",
+                       "5. Alpha Optimization",
+                       "6. Outputs and evidence",
+                       "8. Dependencies and exclusions"),
+    "construct_super": ("1. Product purpose and workflows",
+                        "4. BRAIN-native Super Alpha Research",
+                        "6. Outputs and evidence",
+                        "8. Dependencies and exclusions"),
+    "select_scope": ("1. Product purpose and workflows",
+                     "2. Inputs and scope resolution",
+                     "3. Regular Research and Campaign boundary"),
+    "select_dataset": ("2. Inputs and scope resolution",
+                       "3. Regular Research and Campaign boundary"),
+    "plan_probes": ("3. Regular Research and Campaign boundary",
+                    "6. Outputs and evidence"),
+    "construct_batch": ("3. Regular Research and Campaign boundary",
+                        "6. Outputs and evidence"),
+    "attribute_results": ("6. Outputs and evidence",
+                          "7. Budgets, stopping and completeness"),
+    "diagnose_failures": ("5. Alpha Optimization",
+                          "6. Outputs and evidence"),
+    "review_candidate": ("6. Outputs and evidence",
+                         "8. Dependencies and exclusions"),
+    "decide_next": ("3. Regular Research and Campaign boundary",
+                    "7. Budgets, stopping and completeness"),
 }
 
 
@@ -110,6 +144,7 @@ class KnowledgeService:
         self.knowledge_root = self.state_root / "knowledge"
         self.project_root = Path(__file__).resolve().parents[2]
         self.canonical_path = self.project_root / "AGENTS.md"
+        self.scope_path = self.project_root / "design" / "RESEARCH_SCOPE.md"
         self.advisory_path = self._knowledge_path("construction_advisory_path")
         self.prior_knowledge_path = self._knowledge_path(
             "prior_knowledge_path", "RESEARCH_MEMORY.md")
@@ -161,9 +196,12 @@ class KnowledgeService:
         if selectors is None:
             raise KnowledgeError(f"no deterministic rule mapping for decision task: {task}")
         canonical = self._read_source(self.canonical_path, required=True)
+        scope = self._read_source(self.scope_path, required=True)
         advisory = self._read_source(self.advisory_path, required=False)
         sources = {"canonical": (canonical, "normative"),
+                   "scope": (scope, "normative"),
                    "advisory": (advisory, "advisory_only")}
+        selectors = [("scope", title) for title in SCOPE_RULE_MAP.get(task, ())] + selectors
         fragments = []
         for source_key, requested_title in selectors:
             source, source_kind = sources[source_key]

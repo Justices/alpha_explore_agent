@@ -1,13 +1,16 @@
 # nastu_quant: independent BRAIN research agent
 
-This repository runs a bounded, model driven **Regular Alpha** research batch.
+This repository runs bounded, model driven BRAIN research workflows for
+Regular Alpha Campaigns, native Super Alpha construction, and optimization of
+existing Regular or Super Alphas.
 The model service is replaceable through configuration. The program validates
 scope, Dataset, fields, expressions and gate evidence, records the proposed
 hypothesis before simulation, and can recover an interrupted batch without
 blindly reposting it. It has no Alpha submission or property mutation command.
 
-The project's rules are in [`AGENTS.md`](AGENTS.md). The files in `design/`
-are product requirements and historical design references. The brain-flow
+The project's behavior contract is in [`AGENTS.md`](AGENTS.md), and the
+approved research scope is in [`design/RESEARCH_SCOPE.md`](design/RESEARCH_SCOPE.md).
+Older files in `design/` are historical design references. The brain-flow
 workflow and scripts are development references only: this agent does not
 import, execute, or require that repository at runtime.
 
@@ -32,8 +35,41 @@ case-local catalog snapshots, the complete effective settings and pre-backtest
 receipt under the state root. A possibly submitted simulation is never reposted
 automatically. Alpha submission and property mutation are not supported.
 
+V1.1 research code is grouped under `src/nastu_quant/research/`: `regular/`
+owns Campaign scope and scheduling, `super/` owns the BRAIN-native Alpha
+pool, and `optimization/` owns source snapshots and candidate branches.
+`entrypoints.py` routes research commands, while `records.py` validates
+versioned shared state. The existing `agent.py` runs Regular batches. Native
+Super and Alpha-ID optimization create one preregistered simulation candidate
+per invocation and retain a pending audit status after read-back.
+
 ## Current boundary
 
+- `plan-regular` reads live platform settings and exact-scope Dataset catalogs
+  and details to list eligible Dataset/Delay/Universe combinations for a
+  Region. Repeating `--dataset` fixes a multi-Dataset request; `--category`,
+  `--delay`, and `--universe` constrain discovery. The plan is saved under the
+  state root in `state/research_v1_1/plans/`. This command does not simulate.
+  `run-campaign --objective ... --max-batches N` executes the discovered
+  combinations serially, one batch at a time, and records Campaign progress
+  under `state/research_v1_1/campaign_runs/`. Repeated `--dataset` arguments
+  fix multiple Datasets; `--ppa` explicitly enables the PPA Profile. A budget
+  stop reports unvisited combinations; an
+  interrupted batch requires recovery before more Campaign work.
+  `plan-optimization --alpha-id ID` captures a read-only Regular or Super
+  Alpha baseline and rejects missing type, settings, Region or source code.
+  `plan-super --objective ... --region REGION` reads the live Super settings
+  schema and the submitted ACTIVE Alpha pool without using the Regular
+  Dataset catalog or starting a simulation.
+  `run-super --objective ... --region REGION` constructs and simulates one
+  BRAIN-native selection/combo candidate from a live ACTIVE Alpha pool.
+  `run-optimization --alpha-id ID --objective ...` creates an independent
+  candidate from a read-only source snapshot. A Regular source's Dataset must
+  be uniquely verified against live exact-scope fields before simulation.
+  Both commands leave the result pending a complete applicable Candidate audit;
+  neither submits or edits an Alpha. See
+  `design/RESEARCH_SCOPE.md` and
+  `design/RESEARCH_STATE_V1_1.md`.
 - `run-once` completes one research batch of 1–8 expressions. `run` executes
   serial batches up to an explicit `--max-batches` limit and stops early after
   final Candidates from three different Datasets in the active case. Diagnostic

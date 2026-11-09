@@ -1546,11 +1546,15 @@ class ResearchAgent:
     def run_once(self, objective: str, dataset_id: str = None, *,
                  resume_batch_dir: Path = None, recovered_probe_results=None,
                  cached_context=None, fixed_scope=None, diagnosis_id=None,
-                 remedy_id=None, allow_remedy_round_overrun=False) -> dict:
+                 remedy_id=None, allow_remedy_round_overrun=False,
+                 ppa_profile=False) -> dict:
         self._begin_session()
         if not objective or not objective.strip():
             raise ResearchError("research objective is required")
-        research_type = "PPA" if ppa_requested(objective) else "REGULAR"
+        research_type = ((cached_context or {}).get("research_type")
+                         if resume_batch_dir is not None else None)
+        if research_type not in ("REGULAR", "PPA"):
+            research_type = "PPA" if ppa_profile or ppa_requested(objective) else "REGULAR"
         remedy_reference = self._resolve_remedy_reference(
             objective, diagnosis_id, remedy_id, allow_remedy_round_overrun)
         if remedy_reference is not None:
