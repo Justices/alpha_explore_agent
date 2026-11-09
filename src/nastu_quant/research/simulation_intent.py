@@ -140,8 +140,12 @@ def recover_simulation_intent(gateway, state_root, intent_path, *, config=None):
         rows = [receipt]
         response_rows = result.get("results") if isinstance(result, dict) else None
         if (not isinstance(response_rows, list) or len(response_rows) != 1
+                or not isinstance(response_rows[0], dict)
                 or not isinstance(receipt, dict)
-                or response_rows[0].get("alpha_id") != receipt.get("alpha_id")):
+                or not isinstance(receipt.get("alpha_id"), str)
+                or not receipt["alpha_id"]
+                or response_rows[0].get("alpha_id") != receipt.get("alpha_id")
+                or _digest(response_rows[0]) != _digest(receipt)):
             raise ValueError("READ_BACK response and receipt do not agree")
     else:
         if status not in {"POSTING", "OUTCOME_UNKNOWN", "RESPONSE_RECEIVED"}:
