@@ -226,9 +226,9 @@ def main(argv=None):
                             "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                             "workflow": item.get("workflow"),
                             "candidate_status": item.get("candidate_status") or
-                                                (item.get("status") if kind == "candidate" else None),
+                                                (item.get("status") if storage_kind == "candidate" else None),
                             "preferred_status": item.get("preferred_status") or
-                                                (item.get("status") if kind == "preferred" else None),
+                                                (item.get("status") if storage_kind == "preferred" else None),
                             "candidate_alpha_id": item.get("candidate_alpha_id"),
                             "status": item.get("status"),
                             "simulation_intent_ref": item.get("simulation_intent_ref"),
