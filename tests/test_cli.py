@@ -131,5 +131,16 @@ class TestCli(unittest.TestCase):
             self.assertEqual(json.loads(reviewed.stdout)["status"], "verified")
 
 
+    def test_rebuild_pools_holds_single_writer_lock(self):
+        sys.path.insert(0, str(ROOT / "src"))
+        from nastu_quant import __main__ as entry
+        with tempfile.TemporaryDirectory() as temp:
+            with patch.object(entry, "SingleWriterLock") as lock, \
+                    redirect_stdout(StringIO()):
+                result = entry.main(["--state-root", temp, "rebuild-pools"])
+            self.assertEqual(result, 0)
+            lock.assert_called_once_with(Path(temp) / "state" / "agent.lock")
+
+
 if __name__ == "__main__":
     unittest.main()
