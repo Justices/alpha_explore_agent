@@ -231,7 +231,7 @@ simulation intent and raw response, read-back, gate, result and metering JSON.
 `metering.json` distinguishes submission intents and confirmed responses;
 model token usage is `null` unless actually measured.
 
-`status` also lists campaign pointers. To explicitly invalidate or reinstate an
+`status` also lists legacy and V1.1 Campaigns, Super runs, Optimization source snapshots, candidate branches, and their simulation-intent/readback/audit/report references. To explicitly invalidate or reinstate an
 indexed evidence item, use its ID from `state/knowledge/evidence_index.json`:
 
 ```sh

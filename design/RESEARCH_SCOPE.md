@@ -188,10 +188,4 @@ an unverified platform capability or implementation.
 - Resolve any required updates to existing requirements, the agent contract,
   configuration, CLI and validation through their normal approval process.
 
-The current README describes bounded Regular research and a single selected
-Dataset per batch, not full V1.1 Campaign coverage, native Super research or
-Alpha-ID optimization. In particular, current configuration and campaign
-state are not a completed V1.1 schema. Historical design passages with fixed
-scope, universal PPA-like limits or other superseded assumptions must not be
-taken as current behavior. This document records product direction without
-silently changing those files or the controlling contract.
+The implementation now includes a multi-Dataset Regular Campaign planner and serial executor, independent Dataset subtask and scope-combination records, Campaign coverage evidence, BRAIN-native Super preparation/execution with shared run records, and Alpha-ID Optimization source snapshots, independent candidate branches, simulation intents, read-back receipts, source-definition integrity checks, and optimization reports. These are implementation capabilities, not a claim of live BRAIN end-to-end verification. Super and Optimization simulation ambiguity is preserved as `OUTCOME_UNKNOWN`; a platform reconciliation API has not been assumed. Candidate audit remains pending until the complete applicable family audit is obtained. The CLI status output exposes V1.1 Campaign, Super, source, and candidate-branch records. Automated tests were explicitly deferred for this implementation pass and must be run before merge. Historical design passages with fixed scope, universal PPA-like limits or other superseded assumptions must not be taken as current behavior.

@@ -205,10 +205,36 @@ def main(argv=None):
                         "path": str(path)})
                 except (OSError, ValueError):
                     v11_campaigns.append({"path": str(path), "status": "unreadable"})
+        def _record_summaries(kind):
+            folder = root / "state" / "research_v1_1" / kind
+            output = []
+            if folder.exists():
+                for record_path in sorted(folder.glob("*.json")):
+                    try:
+                        item = json.loads(record_path.read_text(encoding="utf-8"))
+                        output.append({
+                            "id": item.get("run_id") or item.get("branch_id") or
+                                  item.get("source_id"),
+                            "source_alpha_id": item.get("source_alpha_id") or
+                                               item.get("alpha_id"),
+                            "candidate_alpha_id": item.get("candidate_alpha_id"),
+                            "status": item.get("status"),
+                            "simulation_intent_ref": item.get("simulation_intent_ref"),
+                            "receipt_ref": item.get("receipt_ref") or item.get("readback_ref"),
+                            "audit_ref": item.get("audit_ref"),
+                            "report_ref": item.get("report_ref"),
+                            "path": str(record_path)})
+                    except (OSError, ValueError):
+                        output.append({"path": str(record_path), "status": "unreadable"})
+            return output
         print(json.dumps({"stopped": stop_flag.exists(),
                           "unfinished_batches": unfinished,
                           "campaigns": campaigns,
-                          "v11_campaigns": v11_campaigns}, ensure_ascii=False))
+                          "v11_campaigns": v11_campaigns,
+                          "v11_super_runs": _record_summaries("super_run"),
+                          "v11_optimization_sources": _record_summaries("optimization_source"),
+                          "v11_candidate_branches": _record_summaries("candidate_branch")},
+                         ensure_ascii=False))
         return 0
     if args.command == "void":
         try:
