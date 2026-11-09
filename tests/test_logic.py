@@ -24,11 +24,11 @@ class TestConfig(unittest.TestCase):
 
 
 class TestGatekeeper(unittest.TestCase):
-    def test_prod_and_self_threshold_is_inclusive(self):
+    def test_prod_and_self_threshold_is_strict(self):
         ok, _ = gatekeeper.correlation_verdict(0.6999, 0.5, {}, DEFAULT_CONFIG)
         self.assertTrue(ok)
         ok, reasons = gatekeeper.correlation_verdict(0.70, 0.5, {}, DEFAULT_CONFIG)
-        self.assertTrue(ok, "project configuration allows exactly 0.70")
+        self.assertFalse(ok, "project configuration rejects exactly 0.70")
         ok, reasons = gatekeeper.correlation_verdict(0.7001, 0.5, {}, DEFAULT_CONFIG)
         self.assertFalse(ok)
         self.assertTrue(reasons)
