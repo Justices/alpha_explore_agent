@@ -17,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nastu_quant.config import DEFAULT_CONFIG
 from nastu_quant.research.orchestrator import MainOrchestrator, OrchestrationError
 from nastu_quant.research.workflow_adapter import MockWorkflowAdapter
+from nastu_quant.research.records import ResearchRecordStore
 
 
 class ScriptedGateway:
@@ -142,6 +143,10 @@ class FullMockWorkflowTests(unittest.TestCase):
         self.assertEqual(result["budget"]["used"], 1)
         self.assertEqual(result["result"]["qualification"]["candidate_status"],
                          "EVIDENCE_PENDING")
+        self.assertEqual(len(ResearchRecordStore(self.root).list("candidate")), 1)
+        self.assertEqual(len(ResearchRecordStore(self.root).list("preferred")), 1)
+        self.assertEqual(result["result"]["pool"]["alpha_count"], 1)
+        self.assertEqual(result["result"]["pool"]["candidate_count"], 0)
         intent_paths = list(self.root.rglob("*simulation_intent.json"))
         self.assertEqual(len(intent_paths), 1)
         intent = json.loads(intent_paths[0].read_text(encoding="utf-8"))
@@ -156,6 +161,11 @@ class FullMockWorkflowTests(unittest.TestCase):
         self.assertEqual(gateway.calls.count("simulate_super"), 1)
         self.assertEqual(result["checkpoints"]["execute"]["source_alpha_id"], "SOURCE")
         self.assertTrue(result["checkpoints"]["execute"]["source_unchanged_verified"])
+        self.assertEqual(len(ResearchRecordStore(self.root).list("optimization_source")), 1)
+        self.assertEqual(len(ResearchRecordStore(self.root).list("candidate_branch")), 1)
+        self.assertEqual(len(ResearchRecordStore(self.root).list("candidate")), 1)
+        self.assertEqual(result["result"]["pool"]["alpha_count"], 1)
+        self.assertEqual(result["result"]["pool"]["candidate_count"], 0)
         self.assertEqual(len(list(self.root.rglob("*simulation_intent.json"))), 1)
         self.assertNotIn("submit_alpha", gateway.calls)
         self.assertEqual(runner.resume(task["task_id"]), result)
