@@ -115,7 +115,8 @@ class FullMockWorkflowTests(unittest.TestCase):
     def _run(self, workflow, gateway=None):
         gateway = gateway or self.gateway
         adapter = MockWorkflowAdapter(
-            self.root, self.cfg, gateway, SimpleNamespace(model=object()))
+            self.root, self.cfg, gateway,
+            SimpleNamespace(model=SimpleNamespace(is_offline_mock=True)))
         original_run = adapter.run
         self.last_error = None
         def traced_run(*args, **kwargs):
