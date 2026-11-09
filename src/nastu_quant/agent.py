@@ -745,7 +745,8 @@ class ResearchAgent:
                         evidence_refs={"canonical_audit": str(audit_path or ""),
                                        "batch_dir": str(batch_dir)},
                         external_failures=verdict.get("failures", []),
-                        external_pending=verdict.get("pending", []))
+                        external_pending=verdict.get("pending", []),
+                        external_status=verdict.get("status"))
                 verdict["status"] = qualification["candidate_status"]
                 verdict["candidate_id"] = qualification["candidate_id"]
                 verdict["candidate_record_ref"] = qualification["candidate_ref"]
