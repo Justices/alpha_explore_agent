@@ -53,35 +53,107 @@ def _subtask_summary(state):
     return [groups[key] for key in sorted(groups)]
 
 
+def _persist_record(store, kind, record):
+    """Upsert a versioned record without timestamp regressions."""
+    identity = {
+        "campaign": "campaign_id",
+        "dataset_subtask": "subtask_id",
+        "combination": "combination_id",
+    }[kind]
+    try:
+        previous = store.get(kind, record[identity])
+    except FileNotFoundError:
+        previous = None
+    now = datetime.now(timezone.utc)
+    if previous is not None:
+        last = datetime.fromisoformat(previous["updated_at"])
+        if now <= last:
+            now = last + timedelta(microseconds=1)
+        record["created_at"] = previous["created_at"]
+    else:
+        record["created_at"] = now.isoformat()
+    record["updated_at"] = now.isoformat()
+    return store.put(
+        kind, record,
+        expected_updated_at=previous["updated_at"] if previous else None)
+
+
 def _sync_subtasks(state, state_root):
-    """Persist one independently inspectable record for each Dataset."""
+    """Persist Campaign -> Dataset -> Combination lineage and coverage."""
     store = ResearchRecordStore(state_root)
     summaries = _subtask_summary(state)
+    completed = {entry["item_index"] for entry in state["completed"]}
+    subtask_ids = []
     for summary in summaries:
         subtask_id = _key({"campaign_id": state["campaign_id"],
                            "dataset_id": summary["dataset_id"]})
+        subtask_ids.append(subtask_id)
         summary["subtask_id"] = subtask_id
-        try:
-            previous = store.get("dataset_subtask", subtask_id)
-        except FileNotFoundError:
-            previous = None
-        now = datetime.now(timezone.utc)
-        if previous is not None:
-            last = datetime.fromisoformat(previous["updated_at"])
-            if now <= last:
-                now = last + timedelta(microseconds=1)
-        record = {
+        combination_ids = []
+        for index, item in enumerate(state["items"]):
+            if item["dataset_id"] != summary["dataset_id"]:
+                continue
+            combination_id = _key({
+                "subtask_id": subtask_id,
+                "region": item["region"],
+                "delay": item["delay"], "universe": item["universe"]})
+            combination_ids.append(combination_id)
+            summary["combinations"][len(combination_ids) - 1][
+                "combination_id"] = combination_id
+            support_ref = state["plan_evidence_ref"]
+            effective = {
+                "dataset_id": item["dataset_id"], "region": item["region"],
+                "delay": item["delay"], "universe": item["universe"],
+                "category": item["category"]}
+            status = ("completed" if index in completed else
+                      "skipped_budget" if state["status"] == "budget_complete"
+                      else "eligible")
+            receipts = [
+                entry for entry in state["completed"]
+                if entry["item_index"] == index]
+            _persist_record(store, "combination", {
+                "schema_version": 1, "combination_id": combination_id,
+                "subtask_id": subtask_id, "effective_settings": effective,
+                "support_evidence_ref": support_ref, "status": status,
+                "batch_refs": [entry["batch_dir"] for entry in receipts],
+                "candidate_statuses": [
+                    entry["candidate_status"] for entry in receipts],
+                "completed_batches": len(receipts)})
+        summary["combination_ids"] = combination_ids
+        _persist_record(store, "dataset_subtask", {
             "schema_version": 1, "subtask_id": subtask_id,
             "campaign_id": state["campaign_id"],
             "dataset_id": summary["dataset_id"],
-            "combination_ids": [], "combinations": summary["combinations"],
+            "combination_ids": combination_ids,
+            "combinations": summary["combinations"],
             "completed_batches": summary["completed_batches"],
-            "status": summary["status"],
-            "created_at": previous["created_at"] if previous else now.isoformat(),
-            "updated_at": now.isoformat()}
-        store.put("dataset_subtask", record,
-                  expected_updated_at=previous["updated_at"] if previous else None)
+            "status": summary["status"]})
     state["subtasks"] = summaries
+    request = state["request"]
+    _persist_record(store, "campaign", {
+        "schema_version": 2, "campaign_id": state["campaign_id"],
+        "workflow": "regular",
+        "request": {
+            "objective": request["objective"], "region": request["region"],
+            "dataset_ids": request["dataset_ids"],
+            "category": request["category"], "delay": request["delay"],
+            "universe": request["universe"],
+            "profile": "ppa" if request["ppa_profile"] else "regular"},
+        "scope_revision": 1,
+        "budget": state["budget"],
+        "dataset_subtask_ids": subtask_ids,
+        "plan_evidence_ref": state["plan_evidence_ref"],
+        "status": state["status"],
+        "stop_reason": state.get("error") or (
+            state["status"] if state["status"] in
+            ("budget_complete", "user_stopped", "unresolved") else None),
+        "coverage": {
+            "eligible_combinations": len(state["items"]),
+            "completed_combinations": len(completed),
+            "unexamined_combinations": len(state["items"]) - len(completed),
+            "unselected_dataset_ids":
+                state["plan"].get("unselected_dataset_ids", []),
+            "unresolved": state["plan"].get("unresolved", [])}})
 
 
 def _reconcile_active(agent, state):
@@ -154,6 +226,10 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "research_v1_1" / "campaign_runs" / f"{campaign_id}.json")
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
+        if "plan_evidence_ref" not in state:
+            evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
+            atomic_write_json(evidence_path, state["plan"])
+            state["plan_evidence_ref"] = str(evidence_path)
         if state.get("request") != request:
             raise ValueError("saved Campaign request does not match")
         if state.get("active_item") is not None:
@@ -201,7 +277,10 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         if not items:
             return {"status": "unresolved", "plan": plan,
                     "reason": "no_verified_work_items"}
+        evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
+        atomic_write_json(evidence_path, plan)
         state = {"schema_version": 1, "campaign_id": campaign_id,
+                 "plan_evidence_ref": str(evidence_path),
                  "request": request, "plan": plan, "items": items,
                  "completed": [], "active_item": None,
                  "budget": {"limits": {"batches": max_batches},
