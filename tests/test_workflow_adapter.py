@@ -53,7 +53,7 @@ class WorkflowAdapterTests(unittest.TestCase):
         }
         for workflow in outputs:
             with self.subTest(workflow=workflow):
-                agent = type("Agent", (), {"model": object()})()
+                agent = type("Agent", (), {"model": type("Model", (), {"is_offline_mock": True})()})()
                 adapter = MockWorkflowAdapter(self.root, DEFAULT_CONFIG,
                                               FakeGateway(), agent)
                 request = {"objective": "offline"}
