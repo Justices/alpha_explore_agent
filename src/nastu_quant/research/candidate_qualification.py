@@ -28,6 +28,22 @@ def _stable_id(value):
     ).encode("utf-8")).hexdigest()[:32]
 
 
+def _candidate_status(failures, pending, fallback="EVIDENCE_PENDING"):
+    if any(item.startswith("ra:") or item == "ra_fail_count" for item in failures):
+        return "RA_FAILED"
+    if any(item.startswith("pairwise:") for item in failures):
+        return "PAIRWISE_CONFLICT"
+    if any(item.startswith("platform_check:") for item in failures):
+        return "PLATFORM_CHECK_FAILED"
+    if any("correlation" in item or item.startswith("local_self_") for item in failures):
+        return "CORR_REJECTED"
+    if failures:
+        return "METRICS_FAILED"
+    if pending:
+        return "EVIDENCE_PENDING"
+    return fallback or "CANDIDATE"
+
+
 def _upsert(store, kind, record):
     """Idempotent update with immutable revision snapshots before replacement.
 
@@ -96,15 +112,8 @@ class CandidateQualificationService:
         extra_failures, extra_pending = self._platform_check_findings(details)
         failures = sorted(set(gate.get("failures", []) + extra_failures))
         pending = sorted(set(gate.get("pending", []) + extra_pending))
-        status = gate.get("status", "EVIDENCE_PENDING")
-        if failures:
-            status = ("RA_FAILED" if any(x.startswith("ra:") or x == "ra_fail_count" for x in failures)
-                      else "CORR_REJECTED" if any("correlation" in x for x in failures)
-                      else "METRICS_FAILED")
-        elif pending:
-            status = "EVIDENCE_PENDING"
-        else:
-            status = "CANDIDATE"
+        status = _candidate_status(
+            failures, pending, fallback=gate.get("status", "EVIDENCE_PENDING"))
         preferred = evaluate_preferred(details, candidate_status=status, config=self.config)
         metrics = preferred.get("metrics", {})
         now = _now()
@@ -120,7 +129,9 @@ class CandidateQualificationService:
             "evidence_sha256": fingerprint, "policy_sha256": configured_policy,
             "created_at": now, "updated_at": now,
         }
-        candidate_path = _upsert(self.store, "candidate", candidate)
+        # Two-phase publication keeps Candidate invisible until Preferred is durable.
+        staged_candidate = dict(candidate, status="EVALUATION_PENDING")
+        candidate_path = _upsert(self.store, "candidate", staged_candidate)
         preferred_record = {
             "schema_version": 1, "candidate_id": candidate_id, "alpha_id": alpha_id,
             "workflow": workflow, "source_ref": str(source_ref),
@@ -132,6 +143,7 @@ class CandidateQualificationService:
             "created_at": _now(), "updated_at": _now(),
         }
         preferred_path = _upsert(self.store, "preferred", preferred_record)
+        candidate_path = _upsert(self.store, "candidate", candidate)
         self.pool.sync_index()
         return {"candidate_id": candidate_id, "alpha_id": alpha_id,
                 "workflow": workflow, "candidate_status": status,
@@ -177,6 +189,57 @@ class CandidateQualificationService:
                              candidate_ref=candidate_ref, source_ref=source_ref,
                              details=details, gate=gate, correlations=corr,
                              evidence_refs=refs)
+
+    def _discover_pairwise_contenders(self, alpha_id, details):
+        """Build a complete same-region OS comparator set for single-Alpha runs."""
+        settings = details.get("settings") if isinstance(details, dict) else None
+        region = settings.get("region") if isinstance(settings, dict) else None
+        if not isinstance(region, str) or not region:
+            raise ValueError("pairwise comparator Region is unavailable")
+        delay = settings.get("delay") if isinstance(settings, dict) else None
+        rows, offset, page_size = [], 0, 100
+        while True:
+            page = self.gateway.call("get_user_alphas", stage="OS",
+                                     limit=page_size, offset=offset)
+            if not isinstance(page, dict) or not isinstance(page.get("results"), list):
+                raise ValueError("pairwise comparator pool is unreadable")
+            batch = page["results"]
+            rows.extend(batch)
+            offset += len(batch)
+            count = page.get("count")
+            if isinstance(count, int) and offset >= count:
+                break
+            if not batch:
+                if isinstance(count, int) and offset < count:
+                    raise ValueError("pairwise comparator pool is incomplete")
+                break
+            if len(batch) < page_size and count is None:
+                break
+            if offset >= 100000:
+                raise ValueError("pairwise comparator pool exceeds safety limit")
+        ids = []
+        for row in rows:
+            if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                raise ValueError("pairwise comparator row is unreadable")
+            if str(row.get("status") or "").upper() != "ACTIVE":
+                continue
+            other = row.get("settings")
+            if not isinstance(other, dict) or not isinstance(other.get("region"), str):
+                raise ValueError("pairwise comparator settings are unavailable")
+            if other["region"].upper() != region.upper():
+                continue
+            if delay is not None and other.get("delay") != delay:
+                continue
+            classifications = row.get("classifications")
+            if (not isinstance(classifications, list) or any(
+                    not isinstance(item, dict) or not isinstance(item.get("name"), str)
+                    for item in classifications)):
+                raise ValueError("pairwise comparator classifications are unavailable")
+            if any(item["name"] == "Power Pool Alpha" for item in classifications):
+                continue
+            if row["id"] != alpha_id:
+                ids.append(row["id"])
+        return sorted(set(ids))
 
     def qualify_live(self, *, workflow, alpha_id, candidate_ref, source_ref,
                      contender_ids=None, evidence_refs=None, fallback_details=None):
@@ -227,6 +290,13 @@ class CandidateQualificationService:
                 external_pending=["ra_changed_during_local_self_precheck"])
         local_state = local_self_correlation_state(
             local, self.config["gate"]["self_corr_max"])
+        if local_state == "fail":
+            return self.qualify_from_evidence(
+                workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                source_ref=source_ref, details=details, correlations=None,
+                evidence_refs={**(evidence_refs or {}),
+                               "local_self_correlation": local},
+                external_failures=["local_self_correlation"])
         if local_state != "pass":
             return self.qualify_from_evidence(
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
@@ -234,6 +304,17 @@ class CandidateQualificationService:
                 evidence_refs={**(evidence_refs or {}),
                                "local_self_correlation": local},
                 external_pending=["local_self_correlation_precheck_unresolved"])
+        if contender_ids is None and workflow in {"super", "optimization"}:
+            try:
+                contender_ids = self._discover_pairwise_contenders(alpha_id, details)
+            except Exception as exc:
+                return self.qualify_from_evidence(
+                    workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                    source_ref=source_ref, details=details, correlations=None,
+                    evidence_refs={**(evidence_refs or {}),
+                                   "pairwise_pool_error": type(exc).__name__},
+                    external_pending=["pairwise_comparator_pool_unavailable"])
+        contender_ids = contender_ids or []
         # The gateway re-reads Alpha details and independently enforces
         # terminal RA PASS before making either PC or SC request.
         try:
