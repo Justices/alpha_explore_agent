@@ -129,9 +129,8 @@ class CandidateQualificationService:
             "evidence_sha256": fingerprint, "policy_sha256": configured_policy,
             "created_at": now, "updated_at": now,
         }
-        # Two-phase publication keeps Candidate invisible until Preferred is durable.
-        staged_candidate = dict(candidate, status="EVALUATION_PENDING")
-        candidate_path = _upsert(self.store, "candidate", staged_candidate)
+        candidate_path = self.store.path_for("candidate", candidate_id)
+        preferred_path = self.store.path_for("preferred", candidate_id)
         preferred_record = {
             "schema_version": 1, "candidate_id": candidate_id, "alpha_id": alpha_id,
             "workflow": workflow, "source_ref": str(source_ref),
@@ -142,6 +141,32 @@ class CandidateQualificationService:
             "evidence_refs": {**(evidence_refs or {}), "candidate_record": str(candidate_path)},
             "created_at": _now(), "updated_at": _now(),
         }
+
+        def same_assessment(left, right):
+            return ({key: value for key, value in left.items()
+                     if key not in {"created_at", "updated_at"}} ==
+                    {key: value for key, value in right.items()
+                     if key not in {"created_at", "updated_at"}})
+
+        try:
+            existing_candidate = self.store.get("candidate", candidate_id)
+            existing_preferred = self.store.get("preferred", candidate_id)
+        except FileNotFoundError:
+            existing_candidate, existing_preferred = None, None
+        if (existing_candidate is not None and existing_preferred is not None
+                and same_assessment(existing_candidate, candidate)
+                and same_assessment(existing_preferred, preferred_record)):
+            self.pool.sync_index()
+            return {"candidate_id": candidate_id, "alpha_id": alpha_id,
+                    "workflow": workflow, "candidate_status": status,
+                    "candidate_failures": failures, "candidate_pending": pending,
+                    "preferred": preferred, "candidate_ref": str(candidate_path),
+                    "preferred_ref": str(preferred_path)}
+
+        # Two-phase publication keeps Candidate invisible until Preferred is durable.
+        # If either write fails, a retry can finish the staged evaluation safely.
+        staged_candidate = dict(candidate, status="EVALUATION_PENDING")
+        _upsert(self.store, "candidate", staged_candidate)
         preferred_path = _upsert(self.store, "preferred", preferred_record)
         candidate_path = _upsert(self.store, "candidate", candidate)
         self.pool.sync_index()
