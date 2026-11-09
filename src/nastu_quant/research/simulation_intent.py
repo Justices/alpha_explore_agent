@@ -53,6 +53,7 @@ def create_simulation_intent(path, *, workflow, run_id, batch_id,
         "batch_id": batch_id, "status": "PREPARED",
         "request_sha256": _digest(payload), "request": request,
         "settings": settings, "metadata": metadata or {}, "receipt_ref": None,
+        "history": [{"status": "PREPARED", "at": now}],
         "created_at": now, "updated_at": now,
     }
     atomic_write_json(path, record)
@@ -87,8 +88,11 @@ def transition_simulation_intent(path, *, expected_status, status,
         if not isinstance(response_sha256, str) or len(response_sha256) != 64:
             raise ValueError("response_sha256 must be a SHA-256 hex digest")
         record["response_sha256"] = response_sha256
+    previous = record["status"]
     record["status"] = status
-    record["updated_at"] = _now()
+    record.setdefault("history", []).append({
+        "from": previous, "status": status, "at": _now()})
+    record["updated_at"] = record["history"][-1]["at"]
     atomic_write_json(path, record)
     return record
 
