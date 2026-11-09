@@ -202,9 +202,10 @@ nq status
 nq stop
 nq resume
 nq recover "$BATCH_DIRECTORY"
+nq recover-research "$SIMULATION_INTENT_PATH"
 ```
 
-Set `BATCH_DIRECTORY` to the saved batch directory before recovery.
+Set `BATCH_DIRECTORY` to the saved batch directory before Regular batch recovery. Set `SIMULATION_INTENT_PATH` to the saved V1.1 Super or Optimization `*_simulation_intent.json` file for `recover-research`. The V1.1 command uses the existing platform `resume_simulation_batch` ledger and never invokes a new simulation POST; if the platform cannot prove and resume the recorded operation, the intent remains unresolved.
 `stop` is serialized with the start of a simulation POST. It waits for an
 already-started POST to finish before confirming the stop; it does not cancel
 an existing simulation. If it cannot acquire the submission lock within 60

@@ -196,3 +196,12 @@ Platform references: BRAIN documentation pages `superalpha-overview`,
 
 The precise platform Super interface, optional budget defaults, optimization
 action set and legacy migration tooling remain open implementation decisions.
+
+
+## Implemented runtime behavior (feature branch)
+
+The current V1.1 feature branch persists Campaign, Dataset Subtask and Combination records with stable IDs, evidence references and coverage counts. Super runs are represented in the shared record store and retain platform-native settings/pool evidence, simulation intent, readback and pending-audit references. Optimization source snapshots and candidate branches retain immutable source lineage and property fingerprints; a post-simulation source read verifies that the source definition (identity, family, settings and expression definition) has not changed. Each completed branch emits an optimization report.
+
+`recover-research <intent-path>` reconciles an interrupted Super or Optimization intent through the existing platform `resume_simulation_batch` command. The runtime validates its saved request/admission/receipt hashes and resumes the platform runner; it does not issue a new `simulate_super` or `simulate_batch` call. An unknown result without a valid platform recovery location remains unresolved. This command is exposed through the main CLI and the `status` command lists Super runs, Optimization sources and candidate branches.
+
+This implementation status is specific to the feature branch and has not been validated against a live BRAIN account in this pass. Candidate audit remains pending unless the full applicable family audit has actually been completed. Automated tests were deferred at the user's request; run the repository checks before merging.
