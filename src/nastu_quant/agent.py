@@ -754,7 +754,7 @@ class ResearchAgent:
                 verdict["preferred_status"] = qualification["preferred"]["status"]
             except (KeyError, TypeError, ValueError, AttributeError) as exc:
                 verdict.setdefault("pending", []).append(
-                    "candidate_pool_persistence_unavailable:" + type(exc).__name__ + ":" + str(exc))
+                    "candidate_pool_persistence_unavailable:" + type(exc).__name__)
                 verdict["pending"] = sorted(set(verdict["pending"]))
                 if verdict.get("status") == "CANDIDATE":
                     verdict["status"] = "PENDING_FULL_AUDIT"
