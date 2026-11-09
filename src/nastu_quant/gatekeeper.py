@@ -67,14 +67,14 @@ def ra_gate(ra_fail_count: int) -> bool:
 
 
 def correlation_verdict(prod_corr, self_corr, pairwise_corrs, cfg: dict):
-    """Current research rule: prod/self <= limit, pairwise < limit."""
+    """Current research rule: prod/self and pairwise are strictly below limits."""
     g = cfg["gate"]
     reasons = []
     for name, value in (("prod", prod_corr), ("self", self_corr)):
         number = _finite(value)
         limit = g[name + "_corr_max"]
-        if number is None or not -1 <= number <= 1 or abs(number) > limit:
-            reasons.append(f"{name}_corr {value} not within +/-{limit}")
+        if number is None or not -1 <= number <= 1 or abs(number) >= limit:
+            reasons.append(f"{name}_corr {value} must be strictly below +/-{limit}")
     for other_id, value in (pairwise_corrs or {}).items():
         number = _finite(value)
         if (number is None or not -1 <= number <= 1

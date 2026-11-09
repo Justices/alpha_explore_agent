@@ -309,3 +309,21 @@ are idempotently retried by recovery.
 ```sh
 python -m unittest discover -s tests
 ```
+
+
+## Candidate and Preferred
+
+Candidate and Preferred are separate lifecycle stages. The existing Candidate
+gate remains authoritative and requires the configured Sharpe precondition,
+terminal RA checks with zero failures, production/self correlation strictly
+below 0.70, pairwise correlation strictly below 0.40, and all existing
+evidence gates. Correlation requests are blocked while RA checks are pending,
+unreadable, or failed.
+
+Only a fully reconciled `CANDIDATE` is evaluated by the second-stage
+`preferred-v1` selector. Its configured defaults are Sharpe >= 1.25,
+Fitness >= 1.0, Turnover in [0.01, 0.70], maximum weight <= 0.10, and
+`LOW_SUB_UNIVERSE_SHARPE` PASS. Missing metrics/checks remain
+`PENDING_PREFERRED`; failed criteria become `NOT_PREFERRED`. Drawdown and
+Coverage are recorded for analysis but have no threshold until explicitly
+approved. Preferred selection does not submit Alpha.
