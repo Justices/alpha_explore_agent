@@ -116,6 +116,15 @@ class FullMockWorkflowTests(unittest.TestCase):
         gateway = gateway or self.gateway
         adapter = MockWorkflowAdapter(
             self.root, self.cfg, gateway, SimpleNamespace(model=object()))
+        original_run = adapter.run
+        self.last_error = None
+        def traced_run(*args, **kwargs):
+            try:
+                return original_run(*args, **kwargs)
+            except Exception as exc:
+                self.last_error = repr(exc)
+                raise
+        adapter.run = traced_run
         runner = MainOrchestrator(self.root, adapter=adapter)
         request = {"objective": "mock-only integration", "region": "GLB",
                    "delay": 1}
@@ -143,7 +152,7 @@ class FullMockWorkflowTests(unittest.TestCase):
 
     def test_super_executor_persists_real_intent_and_readback(self):
         runner, task, result, gateway = self._run("super")
-        self.assertEqual(result["status"], "COMPLETED", result.get("failure"))
+        self.assertEqual(result["status"], "COMPLETED", (result.get("failure"), self.last_error))
         self.assertEqual(gateway.calls.count("simulate_super"), 1)
         self.assertEqual(result["budget"]["used"], 1)
         self.assertEqual(result["result"]["qualification"]["candidate_status"],
