@@ -288,6 +288,7 @@ class TestResearchAgent(unittest.TestCase):
 
     def test_real_regular_campaign_through_main_orchestrator_mock_gateway(self):
         self.gateway.is_offline_mock = True
+        self.model.is_offline_mock = True
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
         adapter = MockWorkflowAdapter(Path(self.tmp.name).parent, self.config,
