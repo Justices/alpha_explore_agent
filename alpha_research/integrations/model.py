@@ -14,11 +14,22 @@ from urllib.request import Request, urlopen
 from uuid import uuid4
 
 from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, LocalCliModelTool
+from alpha_research.progress import write_progress
 from alpha_research.state.store import atomic_write_json
 
 
 class ModelError(RuntimeError):
     pass
+
+
+FIELD_EVIDENCE_KEYS = {
+    "nominal_coverage": "coverage",
+    "usable_observations": "zeroFraction",
+    "refresh_rate": "updateFrequency",
+    "scale_units": "units",
+    "typical_level": "median",
+    "distribution": "distribution",
+}
 
 
 TASK_INSTRUCTIONS = {
@@ -59,15 +70,31 @@ TASK_INSTRUCTIONS = {
         "Return {dataset_id, reason}."
     ),
     "plan_probes": (
-        "Before hypothesis design, inspect nominal and usable coverage, refresh rate, "
-        "units, typical level, distribution, publication timing, and tradeability. "
-        "Choose the necessary core_fields and a required_dimensions map for each field, "
+        "Before hypothesis design, inspect field evidence and identify material gaps. "
+        "For required_dimensions and probe measures use only these exact dimension IDs: "
+        + ", ".join(FIELD_EVIDENCE_KEYS) + ". "
+        "Use scale_units for units. Discuss publication timing and tradeability in reason "
+        "when relevant, and mark them unknown if evidence is missing. They are not dimension IDs. "
+        "Generic diagnostic simulations only provide approximate nominal coverage and, with a "
+        "nonzero-value test, usable observations. Do not claim other evidence from these probes. "
+        "For a MATRIX field, use a direct field expression for nominal coverage and "
+        "`FIELD != 0 ? 1 : 0` for usable observations, replacing FIELD with the exact field ID. "
+        "Do not use field-to-field division or subtraction, including a field divided by itself. "
+        "Use only operators in context.operators when supplied. If validation_feedback is present, "
+        "correct the rejected probe in previous_probe_plan and return a complete revised plan. "
+        "Return core_fields as a nonempty list of unique exact field IDs from context.fields. "
+        "Choose a required_dimensions map for each core field, "
         "including nominal_coverage and usable_observations; justify this in "
-        "requirement_reason. Use only targeted probes for material unknowns. Each probe "
-        "needs expression, question, economic_relevance, expected, failure_criterion, "
+        "requirement_reason. Where catalog evidence is missing for either mandatory dimension, "
+        "provide a targeted probe if the supplied field and scope can support it. Use only "
+        "targeted probes for material unknowns. Each probe "
+        "needs field_id (one of core_fields), expression, question, measures, "
+        "economic_relevance, expected, failure_criterion, "
         "and a research object with nonempty idea, data_rationale, operator_rationale, "
         "field_relationship, settings_rationale, expected_behavior, failure_criterion. "
-        "Diagnostic Sharpe is never Alpha performance. Return {probes, reason}."
+        "Diagnostic Sharpe is never Alpha performance. "
+        "Return {core_fields, required_dimensions, requirement_reason, probes, reason}; "
+        "use an empty probes list when no diagnostic simulation is needed."
     ),
     "construct_batch": (
         "State the economic mechanism before expressions. Translate observed field constraints "
@@ -502,6 +529,8 @@ class DecisionRecorder:
         started = time.perf_counter()
         response_payload = None
         error = None
+        task_label = task if task in TASK_INSTRUCTIONS else "research"
+        write_progress(f"正在请求模型决策 · {task_label}")
         try:
             if config.get("provider") == "codex_cli":
                 thread_key = hashlib.sha256(self.research_id.encode("utf-8")).hexdigest()
@@ -541,5 +570,7 @@ class DecisionRecorder:
         if self.batch_dir is not None:
             self.bind_batch(self.batch_dir)
         if error is not None:
+            write_progress(f"模型调用失败 · {task_label}")
             raise error
+        write_progress(f"模型已返回 · {task_label}")
         return return_value

@@ -22,6 +22,22 @@ def cli(*args):
 
 
 class TestCli(unittest.TestCase):
+    def test_super_launch_does_not_initialize_the_regular_research_cache(self):
+        sys.path.insert(0, str(ROOT))
+        from alpha_research import cli as entry
+        with tempfile.TemporaryDirectory() as temp:
+            config = Path(temp) / "config.json"
+            config.write_text(json.dumps({"model": {}}), encoding="utf-8")
+            with patch.object(entry, "build_model_client") as build, patch.object(entry, "Gateway"), \
+                    patch.object(entry, "ResearchAgent") as regular, \
+                    patch.object(entry, "dispatch_research", return_value={}) as dispatch, \
+                    patch.dict(os.environ), redirect_stdout(StringIO()):
+                code = entry.main(["--state-root", temp, "--config", str(config),
+                                   "run-super", "--region", "GLB", "--objective", "fixture"])
+            self.assertEqual(code, 0)
+            regular.assert_not_called()
+            self.assertIs(dispatch.call_args.args[-1].model, build.return_value)
+
     def test_run_once_reports_local_ppa_eligibility(self):
         sys.path.insert(0, str(ROOT))
         from alpha_research import cli as entry
@@ -51,6 +67,8 @@ class TestCli(unittest.TestCase):
             self.assertEqual(status["research_config"]["status"], "missing")
             self.assertEqual(Path(status["research_config"]["path"]),
                              Path(temp) / "config" / "nastu_quant.json")
+            self.assertEqual(Path(status["catalog_snapshot_root"]),
+                             Path(__file__).resolve().parents[1] / "knowledge")
             stopped = cli("--state-root", temp, "stop")
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             second = cli("--state-root", temp, "status")

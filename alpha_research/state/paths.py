@@ -41,6 +41,7 @@ def default_state_root() -> Path:
 
 
 STATE_ROOT = default_state_root()
+CATALOG_SNAPSHOT_ROOT = Path(__file__).resolve().parents[2] / "knowledge"
 
 PRODUCT_TYPES = {
     "probe_report", "prereg", "verdicts",

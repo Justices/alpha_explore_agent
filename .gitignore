@@ -221,6 +221,7 @@ __marimo__/
 
 # nastu_quant runtime state must never be committed (esp. session cookie)
 session_cookie.json
+/knowledge/
 needs_auth
 *.tmp
 *.xml

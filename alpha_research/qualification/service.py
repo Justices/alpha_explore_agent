@@ -276,7 +276,15 @@ class CandidateQualificationService:
                 ids.append(row["id"])
         return sorted(set(ids))
 
-    def qualify_live(self, *, workflow, alpha_id, candidate_ref, source_ref,
+    def qualify_live(self, *, alpha_id, **kwargs):
+        clear = getattr(self.gateway, "clear_audit_evidence", None)
+        try:
+            return self._qualify_live(alpha_id=alpha_id, **kwargs)
+        finally:
+            if callable(clear):
+                clear(alpha_id)
+
+    def _qualify_live(self, *, workflow, alpha_id, candidate_ref, source_ref,
                      contender_ids=None, evidence_refs=None, fallback_details=None):
         """Read BRAIN evidence in strict RA -> correlation order; never writes Alpha."""
         if workflow not in {"regular", "super", "optimization"}:
@@ -303,10 +311,14 @@ class CandidateQualificationService:
                 evidence_refs=evidence_refs)
         # Preserve the existing Regular workflow's local OS-pool self-correlation
         # precheck. It is only reached after terminal RA PASS; PC/SC follows it.
+        bind = getattr(self.gateway, "set_audit_evidence", None)
+        limit = self.config["gate"]["self_corr_max"]
         try:
+            if callable(bind):
+                bind(details, limit)
             local = self.gateway.call(
                 "check_local_self_correlation", alpha_id=alpha_id,
-                self_corr_max=self.config["gate"]["self_corr_max"])
+                self_corr_max=limit)
         except Exception as exc:
             return self.qualify_from_evidence(
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
@@ -315,6 +327,11 @@ class CandidateQualificationService:
                                "local_self_correlation_error": type(exc).__name__},
                 external_pending=["local_self_correlation_unavailable"])
         if isinstance(local, dict) and isinstance(local.get("ra_details"), dict):
+            if local["ra_details"].get("id") != alpha_id:
+                return self.qualify_from_evidence(
+                    workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,
+                    source_ref=source_ref, details=details, correlations=None,
+                    evidence_refs=evidence_refs, external_pending=["local_audit_alpha_id_mismatch"])
             details = local["ra_details"]
         if ra_correlation_check_state(details) != "pass":
             return self.qualify_from_evidence(
@@ -353,10 +370,12 @@ class CandidateQualificationService:
         # The gateway re-reads Alpha details and independently enforces
         # terminal RA PASS before making either PC or SC request.
         try:
+            if callable(bind):
+                bind(details, limit, local)
             raw = self.gateway.call(
                 "check_correlation", alpha_id=alpha_id,
                 contender_ids=contender_ids or [],
-                self_corr_max=self.config["gate"]["self_corr_max"])
+                self_corr_max=limit)
         except Exception as exc:
             return self.qualify_from_evidence(
                 workflow=workflow, alpha_id=alpha_id, candidate_ref=candidate_ref,

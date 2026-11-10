@@ -149,9 +149,9 @@ class KnowledgeService:
         self.prior_knowledge_path = self._knowledge_path(
             "prior_knowledge_path", "RESEARCH_MEMORY.md")
         self.operator_root = self._knowledge_path(
-            "operator_root", "knowledge_base", "operator")
+            "operator_root", "knowledge", "operator")
         self.field_root = self._knowledge_path(
-            "field_root", "knowledge_base", "data_fields")
+            "field_root", "knowledge", "data_fields")
         self.operator_notes_path = self.knowledge_root / "operator_notes.json"
         self.field_notes_path = self.knowledge_root / "field_notes.json"
         self.remedies_path = self.knowledge_root / "remedies.json"

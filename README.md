@@ -31,7 +31,7 @@ matched against the complete catalog locally.
 
 The project's own platform runtime authenticates with BRAIN, reads Dataset,
 field and operator catalogs, and performs and resumes simulations. It persists
-case-local catalog snapshots, the complete effective settings and pre-backtest
+case-local catalog references, the complete effective settings and pre-backtest
 receipt under the state root. A possibly submitted simulation is never reposted
 automatically. Alpha submission and property mutation are not supported.
 
@@ -56,14 +56,30 @@ implementations in `workflows/` through the CLI.
   Dataset. Each effective scope uses a saved pool of up to 100 randomly
   sampled admissible fields, or all admissible fields when fewer are available.
   Dataset and field reads check account-specific exact-scope snapshots before
-  fetching a complete catalog from BRAIN. A snapshot is reusable for seven days
+  fetching a complete catalog from BRAIN. Operators use one account-wide
+  registry snapshot. A snapshot is reusable for seven days
   after the platform fetch. Cache misses, invalid snapshots and explicit
-  refresh requests fetch again. Full catalogs are stored once in
-  `<state-root>/state/platform/catalog_snapshots`. A research run records the
-  snapshot path and digest alongside the fields it sampled or used.
+  refresh requests fetch again. Full catalogs are stored once in the checkout's
+  `knowledge` directory, in the `datasets`, `data_fields` and
+  `operator` subdirectories. The paths depend only on the catalog and scope.
+  The snapshot metadata is checked against the active BRAIN account before
+  reuse. A research run records the snapshot path and digest alongside the
+  fields it sampled or used.
   `--ppa` explicitly enables the PPA Profile. A budget
-  stop reports unvisited combinations; an
-  interrupted batch requires recovery before more Campaign work.
+  stop reports unvisited combinations. An interrupted draft with no submission
+  evidence remains recoverable and allows unrelated research to proceed.
+  Retrying the same Campaign archives its verified unsubmitted draft before
+  replanning. A batch with unresolved submission evidence requires recovery.
+  Regular requests, including Regular optimization, check the account's
+  completed-request Bloom cache before POST and index completed readback.
+  Run `sync-backtest-cache` to index compatible Regular FASTEXPR requests from
+  BRAIN IS and OS history. History entries with unverifiable or different
+  effective settings are reported separately.
+  Completed production Regular simulations save local provenance tag plans.
+  Use `tag-alpha <alpha-id>` to preview the changes, add `--diagnostic` to
+  include available audited correlation name and color, and use `--apply`
+  for an explicit platform write with readback verification. Super workflows
+  use the qualification audit without Bloom caching or tag plans.
   `recover-workflow --workflow regular <batch-dir>`, or the same
   command with `super` / `optimization` and a simulation-intent
   file, routes through the shared RecoveryCoordinator. `recover-task --workflow ... <task-id>`
@@ -201,6 +217,46 @@ recovery uses the research identity saved with the batch and resumes the
 recorded thread by ID. Thread bindings are stored under
 `<state-root>/state/codex_threads`. The Codex CLI retains the conversation
 history in its own session storage.
+
+The Workbench is a standalone Python service. For a single operator on a
+Linux host, run the following from the checkout under a dedicated service
+account (for example, with systemd managing the process):
+
+```sh
+python3 -m pip install -e .
+python3 workbench/serve.py --port 8766 --state-root /var/lib/alpha-research
+```
+
+Give the service account write access to the checkout's `knowledge`
+directory. Keep the state directory on persistent storage and place the configuration
+in `config/nastu_quant.json` under that directory. Set model key environment
+variables for the service account. If you keep a CLI backend, install and
+authenticate it as that account. Preserve Codex CLI session storage as well as
+the research state if you need to resume Codex threads. For a service that
+does not depend on desktop logins, set the router's default and every route
+to configured HTTPS backends.
+
+The current Workbench is for one operator. It binds to loopback, checks the
+local Host and Origin, and keeps browser BRAIN credentials in memory for up to
+24 hours. To use it from another machine, forward the port with
+`ssh -N -L 8766:127.0.0.1:8766 user@research-host`, then open
+`http://127.0.0.1:8766/` and enter BRAIN credentials in the Workbench.
+An unattended CLI job can instead use the service account's
+`BRAIN_CREDENTIALS_FILE`. A shared web deployment needs an authenticated HTTPS
+application, a durable task queue with a worker, and user/account isolation.
+
+Open **研究任务 → 执行日志** for the latest web launch's live progress.
+The per-launch timeline is also saved to
+`<state-root>/state/logs/workbench/<launch-id>.jsonl`.
+The same page shows the shared catalog snapshot directory. Catalog events
+record the exact scope, cache hit or refresh reason, full record count,
+fetch time, and file path. The field-pool event separately records how many
+fields were eligible and how many were selected for research.
+For a standalone CLI run, set `ALPHA_RESEARCH_PROGRESS_FILE` to an absolute
+JSONL path in an existing writable directory to capture these events.
+Restarting the Workbench resets the displayed launch and the browser credential
+session. Use the saved logs and Campaign checkpoints to reconcile interrupted
+work before resuming it.
 
 Install and run the project with the Python interpreter selected for this agent.
 For Windows Command Prompt:

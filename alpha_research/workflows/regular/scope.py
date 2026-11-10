@@ -28,6 +28,13 @@ def dataset_category(value):
     return None
 
 
+def category_matches(value, expected):
+    labels = (value.get("id"), value.get("name")) if isinstance(value, dict) else (value,)
+    return isinstance(expected, str) and any(
+        isinstance(label, str) and label.strip().casefold() == expected.strip().casefold()
+        for label in labels)
+
+
 def _rows(value):
     if isinstance(value, list):
         return value
@@ -92,7 +99,8 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                     unresolved.append({"dataset_id": dataset_id, "scope": scope,
                                        "reason": "not_in_exact_scope_catalog"})
                 continue
-            actual_category = dataset_category(catalog_row.get("category"))
+            category_value = catalog_row.get("category")
+            actual_category = dataset_category(category_value)
             evidence = exact_catalog_scope(catalog_row, scope)
             source = "exact_catalog"
             detail = None
@@ -105,7 +113,9 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                     unresolved.append({"dataset_id": dataset_id, "scope": scope,
                                        "reason": "dataset_detail_unreadable"})
                     continue
-                actual_category = dataset_category(detail.get("category")) or actual_category
+                if dataset_category(detail.get("category")) is not None:
+                    category_value = detail["category"]
+                    actual_category = dataset_category(category_value)
                 if evidence is None:
                     data = detail.get("data")
                     if isinstance(data, list):
@@ -116,7 +126,7 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                 unresolved.append({"dataset_id": dataset_id, "scope": scope,
                                    "reason": "category_unverified"})
                 continue
-            if category is not None and actual_category != category:
+            if category is not None and not category_matches(category_value, category):
                 continue
             if evidence is None:
                 unresolved.append({"dataset_id": dataset_id, "scope": scope,

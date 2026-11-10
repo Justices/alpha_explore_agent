@@ -13,9 +13,15 @@ from threading import Lock, Thread
 from time import monotonic
 from uuid import uuid4
 
-
 WORKBENCH = Path(__file__).resolve().parent
 PROJECT = WORKBENCH.parent
+if not __package__:
+    sys.path.insert(0, str(PROJECT))
+
+from alpha_research.progress import PROGRESS_ENV, write_progress
+from alpha_research.state.paths import default_state_root, expand_path
+
+
 COOKIE_NAME = "alpha_workbench_session"
 SESSION_SECONDS = 86400
 
@@ -75,19 +81,44 @@ def campaign_arguments(data):
     return args
 
 
+def recent_progress(path):
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, size - 65536))
+            lines = stream.read(65536).splitlines()
+    except OSError:
+        return []
+    events = []
+    for line in lines[-60:]:
+        try:
+            event = json.loads(line)
+        except (UnicodeError, ValueError):
+            continue
+        if (isinstance(event, dict) and isinstance(event.get("time"), str)
+                and isinstance(event.get("message"), str)):
+            events.append(event)
+    return events
+
+
 def handler_for(agent_args, port):
     origin = f"http://127.0.0.1:{port}"
     launch_lock = Lock()
     session_lock = Lock()
     sessions = {}
     launch = {"status": "idle"}
+    root = (expand_path(agent_args[agent_args.index("--state-root") + 1]).resolve()
+            if "--state-root" in agent_args else default_state_root())
+    log_dir = root / "state" / "logs" / "workbench"
 
-    def run_campaign(args, credentials):
+    def run_campaign(args, credentials, log_path):
         outcome = {"status": "failed"}
         try:
+            write_progress("正在启动研究进程", log_path)
             result = subprocess.run(
                 agent_command(agent_args, [*args, "--brain-credentials-stdin"]),
-                cwd=PROJECT, env=agent_env(), input=json.dumps(credentials, ensure_ascii=False),
+                cwd=PROJECT, env={**agent_env(), PROGRESS_ENV: str(log_path)},
+                input=json.dumps(credentials, ensure_ascii=False),
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8")
             outcome["exit_code"] = result.returncode
             if result.returncode == 0:
@@ -98,8 +129,14 @@ def handler_for(agent_args, port):
                     if isinstance(report.get("campaign_id"), str):
                         outcome["campaign_id"] = report["campaign_id"]
         except (OSError, ValueError, subprocess.SubprocessError):
-            pass
+            write_progress("无法启动研究进程或读取执行结果", log_path)
         finally:
+            if outcome["status"] == "failed":
+                code = outcome.get("exit_code")
+                write_progress(f"研究进程退出，退出码 {code}" if code is not None
+                               else "研究进程启动失败", log_path)
+            else:
+                write_progress("研究进程已结束，结果见 Campaign 状态", log_path)
             with launch_lock:
                 launch.update(outcome)
 
@@ -185,10 +222,13 @@ def handler_for(agent_args, port):
                 else:
                     launch.clear()
                     launch.update(status="running", launch_id=uuid4().hex)
+                    log_path = log_dir / f"{launch['launch_id']}.jsonl"
                     try:
-                        Thread(target=run_campaign, args=(args, credentials),
+                        log_dir.mkdir(parents=True, exist_ok=True)
+                        log_path.touch(exist_ok=False)
+                        Thread(target=run_campaign, args=(args, credentials, log_path),
                                daemon=True).start()
-                    except RuntimeError:
+                    except (OSError, RuntimeError):
                         launch["status"] = "failed"
                         code, payload = 503, {"error": "无法启动研究进程"}
                     else:
@@ -206,6 +246,8 @@ def handler_for(agent_args, port):
             if self.path == "/api/launch":
                 with launch_lock:
                     payload = dict(launch)
+                if "launch_id" in payload:
+                    payload["events"] = recent_progress(log_dir / f"{payload['launch_id']}.jsonl")
                 self.respond_json(200, payload)
                 return
             if self.path == "/api/credentials":

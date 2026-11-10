@@ -12,7 +12,9 @@ import math
 import re
 
 from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
-from alpha_research.state.store import atomic_write_json, lock_prereg, read_json, verify_prereg
+from alpha_research.state.store import (
+    atomic_write_json, is_pre_submission_draft, lock_prereg, read_json, verify_prereg,
+)
 from alpha_research.expressions.validator import regular_operator_names, validate
 from alpha_research.simulation.matching import match_alphas_detailed
 from alpha_research.qualification.gates import evaluate_candidate, local_self_correlation_state, parse_correlations
@@ -23,24 +25,17 @@ from alpha_research.qualification.service import CandidateQualificationService
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.workflows.regular.campaign_state import CampaignStore
 from alpha_research.workflows.regular.diagnosis import DiagnosisError, diagnose_batch
-from alpha_research.workflows.regular.scope import SCOPE_KEYS, dataset_category, exact_catalog_scope
+from alpha_research.workflows.regular.scope import (
+    SCOPE_KEYS, category_matches, dataset_category, exact_catalog_scope,
+)
 from alpha_research.knowledge import KnowledgeService
-from alpha_research.integrations.model import DecisionRecorder
+from alpha_research.integrations.model import DecisionRecorder, FIELD_EVIDENCE_KEYS
+from alpha_research.progress import write_progress
 import json
 
 
 class ResearchError(RuntimeError):
     pass
-
-
-FIELD_EVIDENCE_KEYS = {
-    "nominal_coverage": "coverage",
-    "usable_observations": "zeroFraction",
-    "refresh_rate": "updateFrequency",
-    "scale_units": "units",
-    "typical_level": "median",
-    "distribution": "distribution",
-}
 
 
 def _duration_parts(value):
@@ -141,12 +136,17 @@ def _campaign_field_pool(path, fields, dataset_id, scope):
                 or any(not isinstance(key, str) or key not in eligible for key in field_ids)
                 or len(set(field_ids)) != len(field_ids)):
             raise ResearchError("saved Campaign field pool cannot be verified against live fields")
+        selection = "复用已保存的字段池"
     else:
         field_ids = list(eligible)
+        selection = "使用全部可用字段"
         if len(field_ids) > 100:
             field_ids = sample(field_ids, 100)
+            selection = "随机抽样"
         atomic_write_json(path, {**identity, "eligible_count": len(eligible),
                                  "field_ids": field_ids})
+    write_progress(f"{dataset_id} · {selection} · 目录 {len(fields)} 条，可用 {len(eligible)} 条，"
+                   f"选入 {len(field_ids)} 条 · {path}")
     return [eligible[field_id] for field_id in field_ids]
 
 
@@ -455,7 +455,15 @@ class ResearchAgent:
                 reason += f"; draft needs recovery: {void_error}"
             raise ResearchError(reason) from exc
         if not problems:
-            return
+            check = getattr(self.gateway, "check_simulation_cache", None)
+            if not callable(check):
+                return
+            try:
+                check(expressions=expressions, settings=settings)
+            except Exception as exc:
+                problems.append({"expression": label, "reason": str(exc)})
+            else:
+                return
         summary = "; ".join(f"{item['expression']} ({item['reason']})"
                              for item in problems)
         reason = f"backtest cache hit before {label}: {summary}"
@@ -526,33 +534,46 @@ class ResearchAgent:
     def _simulate(self, variants, settings, dataset_id, batch_dir, label):
         intent_path = Path(batch_dir) / ("simulation_intent.json" if label == "production"
                                          else f"{label}_intent.json")
-        intent = (json.loads(intent_path.read_text(encoding="utf-8"))
-                  if intent_path.exists() else None)
+        intent = read_json(intent_path)
+        if not isinstance(intent, dict):
+            raise ResearchError("simulation requires a readable submission intent")
         if self.stop_flag and self.stop_flag.exists():
-            if isinstance(intent, dict) and intent.get("status") == "PREPARED":
+            if intent.get("status") == "PREPARED":
                 intent["status"] = "STOPPED_BEFORE_SUBMISSION"
                 atomic_write_json(intent_path, intent)
             raise ResearchError("stop flag is set; no new simulation posted")
         for variant in variants:
             if not self._has_complete_runner_research(variant.get("research")):
                 raise ResearchError("canonical simulation requires complete per-variant research evidence")
-        if isinstance(intent, dict):
-            if intent.get("status") not in {"PREPARED", "STOPPED_BEFORE_SUBMISSION"}:
-                raise ResearchError("simulation intent is not proven unsubmitted")
-            intent["status"] = "SUBMITTING"
-            atomic_write_json(intent_path, intent)
+        if intent.get("status") not in {"PREPARED", "STOPPED_BEFORE_SUBMISSION"}:
+            raise ResearchError("simulation intent is not proven unsubmitted")
+        intent["status"] = "SUBMITTING"
+        atomic_write_json(intent_path, intent)
+        stage = "Alpha 回测" if label == "production" else "字段诊断回测"
+        write_progress(f"正在提交并等待{stage}结果，共 {len(variants)} 个表达式")
         result = self.gateway.call(
             "simulate_batch", variants=variants, settings=settings,
             dataset_id=dataset_id, batch_id=Path(batch_dir).name, label=label)
         return self._normalize_runner_result(result)
 
-    def _unfinished_batch(self):
+    def _unfinished_batch(self, *, objective=None, research_id=None):
         if not self.runs_root.exists():
             return None
         for path in self.runs_root.rglob("batch_context.json"):
             batch_dir = path.parent
             if (batch_dir / "void.json").exists():
                 continue
+            if objective is not None and is_pre_submission_draft(batch_dir):
+                context = read_json(path)
+                if isinstance(context, dict):
+                    previous_id = context.get("research_id")
+                    previous_objective = context.get("objective")
+                    if research_id and isinstance(previous_id, str) and previous_id:
+                        if research_id != previous_id:
+                            continue
+                    elif (isinstance(previous_objective, str) and previous_objective
+                          and previous_objective != objective):
+                        continue
             intent_path = batch_dir / "simulation_intent.json"
             results_path = batch_dir / "results.json"
             if not results_path.exists():
@@ -581,8 +602,11 @@ class ResearchAgent:
         for batch_dir in self.runs_root.glob("*/*/*/*/*"):
             if (batch_dir.is_dir() and
                     re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", batch_dir.name) and
+                    not (batch_dir / "batch_context.json").exists() and
                     not (batch_dir / "results.json").exists() and
                     not (batch_dir / "void.json").exists()):
+                if objective is not None and is_pre_submission_draft(batch_dir):
+                    continue
                 return batch_dir
         return None
 
@@ -772,7 +796,8 @@ class ResearchAgent:
                         expected_pairwise_ids=list(
                             ((reconciled.get("correlations") or {}).get("pairwise") or {}).keys()),
                         evidence_refs={"canonical_audit": str(audit_path or ""),
-                                       "batch_dir": str(batch_dir)},
+                                       "batch_dir": str(batch_dir),
+                                       "local_self_correlation": result.get("local_self_correlation")},
                         external_failures=verdict.get("failures", []),
                         external_pending=verdict.get("pending", []),
                         external_status=verdict.get("status"))
@@ -1616,6 +1641,72 @@ class ResearchAgent:
             return saved_id
         return "regular:legacy:" + str(Path(batch_dir).resolve())
 
+    def _validate_probe_plan(self, probe_plan, catalog, operators, operator_catalog,
+                             dataset_id, scope, batch_dir, *, recovered_count=0,
+                             archive_invalid_core=False):
+        probes = probe_plan.get("probes")
+        if not isinstance(probes, list):
+            write_progress("字段诊断计划缺少有效的 probes 列表")
+            raise ResearchError("model probe plan must contain a list")
+        if probes and "NONE" not in scope.get("_supported_neutralizations", []):
+            write_progress("当前范围没有平台确认可用的 NONE 中性化，暂停字段诊断回测")
+            raise ResearchError("diagnostic neutralization NONE is not live supported")
+        core_fields = probe_plan.get("core_fields")
+        if (not isinstance(core_fields, list) or not core_fields
+                or any(not isinstance(field_id, str) for field_id in core_fields)
+                or len(set(core_fields)) != len(core_fields)
+                or any(field_id not in catalog for field_id in core_fields)):
+            write_progress("字段诊断计划未通过校验：core_fields 缺失或包含未获准的字段")
+            if archive_invalid_core:
+                self.void_batch(batch_dir, "probe plan must choose live core fields")
+                write_progress(f"已归档未提交回测的无效探针草稿 · {batch_dir}")
+            raise ResearchError("probe plan must choose live core fields")
+        required_dimensions = probe_plan.get("required_dimensions")
+        if isinstance(required_dimensions, dict) and any(
+                not isinstance(item, str) or item not in FIELD_EVIDENCE_KEYS
+                for items in required_dimensions.values() if isinstance(items, list)
+                for item in items):
+            write_progress("字段诊断计划包含不支持的诊断维度。允许的维度为 "
+                           + ", ".join(FIELD_EVIDENCE_KEYS))
+            raise ResearchError("required field diagnostics need a justified dimension list")
+        if required_dimensions is None:
+            required_dimensions = {field_id: list(FIELD_EVIDENCE_KEYS)
+                                   for field_id in core_fields}
+        elif (not isinstance(required_dimensions, dict)
+              or set(required_dimensions) != set(core_fields)
+              or not isinstance(probe_plan.get("requirement_reason"), str)
+              or not probe_plan["requirement_reason"].strip()
+              or any(not isinstance(items, list) or not items
+                     or len(items) != len(set(items))
+                     or "nominal_coverage" not in items
+                     or "usable_observations" not in items
+                     for items in required_dimensions.values())):
+            write_progress("字段诊断计划的维度清单无效。每个核心字段都需要覆盖率、有效观测和选择理由")
+            raise ResearchError("required field diagnostics need a justified dimension list")
+        if recovered_count < len(probes):
+            for number, probe in enumerate(probes, start=1):
+                if not isinstance(probe, dict) or not all(probe.get(k) for k in
+                    ("field_id", "expression", "question", "measures", "economic_relevance",
+                     "expected", "failure_criterion")) or not isinstance(probe["expression"], str):
+                    write_progress(f"第 {number} 条字段诊断缺少有效表达式、问题或预先声明的失败标准")
+                    raise ResearchError("each diagnostic probe needs a question and ex-ante criterion")
+                if not self._has_complete_runner_research(probe.get("research")):
+                    write_progress(f"第 {number} 条字段诊断缺少完整的回测依据")
+                    raise ResearchError("each diagnostic probe needs complete canonical runner research evidence")
+                if (probe["field_id"] not in core_fields or not isinstance(probe["measures"], list)
+                        or any(not isinstance(item, str) or item not in FIELD_EVIDENCE_KEYS
+                               for item in probe["measures"])):
+                    write_progress(f"第 {number} 条字段诊断的字段或测量维度超出允许范围")
+                    raise ResearchError("probe field or measured property is outside the admitted pool")
+                verdict = validate(probe["expression"], dataset_id, catalog, operators,
+                                   operator_definitions=operator_catalog)
+                if verdict["verdict"] != "PASS":
+                    error_codes = [error["code"] for error in verdict["errors"]]
+                    write_progress(f"第 {number} 条字段诊断表达式校验失败 · {', '.join(error_codes)}")
+                    return core_fields, required_dimensions, probes, {
+                        "probe_number": number, "error_codes": error_codes}
+        return core_fields, required_dimensions, probes, None
+
     def run_once(self, objective: str, dataset_id: str = None, *,
                  resume_batch_dir: Path = None, recovered_probe_results=None,
                  cached_context=None, fixed_scope=None, diagnosis_id=None,
@@ -1645,8 +1736,9 @@ class ResearchAgent:
                 raise ResearchError("requested Dataset conflicts with configured scope")
             requested_dataset = dataset_id
             dataset_id = supplied_dataset or dataset_id
-            unfinished = self._unfinished_batch()
+            unfinished = self._unfinished_batch(objective=objective, research_id=research_id)
             if unfinished:
+                write_progress(f"本批尚未开始：先前批次待恢复或归档 · {unfinished}")
                 raise ResearchError(f"unfinished batch requires recovery: {unfinished}")
             scope = self._scope(objective, fixed_scope)
             if remedy_reference is not None and any(
@@ -1695,12 +1787,14 @@ class ResearchAgent:
             dataset_row = available[dataset_id]
             scope_evidence = exact_catalog_scope(dataset_row, scope)
             source = "exact_catalog"
-            actual_category = dataset_category(dataset_row.get("category"))
-            if scope_evidence is None or (expected_category is not None and actual_category is None):
+            category_value = dataset_row.get("category")
+            if scope_evidence is None or (expected_category is not None
+                                          and dataset_category(category_value) is None):
                 detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
                 if not isinstance(detail, dict) or detail.get("id") != dataset_id:
                     raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
-                actual_category = dataset_category(detail.get("category")) or actual_category
+                if dataset_category(detail.get("category")) is not None:
+                    category_value = detail["category"]
                 if scope_evidence is None:
                     data = detail.get("data")
                     if isinstance(data, list):
@@ -1708,7 +1802,7 @@ class ResearchAgent:
                     source = "dataset_detail"
             if scope_evidence is None:
                 raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
-            if expected_category is not None and expected_category != actual_category:
+            if expected_category is not None and not category_matches(category_value, expected_category):
                 raise ResearchError(f"Dataset no longer matches the requested Category: {dataset_id}")
             dataset_selection.update(detail_scope=scope_evidence, scope_evidence_source=source)
             self.campaigns.update(
@@ -1716,10 +1810,13 @@ class ResearchAgent:
                 selection_mode=dataset_selection["mode"],
                 locked=dataset_selection["mode"] == "fixed",
                 candidate_ledger_ref=str(case_path), status="active")
+            write_progress("正在读取字段和算子目录")
             fields = _rows(self.gateway.call("get_datafields", instrument_type="EQUITY",
                                              dataset_id=dataset_id, **context))
             if field_pool_path is not None:
                 fields = _campaign_field_pool(field_pool_path, fields, dataset_id, scope)
+            else:
+                write_progress(f"本批研究字段目录共 {len(fields)} 条")
             operator_rows = _rows(self.gateway.call("get_operators", **context))
             operators = regular_operator_names(operator_rows)
             operator_catalog = [row for row in operator_rows if isinstance(row, dict)
@@ -1751,11 +1848,11 @@ class ResearchAgent:
             self._write_batch_knowledge_packs(batch_dir)
             self.campaigns.update(campaign_id, current_batch=str(batch_dir),
                                   dataset_state="active", status="active")
-            probe_plan = self._decide("plan_probes", {
+            probe_context = {
                 "objective": objective, "scope": scope, "dataset_id": dataset_id,
-                "fields": _field_summaries(fields),
-                "prior_batches": prior_case.get("batches", [])},
-                batch_dir=batch_dir)
+                "fields": _field_summaries(fields), "operators": sorted(operators),
+                "prior_batches": prior_case.get("batches", [])}
+            probe_plan = self._decide("plan_probes", probe_context, batch_dir=batch_dir)
         else:
             batch_dir = Path(resume_batch_dir).resolve()
             if not batch_dir.is_relative_to(self.runs_root.resolve()):
@@ -1792,50 +1889,26 @@ class ResearchAgent:
                 auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
                 status="active")
         catalog = _catalog(fields, dataset_id)
-        probes = probe_plan.get("probes")
-        if not isinstance(probes, list):
-            raise ResearchError("model probe plan must contain a list")
-        if probes and "NONE" not in scope.get("_supported_neutralizations", []):
-            raise ResearchError("diagnostic neutralization NONE is not live supported")
-        core_fields = probe_plan.get("core_fields")
-        if (not isinstance(core_fields, list) or not core_fields
-                or len(set(core_fields)) != len(core_fields)
-                or any(field_id not in catalog for field_id in core_fields)):
-            raise ResearchError("probe plan must choose live core fields")
-        required_dimensions = probe_plan.get("required_dimensions")
-        if required_dimensions is None:
-            required_dimensions = {field_id: list(FIELD_EVIDENCE_KEYS)
-                                   for field_id in core_fields}
-        elif (not isinstance(required_dimensions, dict)
-              or set(required_dimensions) != set(core_fields)
-              or not isinstance(probe_plan.get("requirement_reason"), str)
-              or not probe_plan["requirement_reason"].strip()
-              or any(not isinstance(items, list) or not items
-                     or len(items) != len(set(items))
-                     or any(item not in FIELD_EVIDENCE_KEYS for item in items)
-                     or "nominal_coverage" not in items
-                     or "usable_observations" not in items
-                     for items in required_dimensions.values())):
-            raise ResearchError("required field diagnostics need a justified dimension list")
+        probe_results = [] if recovered_probe_results is None else recovered_probe_results
+        core_fields, required_dimensions, probes, rejection = self._validate_probe_plan(
+            probe_plan, catalog, operators, operator_catalog, dataset_id, scope, batch_dir,
+            recovered_count=len(probe_results), archive_invalid_core=resume_batch_dir is None)
+        if rejection and resume_batch_dir is None:
+            write_progress("将表达式校验结果返回模型，修订字段诊断计划一次")
+            probe_plan = self._decide("plan_probes", {
+                **probe_context, "previous_probe_plan": probe_plan,
+                "validation_feedback": rejection}, batch_dir=batch_dir)
+            core_fields, required_dimensions, probes, rejection = self._validate_probe_plan(
+                probe_plan, catalog, operators, operator_catalog, dataset_id, scope, batch_dir,
+                archive_invalid_core=True)
+        if rejection:
+            raise ResearchError(
+                f"probe expression rejected at probe {rejection['probe_number']}: "
+                + ", ".join(rejection["error_codes"]))
         field_rows = {row["id"]: row for row in fields
                       if isinstance(row, dict) and row.get("id") in core_fields}
         atomic_write_json(batch_dir / "probe_plan.json", probe_plan)
-        probe_results = [] if recovered_probe_results is None else recovered_probe_results
         if probes and len(probe_results) < len(probes):
-            for probe in probes:
-                if not isinstance(probe, dict) or not all(probe.get(k) for k in
-                    ("field_id", "expression", "question", "measures", "economic_relevance",
-                     "expected", "failure_criterion")):
-                    raise ResearchError("each diagnostic probe needs a question and ex-ante criterion")
-                if not self._has_complete_runner_research(probe.get("research")):
-                    raise ResearchError("each diagnostic probe needs complete canonical runner research evidence")
-                if (probe["field_id"] not in core_fields or not isinstance(probe["measures"], list)
-                        or any(item not in FIELD_EVIDENCE_KEYS for item in probe["measures"])):
-                    raise ResearchError("probe field or measured property is outside the admitted pool")
-                verdict = validate(probe["expression"], dataset_id, catalog, operators,
-                                   operator_definitions=operator_catalog)
-                if verdict["verdict"] != "PASS":
-                    raise ResearchError(f"probe expression rejected: {verdict['errors']}")
             probe_settings = self._platform_settings(scope, probe=True)
             if len(probe_results) % 8:
                 raise ResearchError("recovered diagnostic prefix is incomplete")
@@ -1947,6 +2020,8 @@ class ResearchAgent:
                    for dimension in required_dimensions[field_id]
                    if not sources[field_id][dimension]]
         if missing:
+            preview = ", ".join(f"{field_id}/{dimension}" for field_id, dimension in missing[:8])
+            write_progress(f"缺少 {len(missing)} 项字段诊断证据，暂停构造表达式 · {preview}")
             raise ResearchError(f"field diagnostics unresolved; batch construction blocked: {missing}")
 
         construction_context = {

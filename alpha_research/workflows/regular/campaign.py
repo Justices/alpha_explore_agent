@@ -7,8 +7,9 @@ from pathlib import Path
 from random import choice
 
 from alpha_research.workflows.regular.scope import discover_regular_scope
-from alpha_research.state.store import atomic_write_json
+from alpha_research.state.store import atomic_write_json, is_pre_submission_draft
 from alpha_research.state.records import ResearchRecordStore
+from alpha_research.progress import write_progress
 
 
 def _now():
@@ -177,28 +178,38 @@ def _reconcile_active(agent, state, recovery_batch=None):
     context_paths = (directory.glob("*/batch_context.json") if recovery_batch is None
                      else [recovery_batch / "batch_context.json"])
     matches = []
+    research_id = f"regular:campaign:{state['campaign_id']}"
     for context_path in context_paths:
         try:
             context = json.loads(context_path.read_text(encoding="utf-8"))
             started = datetime.fromisoformat(context.get("started_at", ""))
             active = datetime.fromisoformat(state["active_started_at"])
             if (context.get("objective") == state["request"]["objective"]
-                    and started >= active):
-                matches.append(context_path.parent)
+                    and started >= active
+                    and context.get("research_id") in (None, research_id)):
+                matches.append((context_path.parent, context))
         except (OSError, ValueError):
             raise ValueError("interrupted Campaign context is unreadable")
     if len(matches) > 1:
         raise ValueError("multiple possible interrupted batches; manual reconciliation required")
+    if matches and recovery_batch is None:
+        batch_dir, context = matches[0]
+        if context.get("research_id") == research_id and is_pre_submission_draft(batch_dir):
+            if not (batch_dir / "void.json").exists():
+                agent.void_batch(batch_dir, "Campaign retry after interruption before submission")
+            write_progress(f"已归档本 Campaign 未提交回测的草稿，将重新规划 · {batch_dir}")
+            matches.clear()
     if not matches:
         if recovery_batch is not None:
             raise ValueError("bound recovery batch does not match the active Campaign item")
-        # run_once failed before recording a batch context, hence before a POST.
+        # No batch was started, or the matched draft never reached submission.
         state["active_item"] = None
         state.pop("active_started_at", None)
         state["budget"]["reserved"]["batches"] = 0
         state["status"] = "planned"
+        state.pop("error", None)
         return
-    batch_dir = matches[0]
+    batch_dir, _ = matches[0]
     intent_path = batch_dir / "simulation_intent.json"
     result_path = batch_dir / "results.json"
     try:
@@ -288,6 +299,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                     "unresolved": state["plan"]["unresolved"],
                     "state_path": str(path)}
     else:
+        write_progress("正在核验 BRAIN 数据集与研究范围")
         gateway.call("set_case", case_key=campaign_id,
                      run_id=campaign_id)
         plan = discover_regular_scope(
@@ -306,7 +318,9 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             items = _work_items(plan)
         evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
         atomic_write_json(evidence_path, plan)
+        write_progress(f"范围核验完成，确认 {len(plan['datasets'])} 个可用数据集")
         if not items:
+            write_progress("没有通过范围核验的研究组合")
             return {"status": "unresolved", "plan": plan,
                     "plan_evidence_ref": str(evidence_path), "reason": "no_verified_work_items"}
         state = {"schema_version": 1, "campaign_id": campaign_id,
@@ -327,6 +341,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             break
         index = len(state["completed"]) % len(items)
         item = items[index]
+        write_progress(f"开始执行第 {len(state['completed']) + 1}/{max_batches} 批")
         state["active_item"] = index
         state["active_started_at"] = _now()
         state["budget"]["reserved"]["batches"] = 1
@@ -365,6 +380,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "alpha_ids": result["alpha_ids"],
             "candidate_status": result["candidate_status"],
             "completed_at": _now()})
+        write_progress(f"已完成 {len(state['completed'])}/{max_batches} 批")
         state["active_item"] = None
         state.pop("active_started_at", None)
         state["budget"]["reserved"]["batches"] = 0

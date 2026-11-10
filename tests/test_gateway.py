@@ -64,6 +64,25 @@ class TestGateway(unittest.TestCase):
         with self.assertRaises(GatewayError):
             gateway.call("get_submission_check", alpha_id="A1")
 
+    def test_service_can_bind_fresh_audit_evidence_without_regular_state_file(self):
+        gateway = Gateway()
+        gateway.proc = type("Process", (), {"poll": lambda self: None})()
+        calls = []
+        gateway._send = lambda payload: calls.append(payload) or {"ok": True, "result": {}}
+        details = {"id": "A1", "is": {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]}}
+        gateway.set_audit_evidence(details, 0.70)
+        gateway.call("check_local_self_correlation", alpha_id="A1")
+        with self.assertRaises(GatewayError):
+            gateway.call("check_correlation", alpha_id="A1")
+        gateway.set_audit_evidence(details, 0.70, {"status": "pass", "complete": True,
+            "value": 0.4, "comparison_count": 1, "window_years": 4, "limit": 0.70})
+        gateway.call("check_correlation", alpha_id="A1")
+        gateway.clear_audit_evidence("A1")
+        with self.assertRaises(GatewayError):
+            gateway.call("check_local_self_correlation", alpha_id="A1")
+        self.assertEqual([row["cmd"] for row in calls],
+                         ["check_local_self_correlation", "check_correlation"])
+
 
 if __name__ == "__main__":
     unittest.main()

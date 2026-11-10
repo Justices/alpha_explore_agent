@@ -19,10 +19,16 @@ import requests
 from alpha_research.qualification.correlation import pairwise_pnl_correlation, parse_pnl_recordset
 from alpha_research.qualification.gates import (local_self_correlation_state, parse_correlations,
                          ra_correlation_check_state, terminal_correlation_check)
-from alpha_research.state.paths import default_state_root, expand_path
+from alpha_research.progress import write_progress
+from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
 from alpha_research.simulation.matching import SETTING_KEYS
+from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
+from alpha_research.simulation.platform_cache import cache_record, history_payload
+from alpha_research.simulation.tags import diagnostic_properties, research_tags
 from alpha_research.state.store import atomic_write_json, file_sha256, read_json
+from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.operation_lock import SubmissionGate
+from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.expressions.validator import regular_operator_names, validate
 
 
@@ -124,6 +130,7 @@ class PlatformRuntime:
     """The agent's own platform adapter; it does not load other repositories."""
     BATCH_LIMIT = 8
     CATALOG_MAX_AGE = timedelta(days=7)
+    ALPHA_HISTORY_CAP = 1000
 
     def __init__(self, state_root=None, *, client=None, poll_timeout=1200):
         self.state_root = Path(state_root or os.environ.get("NASTU_QUANT_STATE_DIR")
@@ -136,7 +143,8 @@ class PlatformRuntime:
         self._recent_alpha_details = {}
         self._prefilter_batch = None
         self._prefilter_cache = {}
-        self._snapshot_root = None
+        self._snapshot_root = CATALOG_SNAPSHOT_ROOT
+        self._account_namespaces = {}
 
     def close(self):
         self.client.close()
@@ -265,12 +273,21 @@ class PlatformRuntime:
             raise PlatformError("platform scope choices are empty")
         return {"instrument_options": rows, "total_combinations": len(rows)}
 
-    def _catalog_snapshot_path(self, relative):
-        if self._snapshot_root is None:
+    @staticmethod
+    def _catalog_layout(relative):
+        if relative.parts[0] == "fields":
+            return Path("data_fields", *relative.parts[1:])
+        if relative == Path("catalogs", "operators.json"):
+            return Path("operator", relative.name)
+        return Path("datasets", *relative.parts[1:])
+
+    def _account_namespace(self, key_path=None):
+        key_path = key_path or self.root / ".catalog-snapshot-key"
+        if key_path not in self._account_namespaces:
             account = getattr(self.client, "catalog_account", None)
             if not isinstance(account, str) or not account:
                 return None
-            key_path = self.root / ".catalog-snapshot-key"
+            key_path.parent.mkdir(parents=True, exist_ok=True)
             try:
                 descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
@@ -281,75 +298,134 @@ class PlatformRuntime:
             key = key_path.read_bytes()
             if len(key) != 32:
                 raise PlatformError("catalog snapshot identity key is unreadable")
-            namespace = hmac.new(key, account.encode("utf-8"), hashlib.sha256).hexdigest()
-            self._snapshot_root = self.root / "catalog_snapshots" / namespace
-        return self._snapshot_root / relative
+            self._account_namespaces[key_path] = hmac.new(
+                key, account.encode("utf-8"), hashlib.sha256).hexdigest()
+        return self._account_namespaces[key_path]
+
+    def _catalog_snapshot_path(self, relative):
+        return self._snapshot_root / self._catalog_layout(relative)
+
+    def _platform_backtest_cache(self):
+        namespace = self._account_namespace()
+        if namespace is None:
+            raise PlatformError("BRAIN account identity is required for the backtest cache")
+        return BacktestCache(self.root / "backtests" / namespace / "completed.cache")
 
     def _cached_catalog(self, path, expected, rows_key):
-        snapshot = read_json(path) if path is not None else None
+        if path is None:
+            return None, None, "缓存不存在"
+        try:
+            payload = path.read_bytes()
+            snapshot = json.loads(payload.decode("utf-8"))
+        except FileNotFoundError:
+            return None, None, "缓存不存在"
+        except (OSError, ValueError):
+            return None, None, "缓存无效或无法读取"
         if not isinstance(snapshot, dict):
-            return None
+            return None, None, "缓存内容或范围校验失败"
         metadata, rows = snapshot.get("metadata"), snapshot.get(rows_key)
+        account = self._account_namespace(self._snapshot_root / ".catalog-snapshot-key")
+        if isinstance(metadata, dict) and (account is None or metadata.get("account_namespace") != account):
+            return None, None, "缓存账号校验不通过"
+        identity = "name" if rows_key == "operators" else "id"
         if (not isinstance(metadata, dict)
                 or any(metadata.get(name) != value for name, value in expected.items())
                 or metadata.get("complete") is not True
                 or not isinstance(rows, list) or type(metadata.get("count")) is not int
                 or metadata["count"] != len(rows)
-                or any(not isinstance(row, dict) or not isinstance(row.get("id"), str)
-                       or not row["id"] for row in rows)
-                or len({row["id"] for row in rows}) != len(rows)):
-            return None
+                or any(not isinstance(row, dict) or not isinstance(row.get(identity), str)
+                       or not row[identity].strip() for row in rows)
+                or (not rows if rows_key == "operators"
+                    else len({row["id"] for row in rows}) != len(rows))):
+            return None, None, "缓存内容或范围校验失败"
         try:
             fetched = datetime.fromisoformat(metadata["fetched_at"])
             if fetched.utcoffset() is None:
-                return None
+                return None, None, "快照时间缺少时区"
             age = datetime.now(timezone.utc) - fetched
-            if not timedelta(0) <= age <= self.CATALOG_MAX_AGE:
-                return None
+            if age < timedelta(0):
+                return None, None, "快照时间晚于当前时间"
+            if age > self.CATALOG_MAX_AGE:
+                return None, None, "缓存已过期"
         except (KeyError, ValueError, TypeError):
-            return None
-        return snapshot
+            return None, None, "快照时间无效"
+        return snapshot, hashlib.sha256(payload).hexdigest(), None
 
     def _catalog(self, command, params):
         root = self._require_case()
-        scope = self._scope(params)
-        scope_path = Path(scope["region"], str(scope["delay"]), scope["universe"])
-        if command in {"get_datasets", "get_datafields"}:
+        if command == "get_operators":
+            label = "算子目录"
+            endpoint, rows_key = "/operators", "operators"
+            relative = Path("catalogs", "operators.json")
+            expected = {"source": self.client.base_url + endpoint}
+        else:
+            scope = self._scope(params)
+            scope_path = Path(scope["region"], str(scope["delay"]), scope["universe"])
             dataset = (_component(params.get("dataset_id"), "Dataset ID")
                        if command == "get_datafields" else None)
+            scope_label = f"{scope['region']} / D{scope['delay']} / {scope['universe']}"
+            label = f"字段目录 {scope_label} / {dataset}" if dataset else f"数据集目录 {scope_label}"
             endpoint = "/data-fields" if dataset else "/data-sets"
             rows_key = "fields" if dataset else "rows"
             relative = (Path("fields") / scope_path / f"{dataset}.json" if dataset
                         else Path("catalogs") / scope_path / "datasets.json")
-            cache_path = self._catalog_snapshot_path(relative)
-            if cache_path is None:
-                raise PlatformError("BRAIN account identity is required for catalog snapshots")
             expected = {"region": scope["region"], "delay": scope["delay"],
                         "universe": scope["universe"], "instrument_type": scope["instrumentType"],
                         "source": self.client.base_url + endpoint}
             if dataset:
                 expected["dataset"] = dataset
-            snapshot = (None if params.get("refresh") is True
-                        else self._cached_catalog(cache_path, expected, rows_key))
-            if snapshot is None:
-                query = {**scope, "dataset.id": dataset} if dataset else scope
-                rows = self._paginate(endpoint, query)
-                metadata = {**expected, "complete": True, "count": len(rows),
-                            "fetched_at": datetime.now(timezone.utc).isoformat()}
-                snapshot = {"metadata": metadata, rows_key: rows}
-                if not dataset:
-                    snapshot["scope"] = scope
+        account = self._account_namespace(self._snapshot_root / ".catalog-snapshot-key")
+        if account is None:
+            raise PlatformError("BRAIN account identity is required for catalog snapshots")
+        cache_path = self._catalog_snapshot_path(relative)
+        snapshot, digest, reason = ((None, None, "请求强制刷新") if params.get("refresh") is True
+                            else self._cached_catalog(cache_path, expected, rows_key))
+        if snapshot is None:
+            write_progress(f"{label} · {reason}，正在向 BRAIN 拉取完整目录")
+            try:
+                if rows_key == "operators":
+                    rows = self._operator_rows(self._json(self._request("GET", endpoint)))
+                else:
+                    query = {**scope, "dataset.id": dataset} if dataset else scope
+                    rows = self._paginate(endpoint, query)
+            except PlatformError:
+                write_progress(f"{label} · BRAIN 拉取失败")
+                raise
+            metadata = {**expected, "account_namespace": account,
+                        "complete": True, "count": len(rows),
+                        "fetched_at": datetime.now(timezone.utc).isoformat()}
+            snapshot = {"metadata": metadata, rows_key: rows}
+            if rows_key == "rows":
+                snapshot["scope"] = scope
+            try:
                 atomic_write_json(cache_path, snapshot)
-            atomic_write_json(root / relative.with_suffix(".ref.json"), {
-                "snapshot_ref": str(cache_path), "sha256": file_sha256(cache_path),
-                "fetched_at": snapshot["metadata"]["fetched_at"]})
-            return snapshot[rows_key]
-        data = self._json(self._request("GET", "/operators"))
-        rows = data if isinstance(data, list) else data.get("results") if isinstance(data, dict) else None
-        if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) or not row.get("name") for row in rows):
+            except OSError:
+                write_progress(f"{label} · 快照写入失败 · {cache_path}")
+                raise
+            digest = file_sha256(cache_path)
+            event = "快照已写入"
+        else:
+            event = "命中缓存"
+        write_progress(f"{label} · {event} · {snapshot['metadata']['count']} 条 · "
+                       f"拉取时间 {snapshot['metadata']['fetched_at']} · {cache_path}")
+        atomic_write_json(root / relative.with_suffix(".ref.json"), {
+            "snapshot_ref": str(cache_path), "sha256": digest,
+            "fetched_at": snapshot["metadata"]["fetched_at"]})
+        return snapshot[rows_key]
+
+    @staticmethod
+    def _operator_rows(payload):
+        rows = payload
+        if isinstance(payload, dict):
+            rows = (None if payload.get("error") else next(
+                (payload[key] for key in ("operators", "results", "data", "items")
+                 if isinstance(payload.get(key), list)), None))
+        if (not isinstance(rows, list) or not rows
+                or any(not isinstance(row, dict) or not isinstance(row.get("name"), str)
+                       or not row["name"].strip() for row in rows)):
             raise PlatformError("platform operator catalog is unavailable")
-        atomic_write_json(root / "catalogs" / "operators.json", {"operators": rows})
-        return rows
+        return [{**row, "scope": [row["scope"]]} if isinstance(row.get("scope"), str)
+                else row for row in rows]
 
     @staticmethod
     def validate_simulation_settings(settings):
@@ -411,31 +487,35 @@ class PlatformRuntime:
         except (OSError, ValueError) as exc:
             raise PlatformError(f"local evidence is unavailable: {path.name}") from exc
 
+    def _admission_catalog(self, relative, expected, rows_key, label):
+        root = self._require_case()
+        ref_path = root / relative.with_suffix(".ref.json")
+        reference = self._load(ref_path)
+        path = self._catalog_snapshot_path(relative)
+        snapshot, digest, _ = self._cached_catalog(path, expected, rows_key)
+        if (not isinstance(reference, dict) or snapshot is None
+                or reference.get("snapshot_ref") != str(path)
+                or reference.get("sha256") != digest):
+            raise PlatformError(f"{label} snapshot changed or expired after research admission")
+        return snapshot
+
     def _admission(self, request):
         settings = request["settings"]
-        root = self._require_case()
         relative = (Path("fields") / settings["region"] / str(settings["delay"])
                     / settings["universe"] / f"{request['dataset_id']}.json")
         expected = {"region": settings["region"], "delay": settings["delay"],
                     "universe": settings["universe"], "instrument_type": settings["instrument_type"],
                     "dataset": request["dataset_id"], "complete": True}
-        ref_path = root / relative.with_suffix(".ref.json")
-        if ref_path.exists():
-            reference = self._load(ref_path)
-            path = self._catalog_snapshot_path(relative)
-            snapshot = self._cached_catalog(
-                path, {**expected, "source": self.client.base_url + "/data-fields"}, "fields")
-            if (not isinstance(reference, dict) or snapshot is None
-                    or reference.get("snapshot_ref") != str(path)
-                    or reference.get("sha256") != file_sha256(path)):
-                raise PlatformError("field snapshot changed or expired after research admission")
-        else:
-            snapshot = self._load(root / relative)
+        snapshot = self._admission_catalog(
+            relative, {**expected, "source": self.client.base_url + "/data-fields"},
+            "fields", "field")
         metadata, fields = snapshot.get("metadata"), snapshot.get("fields")
         if (not isinstance(metadata, dict) or any(metadata.get(k) != v for k, v in expected.items())
                 or not isinstance(fields, list) or metadata.get("count") != len(fields)):
             raise PlatformError("exact-scope field snapshot is unavailable")
-        operators = self._load(root / "catalogs" / "operators.json").get("operators")
+        operators = self._admission_catalog(
+            Path("catalogs", "operators.json"), {"source": self.client.base_url + "/operators"},
+            "operators", "operator").get("operators")
         if not isinstance(operators, list) or not operators:
             raise PlatformError("operator snapshot is unavailable")
         names = regular_operator_names(operators)
@@ -477,7 +557,7 @@ class PlatformRuntime:
     def _metadata(self, paths):
         progress = self._load(paths["progress"])
         return {"case_key": self.case_key, "run_id": self.run_id,
-                "field_cache_root": str((self._snapshot_root or self._require_case()) / "fields"),
+                "field_cache_root": str(self._snapshot_root / "data_fields"),
                 "output": str(paths["output"]), "progress": str(paths["progress"]),
                 "resume_url": progress.get("resume_url"), "status": progress.get("status")}
 
@@ -487,6 +567,8 @@ class PlatformRuntime:
                    "batch_id": params.get("batch_id"), "label": params.get("label"),
                    "dataset_id": _component(params.get("dataset_id"), "Dataset ID"),
                    "settings": params.get("settings"), "variants": params.get("variants")}
+        if params.get("origin_alpha_id") is not None:
+            request["origin_alpha_id"] = _component(params["origin_alpha_id"], "origin Alpha ID")
         self.validate_simulation_settings(request["settings"])
         variants = request["variants"]
         if not isinstance(variants, list) or not 1 <= len(variants) <= self.BATCH_LIMIT:
@@ -620,15 +702,9 @@ class PlatformRuntime:
             progress["unsubmitted_proof"] = "submission_gate_v1"
             atomic_write_json(paths["progress"], progress)
             raise PlatformError("stop flag is set; no new simulation posted")
-        settings = self._platform_settings(request["settings"])
-        if request.get("type") == "SUPER":
-            payloads = [{"type": "SUPER", "settings": settings,
-                         "selection": row["selection"], "combo": row["combo"]}
-                        for row in request["variants"]]
-        else:
-            payloads = [{"type": "REGULAR", "settings": settings,
-                         "regular": row["expression"]}
-                        for row in request["variants"]]
+        payloads = self._simulation_payloads(request)
+        if request.get("type") != "SUPER":
+            self._assert_platform_uncached(payloads)
         atomic_write_json(paths["post_started"], {"request_sha256": progress["request_sha256"],
                                                   "receipt_sha256": progress["receipt_sha256"]})
         progress.pop("unsubmitted_proof", None)
@@ -641,6 +717,135 @@ class PlatformRuntime:
         self._simulation_path(location)
         progress.update({"status": "SUBMITTED", "resume_url": location})
         atomic_write_json(paths["progress"], progress)
+
+    def _simulation_payloads(self, request):
+        settings = self._platform_settings(request["settings"])
+        if request.get("type") == "SUPER":
+            return [{"type": "SUPER", "settings": settings,
+                     "selection": row["selection"], "combo": row["combo"]}
+                    for row in request["variants"]]
+        return [{"type": "REGULAR", "settings": settings, "regular": row["expression"]}
+                for row in request["variants"]]
+
+    def _assert_platform_uncached(self, payloads):
+        try:
+            cache = self._platform_backtest_cache()
+            records = [cache_record(payload) for payload in payloads]
+            fingerprints = {cache.fingerprint(**record) for record in records}
+            if len(fingerprints) != len(records):
+                raise PlatformError("simulation request contains duplicate cache keys")
+            if any(cache.find(**record) for record in records):
+                raise PlatformError("platform backtest cache possible hit; no simulation posted")
+        except BacktestCacheError as exc:
+            raise PlatformError("platform backtest cache is unavailable") from exc
+
+    def _record_platform_backtest(self, request):
+        try:
+            with SubmissionGate(self.state_root):
+                cache = self._platform_backtest_cache()
+                cache.record_many([cache_record(payload)
+                                   for payload in self._simulation_payloads(request)])
+        except BacktestCacheError as exc:
+            raise PlatformError("completed platform backtest cache could not be updated") from exc
+
+    def check_simulation_cache(self, params):
+        settings = params.get("settings")
+        if not isinstance(settings, dict):
+            raise PlatformError("simulation cache check requires fixed settings")
+        expressions = params.get("expressions")
+        if (not isinstance(expressions, list) or not expressions
+                or any(not isinstance(expr, str) or not expr.strip() for expr in expressions)):
+            raise PlatformError("Regular cache check requires expressions")
+        request = {"settings": settings,
+                   "variants": [{"expression": expr} for expr in expressions]}
+        self._assert_platform_uncached(self._simulation_payloads(request))
+        return {"status": "clear"}
+
+    def _history_stage(self, stage, cutoff):
+        endpoint = "/users/self/alphas"
+
+        def query(upper, lower=None):
+            params = {"stage": stage, "order": "dateCreated",
+                      "dateCreated<": upper.isoformat().replace("+00:00", "Z")}
+            if lower is not None:
+                after = lower - timedelta(microseconds=1)
+                params["dateCreated>"] = after.isoformat().replace("+00:00", "Z")
+            return params
+
+        def head(params):
+            page = self._json(self._request("GET", endpoint, params={
+                **params, "limit": 1, "offset": 0}))
+            count = page.get("count") if isinstance(page, dict) else None
+            rows = page.get("results") if isinstance(page, dict) else None
+            if type(count) is not int or count < 0 or not isinstance(rows, list) or len(rows) != min(1, count):
+                raise PlatformError("platform Alpha history count is unreadable")
+            return count, rows
+
+        params = query(cutoff)
+        count, first = head(params)
+        if count < self.ALPHA_HISTORY_CAP:
+            rows = self._paginate(endpoint, params) if count else []
+            if len(rows) != count:
+                raise PlatformError("platform Alpha history count changed")
+            yield from rows
+            return
+        try:
+            oldest = datetime.fromisoformat(first[0]["dateCreated"].replace("Z", "+00:00"))
+            if oldest.utcoffset() is None or oldest >= cutoff:
+                raise ValueError("invalid history window")
+            oldest = oldest.astimezone(timezone.utc)
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise PlatformError("oldest Alpha timestamp is unavailable") from exc
+        windows = [(oldest, cutoff)]
+        while windows:
+            lower, upper = windows.pop()
+            params = query(upper, lower)
+            count, _ = head(params)
+            if count >= self.ALPHA_HISTORY_CAP:
+                middle = lower + (upper - lower) / 2
+                if not lower < middle < upper:
+                    raise PlatformError("platform Alpha history exceeds the cap at one timestamp")
+                windows.extend(((middle, upper), (lower, middle)))
+                continue
+            rows = self._paginate(endpoint, params) if count else []
+            if len(rows) != count:
+                raise PlatformError("platform Alpha history count changed")
+            yield from rows
+
+    def sync_backtest_cache(self):
+        cutoff = datetime.now(timezone.utc)
+        summary = {"cutoff": cutoff.isoformat(), "scanned": {}, "indexed": 0,
+                   "skipped": 0, "duplicate_across_stages": 0}
+        records, seen = [], set()
+        for stage in ("IS", "OS"):
+            stage_ids = set()
+            for alpha in self._history_stage(stage, cutoff):
+                alpha_id = _component(alpha.get("id"), "Alpha ID")
+                if alpha_id in stage_ids:
+                    raise PlatformError(f"duplicate Alpha in {stage} history")
+                stage_ids.add(alpha_id)
+                if alpha_id in seen:
+                    summary["duplicate_across_stages"] += 1
+                    continue
+                seen.add(alpha_id)
+                payload = history_payload(alpha)
+                if payload is None and alpha.get("type") in {None, "REGULAR"}:
+                    detail = self._json(self._request("GET", f"/alphas/{alpha_id}"))
+                    if not isinstance(detail, dict) or detail.get("id") != alpha_id:
+                        raise PlatformError("platform Alpha history readback mismatch")
+                    payload = history_payload(detail)
+                if payload is None:
+                    summary["skipped"] += 1
+                else:
+                    records.append(cache_record(payload))
+            summary["scanned"][stage] = len(stage_ids)
+        with SubmissionGate(self.state_root):
+            cache = self._platform_backtest_cache()
+            summary["indexed"] = sum(cache.record_many(records))
+            summary["eligible"] = len(records)
+            summary["status"] = "complete"
+            atomic_write_json(cache.path.with_name("last_sync.json"), summary)
+        return summary
 
     @staticmethod
     def _simulation_path(value):
@@ -728,11 +933,99 @@ class PlatformRuntime:
                 rows.append({"name": variant.get("name"), "expression": variant["expression"],
                              "alpha_id": alpha_id, "success": True, "is": details.get("is"),
                              "details": details})
+        regular = request.get("type") != "SUPER"
+        if regular and not request["label"].startswith("probe_"):
+            tags = research_tags(request)
+            for row in rows:
+                row["research_tags"] = {"status": "planned", "tags": tags}
+                atomic_write_json(self._tag_plan_path(row["alpha_id"]), {
+                    "alpha_id": row["alpha_id"], "tags": tags,
+                    "family": request.get("type", "REGULAR"),
+                    "request_ref": str(paths["request"]),
+                    "request_sha256": progress["request_sha256"],
+                })
         atomic_write_json(paths["output"], rows)
+        if regular:
+            self._record_platform_backtest(request)
         progress["output_sha256"] = hashlib.sha256(paths["output"].read_bytes()).hexdigest()
         progress["status"] = "COMPLETE"
         atomic_write_json(paths["progress"], progress)
         return {"results": rows, "runner": self._metadata(paths)}
+
+    def _tag_plan_path(self, alpha_id):
+        namespace = self._account_namespace()
+        if namespace is None:
+            raise PlatformError("BRAIN account identity is required for tag plans")
+        return self.root / "tag_plans" / namespace / f"{alpha_id}.json"
+
+    def tag_alpha(self, params):
+        alpha_id = _component(params.get("alpha_id"), "Alpha ID")
+        plan_path = self._tag_plan_path(alpha_id)
+        plan = self._load(plan_path)
+        if not isinstance(plan, dict) or plan.get("alpha_id") != alpha_id:
+            raise PlatformError("Alpha tag plan does not match the requested Alpha")
+        request_path = Path(plan.get("request_ref", "")).resolve()
+        if (not request_path.is_relative_to(self.root / "cases")
+                or not request_path.is_file() or file_sha256(request_path) != plan.get("request_sha256")):
+            raise PlatformError("Alpha tag plan research evidence is unavailable")
+        output = request_path.with_suffix("").with_suffix(".json")
+        progress = self._load(output.with_suffix(".progress.json"))
+        if (not isinstance(progress, dict) or progress.get("status") != "COMPLETE"
+                or progress.get("request_sha256") != plan["request_sha256"]
+                or not output.is_file() or progress.get("output_sha256") != file_sha256(output)):
+            raise PlatformError("Alpha tag plan has no completed simulation evidence")
+        rows = self._load(output)
+        if (not isinstance(rows, list)
+                or sum(isinstance(row, dict) and row.get("alpha_id") == alpha_id
+                       and row.get("success") is True for row in rows) != 1):
+            raise PlatformError("Alpha tag plan does not match the completed simulation")
+        endpoint = f"/alphas/{alpha_id}"
+        details = self._json(self._request("GET", endpoint))
+        if (not isinstance(details, dict) or details.get("id") != alpha_id
+                or details.get("type") != plan.get("family")):
+            raise PlatformError("Alpha tag plan readback does not match research evidence")
+        existing = details.get("tags", [])
+        if not isinstance(existing, list) or any(not isinstance(tag, str) for tag in existing):
+            raise PlatformError("existing Alpha tags are unreadable")
+        desired = research_tags(self._load(request_path))
+        if any(isinstance(row, dict) and row.get("name") == "Power Pool Alpha"
+               for row in (details.get("classifications") or [])):
+            desired.append("PowerPoolSelected")
+        changes = {}
+        merged = existing + [tag for tag in desired if tag not in existing]
+        if merged != existing:
+            changes["tags"] = merged
+        if params.get("diagnostic") is True:
+            if ra_correlation_check_state(details) != "pass":
+                raise PlatformError("diagnostic tag requires current terminal RA evidence")
+            records = [row for row in ResearchRecordStore(self.state_root.parent).list("candidate")
+                       if row.get("alpha_id") == alpha_id]
+            diagnostic = diagnostic_properties(max(records, key=lambda row: row["updated_at"])
+                                               if records else None)
+            if not diagnostic:
+                raise PlatformError("diagnostic tag requires settled local or production correlation evidence")
+            current_name = details.get("name") or ""
+            if current_name and not current_name.startswith(("pc_", "sc_")):
+                diagnostic.pop("name", None)
+            changes.update({key: value for key, value in diagnostic.items()
+                            if details.get(key) != value})
+        if params.get("apply") is not True:
+            return {"alpha_id": alpha_id, "status": "preview", "changes": changes}
+        if changes:
+            self._request("PATCH", endpoint, json=changes)
+            latest = self._json(self._request("GET", endpoint))
+            verified_tags = latest.get("tags") if isinstance(latest, dict) else None
+            if (not isinstance(latest, dict) or latest.get("id") != alpha_id
+                    or any(latest.get(key) != value for key, value in changes.items()
+                           if key != "tags")
+                    or not isinstance(verified_tags, list)
+                    or any(not isinstance(tag, str) for tag in verified_tags)
+                    or not set(merged).issubset(verified_tags)):
+                raise PlatformError("Alpha tag write could not be verified by readback")
+        result = {"alpha_id": alpha_id, "status": "applied" if changes else "already_applied",
+                  "changes": changes}
+        atomic_write_json(plan_path.with_suffix(".receipt.json"), result)
+        return result
 
     def resume_simulation_batch(self, params):
         paths = self._batch_paths(params.get("batch_id"), params.get("label"),
@@ -1090,12 +1383,19 @@ class PlatformRuntime:
         return {"results": results, "audit_path": str(audit_path)}
 
     def dispatch(self, command, params):
+        if command == "check_simulation_cache":
+            return self.check_simulation_cache(params)
+        if command == "sync_backtest_cache":
+            return self.sync_backtest_cache()
+        if command == "tag_alpha":
+            return self.tag_alpha(params)
         if command == "set_case":
             return self.set_case(params.get("case_key"), params.get("run_id"))
         if command == "validate_simulation_settings":
             return self.validate_simulation_settings(params.get("settings"))
         if command in {"get_datasets", "get_datafields", "get_operators"}:
-            return self._catalog(command, params)
+            with SingleWriterLock(self._snapshot_root / ".catalog.lock"):
+                return self._catalog(command, params)
         if command == "get_platform_setting_options":
             return self._setting_options()
         if command == "get_simulation_settings_schema":

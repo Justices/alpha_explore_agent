@@ -27,6 +27,20 @@ def read_json(path: Path, default=None):
         return default
 
 
+def is_pre_submission_draft(batch_dir: Path) -> bool:
+    """Only batches with no Regular or diagnostic submission evidence are drafts."""
+    try:
+        names = {path.name for path in batch_dir.iterdir()}
+    except OSError:
+        return False
+    return not (
+        names.intersection({"simulation_intent.json", "simulation_raw.json",
+                            "results.json", "gate.json"})
+        or any(name.startswith("probe_") and name.endswith(("_intent.json", "_raw.json"))
+               for name in names)
+    )
+
+
 # --- research state -------------------------------------------------------
 
 def research_state_path() -> Path:

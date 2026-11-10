@@ -167,6 +167,9 @@ class FakeClient:
 
 class TestIndependentRuntime(unittest.TestCase):
     def setUp(self):
+        self.snapshot_root = Path(self.enterContext(tempfile.TemporaryDirectory())) / "knowledge"
+        self.enterContext(patch("alpha_research.integrations.brain.runtime.CATALOG_SNAPSHOT_ROOT",
+                                self.snapshot_root))
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.client = FakeClient()
@@ -211,6 +214,8 @@ class TestIndependentRuntime(unittest.TestCase):
         self.assertEqual(self.client.calls[1][2]["dataset.id"], "analyst69")
         relative = Path("fields", "GLB", "1", "TOP3000", "analyst69.json")
         field_path = self.runtime._catalog_snapshot_path(relative)
+        self.assertEqual(field_path.relative_to(self.snapshot_root),
+                         Path("data_fields/GLB/1/TOP3000/analyst69.json"))
         snapshot = json.loads(field_path.read_text(encoding="utf-8"))
         self.assertTrue(snapshot["metadata"]["complete"])
         self.assertEqual(snapshot["metadata"]["count"], len(snapshot["fields"]))
@@ -223,6 +228,8 @@ class TestIndependentRuntime(unittest.TestCase):
         for universe in ("TOP3000", "TOP1000"):
             relative = Path("catalogs", "GLB", "1", universe, "datasets.json")
             path = self.runtime._catalog_snapshot_path(relative)
+            self.assertEqual(path.relative_to(self.snapshot_root),
+                             Path("datasets", "GLB", "1", universe, "datasets.json"))
             self.assertTrue(path.is_file())
             self.assertFalse((self.runtime.run_root / relative).exists())
             evidence = json.loads(path.read_text(encoding="utf-8"))
@@ -239,7 +246,7 @@ class TestIndependentRuntime(unittest.TestCase):
         relative = Path("fields", "GLB", "1", "TOP3000", "analyst69.json")
         first_path = self.runtime.run_root / relative.with_suffix(".ref.json")
         client = FakeClient()
-        restarted = PlatformRuntime(Path(self.tmp.name), client=client)
+        restarted = PlatformRuntime(Path(self.tmp.name) / "different-state-root", client=client)
         self.addCleanup(restarted.close)
         restarted.set_case("case_2", "run_1")
         self.assertEqual(restarted.dispatch("get_datafields", request), original)
@@ -262,6 +269,47 @@ class TestIndependentRuntime(unittest.TestCase):
         other_runtime.set_case("case_3", "run_1")
         other_runtime.dispatch("get_datafields", request)
         self.assertEqual([call[1] for call in other.calls], ["/data-fields"])
+        self.assertEqual(other_runtime._catalog_snapshot_path(relative),
+                         restarted._catalog_snapshot_path(relative))
+        restarted.dispatch("get_datafields", request)
+        self.assertEqual([call[1] for call in client.calls][-1], "/data-fields")
+
+    def test_operator_snapshot_is_reused_and_referenced_across_runs(self):
+        operators = self.runtime.dispatch("get_operators", self.scope)
+        relative = Path("catalogs", "operators.json")
+        self.assertEqual(self.runtime._catalog_snapshot_path(relative)
+                         .relative_to(self.snapshot_root), Path("operator/operators.json"))
+        first_ref = self.runtime.run_root / relative.with_suffix(".ref.json")
+        self.assertTrue(first_ref.is_file())
+        self.assertFalse((self.runtime.run_root / relative).exists())
+        client = FakeClient()
+        restarted = PlatformRuntime(Path(self.tmp.name), client=client)
+        self.addCleanup(restarted.close)
+        restarted.set_case("case_2", "run_1")
+        self.assertEqual(restarted.dispatch("get_operators", {}), operators)
+        second_ref = restarted.run_root / relative.with_suffix(".ref.json")
+        self.assertEqual(json.loads(first_ref.read_text(encoding="utf-8")),
+                         json.loads(second_ref.read_text(encoding="utf-8")))
+        self.assertEqual(client.calls, [])
+        restarted.dispatch("get_operators", {"refresh": True})
+        self.assertEqual([call[1] for call in client.calls], ["/operators"])
+
+    def test_catalog_progress_distinguishes_fetch_hit_and_expiration(self):
+        progress = Path(self.tmp.name) / "progress.jsonl"
+        request = {**self.scope, "dataset_id": "analyst69"}
+        with patch.dict(os.environ, {"ALPHA_RESEARCH_PROGRESS_FILE": str(progress)}):
+            self.runtime.dispatch("get_datafields", request)
+            self.runtime.dispatch("get_datafields", request)
+            with patch.object(self.runtime, "CATALOG_MAX_AGE", timedelta(0)):
+                self.runtime.dispatch("get_datafields", request)
+        messages = [json.loads(line)["message"]
+                    for line in progress.read_text(encoding="utf-8").splitlines()]
+        for expected in ("缓存不存在", "命中缓存", "缓存已过期", "快照已写入"):
+            self.assertTrue(any(expected in message for message in messages), messages)
+        path = self.runtime._catalog_snapshot_path(
+            Path("fields", "GLB", "1", "TOP3000", "analyst69.json"))
+        self.assertTrue(any(str(path) in message and "analyst69" in message for message in messages))
+        self.assertEqual([call[1] for call in self.client.calls], ["/data-fields"] * 2)
 
     def test_duplicate_catalog_rows_are_not_treated_as_complete(self):
         original = self.client.request
@@ -283,6 +331,130 @@ class TestIndependentRuntime(unittest.TestCase):
         with self.assertRaisesRegex(PlatformError, "field snapshot changed"):
             self.runtime.run_simulation_batch(self._request())
         self.assertFalse(any(call[:2] == ("POST", "/simulations") for call in self.client.calls))
+
+    def test_changed_canonical_operator_snapshot_blocks_old_admission(self):
+        self._admit()
+        path = self.runtime._catalog_snapshot_path(Path("catalogs", "operators.json"))
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["operators"][0]["description"] = "changed operator definition"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(PlatformError, "operator snapshot changed"):
+            self.runtime.run_simulation_batch(self._request())
+        self.assertFalse(any(call[:2] == ("POST", "/simulations") for call in self.client.calls))
+
+    def test_completed_platform_request_blocks_a_second_batch_before_post(self):
+        self._admit()
+        self.runtime.run_simulation_batch(self._request())
+        request = {**self._request(), "batch_id": "20261028_120001_abcdef12"}
+        with self.assertRaisesRegex(PlatformError, "backtest cache"):
+            self.runtime.run_simulation_batch(request)
+        self.assertEqual(sum(call[:2] == ("POST", "/simulations") for call in self.client.calls), 1)
+
+    def test_history_sync_indexes_regular_and_skips_super(self):
+        regular = {"id": "HIST1", "type": "REGULAR", "regular": {"code": "rank(field_a)"},
+                   "settings": self.runtime._platform_settings(SETTINGS)}
+        super_settings = {**SETTINGS, "selectionHandling": "POSITIVE",
+                          "selectionLimit": 20, "componentActivation": "IS"}
+        super_alpha = {"id": "HIST2", "type": "SUPER", "selection": {"code": "1"},
+                       "combo": {"code": "rank(x)"},
+                       "settings": self.runtime._platform_settings(super_settings)}
+        original = self.client.request
+
+        def request(method, path, *, params=None, json=None):
+            if path == "/users/self/alphas":
+                rows = [regular, super_alpha] if params["stage"] == "IS" else [regular]
+                start = params["offset"]
+                return Response({"count": len(rows),
+                                 "results": rows[start:start + params["limit"]]})
+            return original(method, path, params=params, json=json)
+
+        self.client.request = request
+        summary = self.runtime.dispatch("sync_backtest_cache", {})
+        self.assertEqual(summary["scanned"], {"IS": 2, "OS": 1})
+        self.assertEqual(summary["indexed"], 1)
+        self.assertEqual(summary["skipped"], 1)
+        self.assertEqual(summary["duplicate_across_stages"], 1)
+        with self.assertRaisesRegex(PlatformError, "backtest cache"):
+            self.runtime.check_simulation_cache({
+                "settings": SETTINGS, "expressions": ["rank(field_a)"]})
+
+    def test_account_cache_can_be_created_before_any_research_case(self):
+        runtime = PlatformRuntime(Path(self.tmp.name) / "fresh", client=FakeClient())
+        self.addCleanup(runtime.close)
+        self.assertEqual(runtime.check_simulation_cache({
+            "settings": SETTINGS, "expressions": ["rank(field_a)"]}), {"status": "clear"})
+        self.assertTrue((runtime.root / ".catalog-snapshot-key").is_file())
+
+    def test_capped_history_is_partitioned_without_losing_rows(self):
+        cutoff = datetime(2026, 11, 10, tzinfo=timezone.utc)
+        rows = [{"id": f"A{index}", "dateCreated": (cutoff - timedelta(days=5-index)).isoformat()}
+                for index in range(5)]
+
+        def request(method, path, *, params):
+            upper = datetime.fromisoformat(params["dateCreated<"])
+            lower = datetime.fromisoformat(params["dateCreated>"]) if "dateCreated>" in params else None
+            matching = [row for row in rows if datetime.fromisoformat(row["dateCreated"]) < upper
+                        and (lower is None or datetime.fromisoformat(row["dateCreated"]) > lower)]
+            start = params["offset"]
+            return Response({"count": min(len(matching), 2),
+                             "results": matching[start:start + params["limit"]]})
+
+        with patch.object(self.runtime, "ALPHA_HISTORY_CAP", 2), \
+                patch.object(self.runtime, "_request", side_effect=request):
+            observed = list(self.runtime._history_stage("IS", cutoff))
+        self.assertEqual([row["id"] for row in observed], [row["id"] for row in rows])
+
+    def test_super_simulation_bypasses_bloom_and_tag_plan(self):
+        settings = {**SETTINGS, "selectionHandling": "POSITIVE",
+                    "selectionLimit": 20, "componentActivation": "IS"}
+        alpha = {"id": "A_SUPER", "type": "SUPER", "selection": {"code": "1"},
+                 "combo": {"code": "rank(x)"},
+                 "settings": self.runtime._platform_settings(settings)}
+        responses = {
+            ("POST", "/simulations"): Response({}, status=201, headers={"Location": "/simulations/S1"}),
+            ("GET", "/simulations/S1"): Response({"alpha": "A_SUPER"}),
+            ("GET", "/alphas/A_SUPER"): Response(alpha),
+        }
+        with patch.object(self.runtime, "validate_super_settings"), \
+                patch.object(self.runtime, "_platform_backtest_cache") as cache, \
+                patch.object(self.runtime, "_request",
+                             side_effect=lambda method, path, **kwargs: responses[method, path]):
+            result = self.runtime.run_super_simulation({
+                "batch_id": "20261028_120000_abcdef12", "selection": "1", "combo": "rank(x)",
+                "settings": settings, "research": {key: "test" for key in
+                    ("hypothesis", "rationale", "failure_criterion")}})
+        cache.assert_not_called()
+        self.assertNotIn("research_tags", result["results"][0])
+        self.assertFalse((self.runtime.root / "tag_plans").exists())
+
+    def test_completed_alpha_tag_preview_is_read_only_and_apply_is_verified(self):
+        self._admit()
+        result = self.runtime.run_simulation_batch(self._request())
+        self.assertEqual(result["results"][0]["research_tags"]["tags"],
+                         ["DS:analyst69", "ORG_ALPHA"])
+        platform_tags = ["existing"]
+        writes = []
+        original = self.client.request
+
+        def request(method, path, *, params=None, json=None):
+            if path == "/alphas/A1":
+                if method == "PATCH":
+                    writes.append(json)
+                    platform_tags[:] = json["tags"]
+                    return Response({})
+                return Response({"id": "A1", "type": "REGULAR", "tags": platform_tags.copy()})
+            return original(method, path, params=params, json=json)
+
+        self.client.request = request
+        preview = self.runtime.dispatch("tag_alpha", {"alpha_id": "A1"})
+        self.assertEqual(preview["status"], "preview")
+        self.assertEqual(writes, [])
+        applied = self.runtime.dispatch("tag_alpha", {"alpha_id": "A1", "apply": True})
+        self.assertEqual(applied["status"], "applied")
+        self.assertEqual(platform_tags, ["existing", "DS:analyst69", "ORG_ALPHA"])
+        self.assertEqual(self.runtime.dispatch("tag_alpha", {
+            "alpha_id": "A1", "apply": True})["status"], "already_applied")
+        self.assertEqual(len(writes), 1)
 
     def test_live_schema_is_translated_to_exact_scope_choices(self):
         def by_region(values):

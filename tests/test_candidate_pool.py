@@ -13,6 +13,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.qualification.gates import correlation_verdict
 from alpha_research.qualification.pool import CandidatePool
 from alpha_research.qualification.service import (
@@ -240,6 +241,28 @@ class TestGlobalCandidatePool(unittest.TestCase):
                     candidate_ref=("a" if workflow == "super" else "b") * 32,
                     source_ref="readback.json")
                 self.assertEqual(gateway.contenders, ["A_OTHER"])
+
+    def test_shared_audit_passes_real_gateway_order_checks(self):
+        details = {"id": "A_SAME", "type": "SUPER",
+                   "settings": {"region": "GLB", "delay": 1},
+                   "is": {"checks": [{"name": "LOW_SHARPE", "result": "PASS"}]}}
+        scripted = PairwiseGateway(details)
+        gateway = Gateway()
+        gateway.proc = type("Process", (), {"poll": lambda self: None})()
+
+        def send(payload):
+            args = dict(payload)
+            command = args.pop("cmd")
+            return {"ok": True, "result": scripted.call(command, **args)}
+
+        gateway._send = send
+        CandidateQualificationService(gateway, self.root, copy.deepcopy(DEFAULT_CONFIG)).qualify_live(
+            workflow="super", alpha_id="A_SAME", candidate_ref="a" * 32,
+            source_ref="readback.json")
+        commands = [name for name, _ in scripted.commands]
+        self.assertLess(commands.index("check_local_self_correlation"),
+                        commands.index("check_correlation"))
+        self.assertEqual(gateway._audit_evidence, {})
 
     def test_pairwise_and_platform_check_keep_distinct_statuses(self):
         service = CandidateQualificationService(

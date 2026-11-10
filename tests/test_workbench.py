@@ -2,6 +2,8 @@ import http.client
 from contextlib import closing
 from http.server import ThreadingHTTPServer
 import json
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import threading
 import time
 import unittest
@@ -21,15 +23,20 @@ class WorkbenchLaunchTests(unittest.TestCase):
         def run(command, **kwargs):
             commands.append(command)
             child_credentials.append(json.loads(kwargs["input"]))
+            log_path = kwargs["env"].get("ALPHA_RESEARCH_PROGRESS_FILE")
+            if log_path:
+                with Path(log_path).open("a", encoding="utf-8") as stream:
+                    stream.write('{"time":"2026-11-10T07:32:00Z","message":"正在规划字段诊断"}\n')
             entered.set()
             release.wait(5)
             return CompletedProcess(command, 0, '{"campaign_id":"case","status":"budget_complete"}')
 
-        with patch.object(serve.subprocess, "run", side_effect=run), \
+        with TemporaryDirectory() as root, \
+                patch.object(serve.subprocess, "run", side_effect=run), \
                 patch.object(serve, "monotonic", create=True, return_value=100) as clock:
             server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
             port = server.server_address[1]
-            server.RequestHandlerClass = serve.handler_for(["--state-root", "example"], port)
+            server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
             thread = threading.Thread(target=server.serve_forever, daemon=True)
             thread.start()
             self.addCleanup(server.server_close)
@@ -68,12 +75,14 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertEqual(post(origin, '{"region":"EUR"}', cookie=cookie)[0], 400)
                 self.assertEqual(post(origin, cookie=cookie)[0], 202)
                 self.assertTrue(entered.wait(3))
-                self.assertEqual(status()["status"], "running")
+                running = status()
+                self.assertEqual(running["status"], "running")
+                self.assertIn("正在规划字段诊断", [event["message"] for event in running["events"]])
                 self.assertEqual(post(origin, cookie=cookie)[0], 409)
                 self.assertEqual(len(commands), 1)
                 self.assertEqual(child_credentials, [credentials])
                 self.assertEqual(commands[0][4:], [
-                    "--state-root", "example", "run-campaign", "--region=EUR",
+                    "--state-root", root, "run-campaign", "--region=EUR",
                     "--objective=--example", "--max-batches=2",
                     "--delay=1", "--universe=TOPCS1600",
                     "--dataset=risk60", "--dataset=model110", "--ppa",
@@ -87,6 +96,8 @@ class WorkbenchLaunchTests(unittest.TestCase):
             self.assertEqual(report["status"], "exited")
             self.assertEqual(report["campaign_status"], "budget_complete")
             self.assertEqual(report["campaign_id"], "case")
+            self.assertIn("正在规划字段诊断", [event["message"] for event in report["events"]])
+            self.assertNotIn(credentials["password"], json.dumps(report))
             self.assertNotIn("password", report)
             clock.return_value = 86500
             self.assertEqual(post(origin, cookie=cookie)[0], 401)

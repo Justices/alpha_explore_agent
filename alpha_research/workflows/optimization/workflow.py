@@ -287,10 +287,14 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     batch_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
     if family == "regular":
         request = {"dataset_id": dataset_id, "label": "production",
+                   "origin_alpha_id": alpha_id,
                    "variants": [{"name": "optimization_candidate",
                                  "expression": expression, "research": research}]}
     else:
         request = {"selection": selection, "combo": combo, "research": research}
+    check_cache = getattr(gateway, "check_simulation_cache", None)
+    if family == "regular" and callable(check_cache):
+        check_cache(settings=settings, expressions=[expression])
     intent_path = prereg_path.with_name(f"{run_id}_simulation_intent.json")
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
@@ -310,6 +314,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         if family == "regular":
             result = gateway.call("simulate_batch", batch_id=batch_id,
                                   label="production", dataset_id=dataset_id,
+                                  origin_alpha_id=alpha_id,
                                   settings=settings, variants=request["variants"])
         else:
             result = gateway.call("simulate_super", batch_id=batch_id,

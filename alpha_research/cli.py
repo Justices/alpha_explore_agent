@@ -4,12 +4,13 @@ import json
 import os
 import re
 import sys
+from types import SimpleNamespace
 from alpha_research.workflows.regular.agent import ResearchAgent
 from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
-from alpha_research.state.paths import default_state_root, expand_path
+from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
 from alpha_research.state.store import update_stop_flag
 from alpha_research.state.operation_lock import SubmissionGateError
 from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
@@ -18,6 +19,7 @@ from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter, OrchestrationError
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.progress import write_progress
 
 
 def _path_argument(value):
@@ -161,6 +163,13 @@ def main(argv=None):
     search.add_argument("--include-history", action="store_true",
                          help="return historical-only evidence; never mixed with valid results")
     sub.add_parser("status", help="inspect local state without platform access")
+    sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
+    sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
+    tags = sub.add_parser("tag-alpha", help="preview or explicitly apply a verified local tag plan")
+    tags.add_argument("alpha_id")
+    tags.add_argument("--apply", action="store_true", help="apply the reviewed changes to BRAIN")
+    tags.add_argument("--diagnostic", action="store_true", help="include audit diagnostic name and color")
+    tags.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
     sub.add_parser("rebuild-pools", help="rebuild global Candidate/Preferred index without BRAIN requests")
     sub.add_parser("stop", help="block new simulations")
     sub.add_parser("resume", help="clear the stop flag by explicit command")
@@ -340,6 +349,7 @@ def main(argv=None):
             global_pool = {"status": "unavailable", "reason": type(exc).__name__}
         print(json.dumps({"global_alpha_pool": global_pool,
                           "research_config": {"status": config_status, "path": str(config_path)},
+                          "catalog_snapshot_root": str(CATALOG_SNAPSHOT_ROOT),
                           "stopped": stop_flag.exists(),
                           "unfinished_batches": unfinished,
                           "campaigns": campaigns,
@@ -420,16 +430,21 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists() and args.command not in {"recover", "recover-research", "recover-workflow", "recover-task"}:
+    if stop_flag.exists() and args.command not in {
+            "recover", "recover-research", "recover-workflow", "recover-task",
+            "sync-backtest-cache", "tag-alpha"}:
+        write_progress("研究已暂停，请先解除停止标记")
         print("research is stopped; no new platform work will start", file=sys.stderr)
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
+        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
+                                          "sync-backtest-cache", "tag-alpha"}
                  or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")
                  else build_model_client(cfg["model"]))
     except (OSError, ValueError, KeyError, ModelError) as exc:
+        write_progress("无法加载研究配置或模型配置")
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
     os.environ["NASTU_QUANT_STATE_DIR"] = str(root / "state")
@@ -445,23 +460,37 @@ def main(argv=None):
             if not isinstance(credentials, dict):
                 raise ValueError("BRAIN credentials input is invalid")
         except (OSError, ValueError):
+            write_progress("无法读取工作台提供的 BRAIN 凭证")
             print("BRAIN credentials input is unavailable or invalid", file=sys.stderr)
             return 2
         gateway = Gateway(credentials=credentials)
     else:
         gateway = Gateway()
-    agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
-             or (args.command == "recover-workflow" and args.workflow != "regular") else
-             ResearchAgent(gateway, model, cfg, root / "runs",
-                           stop_flag=stop_flag))
+    agent = None
+    if args.command in {"run-super", "run-optimization"}:
+        agent = SimpleNamespace(model=model)
+    elif args.command not in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
+                              "sync-backtest-cache", "tag-alpha"} and not (
+            args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular"):
+        agent = ResearchAgent(gateway, model, cfg, root / "runs", stop_flag=stop_flag)
     lock = SingleWriterLock(root / "state" / "agent.lock")
     try:
         lock.__enter__()
     except WriterLockError as exc:
+        write_progress("无法获取执行锁，请检查是否已有研究进程")
         print(f"research paused: {exc}", file=sys.stderr)
         return 2
     try:
+        write_progress("正在启动 BRAIN 连接")
         gateway.start()
+        if args.command == "sync-backtest-cache":
+            print(json.dumps(gateway.call("sync_backtest_cache"), ensure_ascii=False))
+            return 0
+        if args.command == "tag-alpha":
+            result = gateway.call("tag_alpha", alpha_id=args.alpha_id,
+                                  apply=args.apply, diagnostic=args.diagnostic)
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
         if args.command == "recover-workflow":
             result = RecoveryCoordinator(root).recover(
                 args.target, gateway=gateway, agent=agent, config=cfg,
@@ -505,6 +534,7 @@ def main(argv=None):
             print(json.dumps(summary, ensure_ascii=False))
         return 0
     except Exception as exc:
+        write_progress(f"研究已暂停，异常类型：{type(exc).__name__}")
         print(f"research paused: {exc}", file=sys.stderr)
         return 1
     finally:

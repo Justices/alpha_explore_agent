@@ -62,6 +62,15 @@ function showLaunchState(state){
  $("#launch-campaign").disabled=launchSubmitting||state.status==="running";
  if(previous==="running"&&state.status!=="running")refreshAgent();
  if(view==="cases"&&previous!==state.status)render();
+ const log=$("#launch-events");
+ if(log)log.textContent=launchEvents();
+}
+
+function launchEvents(){
+ const events=launchState?.events||[];
+ return events.length?events.map(event=>
+   new Date(event.time).toLocaleTimeString("zh-CN")+"  "+event.message).join("\n"):
+   "等待执行日志。";
 }
 
 async function refreshLaunch(){
@@ -181,8 +190,14 @@ function runtimeTasks(){
  ]);
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
-   (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+'</p>':"";
+   (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+'</p>'+
+   '<div class="details"><div><h3>执行日志</h3><pre class="detail" id="launch-events" aria-label="执行日志" '+
+   'style="max-height:22rem;overflow:auto;margin:0">'+esc(launchEvents())+'</pre></div></div>':"";
  const config=agentStatus?.research_config;
+ const snapshotRoot=agentStatus?.catalog_snapshot_root;
+ const snapshots=snapshotRoot?
+   '<div class="details"><div><h3>数据快照目录</h3><div class="detail"><code>'+
+   esc(snapshotRoot)+'</code></div></div></div>':"";
  const warning=config&&config.status!=="loaded"?
    '<p class="toolbar">'+(config.status==="missing"?"缺少研究配置文件。":"研究配置文件无法读取。")+
    ' <code>'+esc(config.path)+'</code></p>':"";
@@ -190,7 +205,7 @@ function runtimeTasks(){
    launchState?.status==="running"
      ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。Campaign 记录写入后会自动显示。")
      : blank("暂无 CLI Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
- return panel("Agent 执行任务",latest+warning+records,
+ return panel("Agent 执行任务",latest+snapshots+warning+records,
               button("刷新 Agent 状态","agent-refresh"));
 }
 function cases(){

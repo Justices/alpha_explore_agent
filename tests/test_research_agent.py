@@ -3,6 +3,7 @@ from copy import deepcopy
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from types import SimpleNamespace
 from pathlib import Path
 
@@ -289,6 +290,16 @@ class TestResearchAgent(unittest.TestCase):
     def test_real_regular_campaign_through_main_orchestrator_mock_gateway(self):
         self.gateway.is_offline_mock = True
         self.model.is_offline_mock = True
+        original_call = self.gateway.call
+
+        def call_with_category(command, **params):
+            result = original_call(command, **params)
+            if command == "get_datasets":
+                return [{**row, "category": {"id": "analyst", "name": "Analyst Estimates"}}
+                        for row in result]
+            return result
+
+        self.gateway.call = call_with_category
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
         adapter = MockWorkflowAdapter(Path(self.tmp.name).parent, self.config,
@@ -297,7 +308,7 @@ class TestResearchAgent(unittest.TestCase):
         task = runner.create("regular", {
             "objective": "offline campaign integration",
             "region": "GLB", "delay": 1, "universe": "TOP3000",
-            "dataset_ids": ["risk60"]})
+            "dataset_ids": ["risk60"], "category": "Analyst Estimates"})
         done = runner.execute(task["task_id"])
         self.assertEqual(done["status"], "COMPLETED", (done.get("failure"), done.get("checkpoints", {}).get("execute")))
         self.assertEqual(done["budget"]["used"], 1)
@@ -962,6 +973,18 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(sum(name == "simulate_batch"
                              for name, _ in self.gateway.calls), 1)
 
+    def test_model_failure_keeps_draft_recoverable_and_allows_unrelated_research(self):
+        self.model.fail_task_once = "plan_probes"
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with self.assertRaises(RuntimeError):
+            agent.run_once("first research", dataset_id="risk60")
+        draft = agent._unfinished_batch()
+        self.assertIsNotNone(draft)
+        result = agent.run_once("second research", dataset_id="risk60")
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(agent._unfinished_batch(), draft)
+        self.assertFalse((draft / "void.json").exists())
+
     def test_recover_after_simulation_response_uses_saved_children(self):
         self.model.fail_task_once = "attribute_results"
         agent = ResearchAgent(self.gateway, self.model, self.config,
@@ -974,6 +997,54 @@ class TestResearchAgent(unittest.TestCase):
         self.assertNotIn("get_user_alphas", [name for name, _ in self.gateway.calls])
         self.assertEqual(sum(name == "simulate_batch"
                              for name, _ in self.gateway.calls), 1)
+
+    def test_invalid_core_field_plan_does_not_block_the_next_research(self):
+        valid_plan = self.model.decisions["plan_probes"]
+        self.model.decisions["plan_probes"] = {"probes": []}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with self.assertRaisesRegex(ResearchError, "probe plan must choose live core fields"):
+            agent.run_once("first research", dataset_id="risk60")
+        batch = next(Path(self.tmp.name).rglob("batch_context.json")).parent
+        self.assertTrue((batch / "void.json").is_file())
+        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+        self.model.decisions["plan_probes"] = valid_plan
+        result = agent.run_once("second research", dataset_id="risk60")
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+
+    def test_unknown_probe_dimensions_are_logged_and_block_backtest(self):
+        self.model.decisions["plan_probes"] = {
+            "core_fields": ["signal_a"], "probes": [],
+            "required_dimensions": {"signal_a": [
+                "nominal_coverage", "usable_observations", "units",
+                "publication_timing", "tradeability"]},
+            "requirement_reason": "check data quality"}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with patch("alpha_research.workflows.regular.agent.write_progress") as progress:
+            with self.assertRaisesRegex(ResearchError, "required field diagnostics"):
+                agent.run_once("diagnostic contract", dataset_id="risk60")
+        self.assertTrue(any("不支持的诊断维度" in call.args[0]
+                            and "scale_units" in call.args[0] for call in progress.call_args_list))
+        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+
+    def test_rejected_probe_expression_is_replanned_before_any_submission(self):
+        self.gateway.single_ids = ["P1"]
+        probe = {"field_id": "signal_a", "expression": "signal_a / signal_a",
+                 "question": "usable observations", "measures": ["usable_observations"],
+                 "economic_relevance": "avoid zero-filled rank", "expected": "broad",
+                 "failure_criterion": "few stocks"}
+        plan = {"core_fields": ["signal_a", "signal_b"], "probes": [probe]}
+        corrected = {**plan, "probes": [{**probe, "expression": "signal_a != 0 ? 1 : 0"}]}
+        self.model.decisions["plan_probes"] = [plan, corrected]
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        with patch("alpha_research.workflows.regular.agent.write_progress") as progress:
+            result = agent.run_once("diagnostic expression correction", dataset_id="risk60")
+        feedback = self.model.contexts["plan_probes"]["validation_feedback"]
+        self.assertEqual(feedback, {"probe_number": 1, "error_codes": ["E_FIELD_DIFF_RATIO"]})
+        self.assertEqual(self.model.tasks.count("plan_probes"), 2)
+        calls = [params for command, params in self.gateway.calls if command == "simulate_batch"]
+        self.assertEqual(calls[0]["variants"][0]["expression"], "signal_a != 0 ? 1 : 0")
+        self.assertTrue(any("E_FIELD_DIFF_RATIO" in call.args[0] for call in progress.call_args_list))
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
 
     def test_invalid_draft_can_be_voided_without_erasing_evidence(self):
         self.model.decisions["construct_batch"]["variants"][0]["expression"] = "bad_field"
@@ -1000,6 +1071,9 @@ class TestResearchAgent(unittest.TestCase):
         batch = next(Path(self.tmp.name).rglob("simulation_intent.json")).parent
         with self.assertRaises(ResearchError):
             agent.void_batch(batch, "try to skip")
+        with self.assertRaisesRegex(ResearchError, "unfinished batch requires recovery"):
+            agent.run_once("unrelated research", dataset_id="risk60")
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
 
     def test_completed_diagnostics_can_be_archived_if_alpha_draft_is_invalid(self):
         self.gateway.single_ids = ["P1"]

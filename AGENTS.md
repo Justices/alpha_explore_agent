@@ -70,9 +70,10 @@ superseded constraints from them. The user's current request takes precedence.
 
 ## State, credentials, and portability
 
-- Store runtime state outside the source tree under `ALPHA_RESEARCH_HOME`, the legacy `NASTU_QUANT_HOME`, or the
-  platform-specific per-user default. Keep research evidence in a case-scoped
-  directory and retain enough inputs and receipts for recovery.
+- Store BRAIN Dataset, field, and operator snapshots in the checkout's shared
+  `knowledge` directory. Store other runtime state outside the source tree
+  under `ALPHA_RESEARCH_HOME`, the legacy `NASTU_QUANT_HOME`, or the platform-specific
+  per-user default. Keep case-scoped evidence and receipts for recovery.
 - Read platform credentials through `BRAIN_CREDENTIALS_FILE` using this
   project's own session. Read model credentials through their configured
   environment variable. Never print or persist credential values.

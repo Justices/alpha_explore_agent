@@ -11,7 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
 from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter
-from alpha_research.workflows.regular.campaign import _key, run_regular_campaign
+from alpha_research.workflows.regular.campaign import _key, _reconcile_active, run_regular_campaign
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.store import atomic_write_json
 from alpha_research.simulation.intent import (
@@ -48,12 +48,37 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.gateway = FakeGateway()
 
+    def test_retry_retires_only_a_provably_unsubmitted_draft(self):
+        agent = Mock(runs_root=self.root / "runs")
+        batch = agent.runs_root / "HKG" / "D1" / "TOP500" / "analyst4" / "batch"
+        batch.mkdir(parents=True)
+        atomic_write_json(batch / "batch_context.json", {
+            "objective": "test", "started_at": "2026-11-10T01:00:01+00:00",
+            "research_id": "regular:campaign:case"})
+        state = {
+            "campaign_id": "case", "request": {"objective": "test"},
+            "active_item": 0, "active_started_at": "2026-11-10T01:00:00+00:00",
+            "items": [{"region": "HKG", "delay": 1, "universe": "TOP500", "dataset_id": "analyst4"}],
+            "status": "unresolved", "error": "model service timed out during expression planning",
+            "budget": {"reserved": {"batches": 1}}}
+        intent = batch / "probe_1_intent.json"
+        atomic_write_json(batch / "probe_plan.json", {"core_fields": ["field_a"], "probes": []})
+        atomic_write_json(intent, {"status": "SUBMITTING"})
+        with self.assertRaisesRegex(ValueError, "requires recovery"):
+            _reconcile_active(agent, state)
+        agent.void_batch.assert_not_called()
+        intent.unlink()
+        _reconcile_active(agent, state)
+        self.assertEqual(agent.void_batch.call_args.args[0], batch)
+        self.assertEqual(state["status"], "planned")
+        self.assertEqual(state["budget"]["reserved"]["batches"], 0)
+
     def test_unspecified_campaign_dataset_is_chosen_randomly_from_exact_catalog(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)
         agent.run_once.return_value = {"batch_dir": "batch", "alpha_ids": ["A1"],
                                        "candidate_status": {"A1": "EVIDENCE_PENDING"}}
         scope = {"region": "HKG", "delay": 1, "universe": "TOP800"}
-        rows = [{"id": name, "category": {"id": "model"}, **scope}
+        rows = [{"id": name, "category": {"id": "analyst", "name": "Analyst Estimates"}, **scope}
                 for name in ("model101", "model102")]
         gateway = Mock()
         gateway.call.side_effect = lambda command, **kwargs: {
@@ -66,7 +91,7 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         with patch("alpha_research.workflows.regular.campaign.choice", create=True,
                    side_effect=lambda eligible: eligible[-1]):
             result = run_regular_campaign(
-                agent, gateway, **scope, objective="random dataset", max_batches=2)
+                agent, gateway, **scope, category="Analyst", objective="random dataset", max_batches=2)
         self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list],
                          ["model102", "model102"])
         agent._decide.assert_not_called()

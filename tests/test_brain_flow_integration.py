@@ -62,6 +62,8 @@ class TestIndependentSettings(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         class Client:
+            catalog_account = "settings-fixture"
+
             def request(self, method, path, *, params=None, json=None):
                 self.payload = json
                 return type("Response", (), {"status_code": 201,
