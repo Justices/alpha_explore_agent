@@ -4,9 +4,9 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.validator import load_catalog, load_operators, regular_operator_names, validate
+from alpha_research.expressions.validator import load_catalog, load_operators, regular_operator_names, validate
 
 FIX = Path(__file__).parent / "fixtures"
 CATALOG = load_catalog(str(FIX / "catalog_risk60.json"))

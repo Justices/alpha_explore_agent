@@ -2,9 +2,9 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.pagination import PaginationError, collect_pages
+from alpha_research.integrations.brain.pagination import PaginationError, collect_pages
 
 
 class TestPagination(unittest.TestCase):

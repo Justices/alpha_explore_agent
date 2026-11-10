@@ -3,11 +3,11 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant import gatekeeper
-from nastu_quant import agent as agent_module
-from nastu_quant.validator import validate
+from alpha_research.qualification import gates as gatekeeper
+from alpha_research.workflows.regular import agent as agent_module
+from alpha_research.expressions.validator import validate
 
 
 class TestPpaRules(unittest.TestCase):

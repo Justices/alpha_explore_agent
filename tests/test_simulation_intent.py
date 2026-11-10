@@ -6,12 +6,12 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.research.records import ResearchRecordStore
-from nastu_quant.state_store import atomic_write_json
-from nastu_quant.research.simulation_intent import (
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.state.records import ResearchRecordStore
+from alpha_research.state.store import atomic_write_json
+from alpha_research.simulation.intent import (
     create_simulation_intent, recover_simulation_intent, transition_simulation_intent,
 )
 

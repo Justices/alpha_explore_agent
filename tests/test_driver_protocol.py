@@ -8,7 +8,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).parent.parent
-DRIVER = ROOT / "src" / "nastu_quant" / "driver.py"
+DRIVER = ROOT / "alpha_research" / "integrations" / "brain" / "driver.py"
 
 
 class TestDriver(unittest.TestCase):

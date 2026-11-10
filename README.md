@@ -1,4 +1,4 @@
-# nastu_quant: independent BRAIN research agent
+# Alpha Research
 
 This repository runs bounded, model driven BRAIN research workflows for
 Regular Alpha Campaigns, native Super Alpha construction, and optimization of
@@ -35,13 +35,12 @@ case-local catalog snapshots, the complete effective settings and pre-backtest
 receipt under the state root. A possibly submitted simulation is never reposted
 automatically. Alpha submission and property mutation are not supported.
 
-V1.1 research code is grouped under `src/nastu_quant/research/`: `regular/`
-owns Campaign scope and scheduling, `super/` owns the BRAIN-native Alpha
-pool, and `optimization/` owns source snapshots and candidate branches.
-`entrypoints.py` routes research commands, while `records.py` validates
-versioned shared state. The existing `agent.py` runs Regular batches. Native
-Super and Alpha-ID optimization create one preregistered simulation candidate
-per invocation and retain a pending audit status after read-back.
+The Python package is `alpha_research`, named for the product's purpose across
+all three workflows. See the [architecture](design/RESEARCH_ARCHITECTURE_V1_1.md)
+for ownership and dependency boundaries. The task engine in `orchestration/`
+uses an offline adapter. The existing live commands dispatch to the workflow
+implementations in `workflows/` through the CLI.
+
 
 ## Current boundary
 
@@ -153,7 +152,10 @@ Use Python 3.11+ and install this project with its declared dependencies. Copy
 outside the repository. The default state root follows OS conventions:
 `%LOCALAPPDATA%/nastu_quant` on Windows, `~/Library/Application Support/nastu_quant`
 on macOS, and `${XDG_STATE_HOME:-~/.local/state}/nastu_quant` on Linux. Set
-`NASTU_QUANT_HOME` to choose another location. Project rules always come from
+`ALPHA_RESEARCH_HOME` to choose another location. Existing installations can
+continue to use `NASTU_QUANT_HOME`. The default
+directory and config filename retain their existing names for state and
+recovery compatibility. Project rules always come from
 this repository's root `AGENTS.md`; only advisory knowledge paths are
 configurable. Relative
 knowledge paths are resolved from the state root. Fill the explicit
@@ -179,23 +181,23 @@ Install and run the project with the Python interpreter selected for this agent.
 For Windows Command Prompt:
 
 ```cmd
-set NASTU_QUANT_HOME=<path to the state directory>
+set ALPHA_RESEARCH_HOME=<path to the state directory>
 set BRAIN_CREDENTIALS_FILE=<external credentials JSON path>
 python -m pip install -e .
-python -m nastu_quant --state-root %NASTU_QUANT_HOME% run-once --objective "State the economic research question"
+python -m alpha_research --state-root %ALPHA_RESEARCH_HOME% run-once --objective "State the economic research question"
 ```
 
 On macOS or Linux:
 
 ```sh
-export NASTU_QUANT_HOME='<path to the state directory>'
+export ALPHA_RESEARCH_HOME='<path to the state directory>'
 export BRAIN_CREDENTIALS_FILE='<external credentials JSON path>'
 python3 -m pip install -e .
-python3 -m nastu_quant --state-root "$NASTU_QUANT_HOME" run-once --objective 'State the economic research question'
+python3 -m alpha_research --state-root "$ALPHA_RESEARCH_HOME" run-once --objective 'State the economic research question'
 ```
 
 The examples below use `nq` as shorthand for the corresponding
-`python -m nastu_quant --state-root <state-directory>` command.
+`python -m alpha_research --state-root <state-directory>` command.
 
 For autonomous serial batches within a fixed budget, replace the final line
 with `nq run --objective 'State the economic research question' --max-batches 3`.

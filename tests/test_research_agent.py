@@ -6,14 +6,14 @@ import unittest
 from types import SimpleNamespace
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.agent import ResearchAgent, ResearchError
-from nastu_quant.platform_runtime import PlatformRuntime
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.recovery import SETTING_KEYS
-from nastu_quant.research.orchestrator import MainOrchestrator
-from nastu_quant.research.workflow_adapter import MockWorkflowAdapter
+from alpha_research.workflows.regular.agent import ResearchAgent, ResearchError
+from alpha_research.integrations.brain.runtime import PlatformRuntime
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.simulation.matching import SETTING_KEYS
+from alpha_research.orchestration.engine import MainOrchestrator
+from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
 
 
 class ScriptedModel:

@@ -5,10 +5,10 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.research.orchestrator import MainOrchestrator, OrchestrationError
-from nastu_quant.research.workflow_adapter import MockWorkflowAdapter
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
+from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
 
 
 class FakeGateway:
@@ -59,7 +59,7 @@ class WorkflowAdapterTests(unittest.TestCase):
                 request = {"objective": "offline"}
                 if workflow == "optimization":
                     request["alpha_id"] = "SOURCE"
-                with patch("nastu_quant.research.entrypoints." + functions[workflow],
+                with patch("alpha_research.orchestration.dispatch." + functions[workflow],
                            return_value=outputs[workflow]) as mocked:
                     result = adapter.run(workflow, "execute", request, {})
                     self.assertEqual(result, outputs[workflow])

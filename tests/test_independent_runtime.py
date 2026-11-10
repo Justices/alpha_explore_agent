@@ -12,14 +12,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.platform_runtime import PlatformError, PlatformRuntime, WorldQuantClient
-from nastu_quant.agent import ResearchAgent
-from nastu_quant.backtest_cache import BacktestCache
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.gatekeeper import evaluate_candidate, parse_correlations
-from nastu_quant.gateway import Gateway
+from alpha_research.integrations.brain.runtime import PlatformError, PlatformRuntime, WorldQuantClient
+from alpha_research.workflows.regular.agent import ResearchAgent
+from alpha_research.simulation.cache import BacktestCache
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.qualification.gates import evaluate_candidate, parse_correlations
+from alpha_research.integrations.brain.gateway import Gateway
 
 
 SETTINGS = {
@@ -351,7 +351,7 @@ class TestIndependentRuntime(unittest.TestCase):
         self.assertTrue(started.wait(5), "simulation did not reach the POST")
         ready = root / "stop-process-ready"
         script = ("import sys; from pathlib import Path; "
-                  "from nastu_quant.__main__ import main; "
+                  "from alpha_research.cli import main; "
                   "Path(sys.argv[1]).write_text('ready'); "
                   "sys.exit(main(['--state-root', sys.argv[2], 'stop']))")
         proc = subprocess.Popen(
@@ -620,7 +620,7 @@ class TestIndependentRuntime(unittest.TestCase):
         self.client.correlation_responses[path] = [
             Response({}, headers={"Retry-After": "0"}), Response({"max": 0.4})]
 
-        with patch("nastu_quant.platform_runtime.time.sleep"):
+        with patch("alpha_research.integrations.brain.runtime.time.sleep"):
             raw = self.runtime.dispatch("check_correlation", {"alpha_id": "A1", "self_corr_max": 0.7})
 
         self.assertEqual(parse_correlations(raw)["prod"], 0.4)
@@ -658,7 +658,7 @@ class TestIndependentRuntime(unittest.TestCase):
         self.client.correlation_responses[path] = [Response({}, status=202, headers={"Retry-After": "0"})
                                                    for _ in range(5)]
 
-        with patch("nastu_quant.platform_runtime.time.sleep") as sleep:
+        with patch("alpha_research.integrations.brain.runtime.time.sleep") as sleep:
             raw = self.runtime.dispatch("check_correlation", {"alpha_id": "A1", "self_corr_max": 0.7})
 
         self.assertIsNone(parse_correlations(raw)["prod"])

@@ -1,6 +1,6 @@
 # Main Orchestrator — offline-first P1–P4
 
-The control plane lives in `src/nastu_quant/research/orchestrator.py`. It does not create a BRAIN gateway, call live APIs, run a Simulation, or submit an Alpha.
+The control plane lives in `alpha_research/orchestration/engine.py`. It does not create a BRAIN gateway, call live APIs, run a Simulation, or submit an Alpha.
 
 ## P1: task contract and state machine
 
@@ -50,15 +50,15 @@ The `pool_snapshot` function builds a policy-aware, read-only view of the existi
 Example:
 
 ```bash
-python -m nastu_quant --state-root /tmp/alpha-state orchestrate-offline \
+python -m alpha_research --state-root /tmp/alpha-state orchestrate-offline \
   --workflow regular --objective "mock-only research" --fixtures fixtures.json
-python -m nastu_quant --state-root /tmp/alpha-state orchestration-status <task-id>
+python -m alpha_research --state-root /tmp/alpha-state orchestration-status <task-id>
 ```
 
 ## Existing workflow entrypoint adapter (mock-only)
 
-`src/nastu_quant/research/workflow_adapter.py` connects the orchestrator's
-`execute` step to the existing `research.entrypoints.dispatch` routes:
+`alpha_research/orchestration/offline_adapter.py` connects the orchestrator's
+`execute` step to the existing `orchestration.dispatch.dispatch` routes:
 `run-campaign` (Regular, one batch), `run-super` (Super), and
 `run-optimization` (Optimization with mandatory source Alpha ID).
 The adapter requires a gateway with an explicit `is_offline_mock` marker

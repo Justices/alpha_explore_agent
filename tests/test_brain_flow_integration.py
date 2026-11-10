@@ -5,12 +5,12 @@ import unittest
 from copy import deepcopy
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.agent import ResearchAgent, ResearchError, _validate_test_period
-from nastu_quant.platform_runtime import PlatformRuntime
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.gatekeeper import evaluate_candidate
+from alpha_research.workflows.regular.agent import ResearchAgent, ResearchError, _validate_test_period
+from alpha_research.integrations.brain.runtime import PlatformRuntime
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.qualification.gates import evaluate_candidate
 
 
 class TestBrainFlowRecovery(unittest.TestCase):

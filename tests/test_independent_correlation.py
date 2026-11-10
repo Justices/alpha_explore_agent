@@ -3,10 +3,10 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.correlation import parse_pnl_recordset, pairwise_pnl_correlation
-from nastu_quant.gatekeeper import local_self_correlation_state, parse_correlations
+from alpha_research.qualification.correlation import parse_pnl_recordset, pairwise_pnl_correlation
+from alpha_research.qualification.gates import local_self_correlation_state, parse_correlations
 
 
 def pnl(values):

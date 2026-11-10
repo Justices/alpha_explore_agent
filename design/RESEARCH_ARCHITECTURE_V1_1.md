@@ -7,22 +7,32 @@ until each workflow's execution, recovery and audit path is verified.
 
 ## Package boundaries
 
-| Package | Owns | Must not own |
-| --- | --- | --- |
-| `research.regular` | Regular Campaign discovery, Dataset subtasks, combination scheduling, PPA Profile | Super selection/combo rules |
-| `research.super` | BRAIN-native Alpha pool, selection/combo design, Super simulation and audit | Regular Dataset/field admission |
-| `research.optimization` | Read-only source baseline, Regular/Super branch plans, comparison and branch audit | Mutation of the source Alpha |
-| `research.records` | Versioned persisted records and validation | Platform calls or model decisions |
-| `gateway` and `platform_runtime` | Authenticated BRAIN operations, receipts and recovery | Economic hypotheses or scope selection |
-| `knowledge` | Versioned normative rule injection and advisory evidence | Gate verdict override |
-| `agent` | Existing Regular batch engine, pending extraction into the Regular workflow | Cross-workflow routing |
+`alpha_research` names the system capability shared by Regular, BRAIN-native
+Super, and optimization of existing Alphas. The top-level package is independent
+of the selected model provider and orchestration implementation.
 
-The CLI routes to a workflow. A workflow owns its input validation, scope
-resolution, model decisions, state transitions, evidence and output. Shared
-platform and knowledge services have narrow interfaces; neither chooses a
-research objective. A framework library is optional. Merely wrapping these
-packages in LangGraph or another library would not supply missing Super or
-Optimization behavior.
+| Module | Responsibility | Boundary |
+| --- | --- | --- |
+| `cli` | Parse commands, compose dependencies, and acquire the state writer lock | Delegates research decisions and evidence checks |
+| `orchestration` | Route commands, checkpoint tasks, account for budgets, and coordinate recovery | The task engine uses an injected adapter. The current task adapter is offline-only |
+| `workflows.regular` | Discover Campaign scope, schedule Dataset subtasks, run and recover Regular batches | Owns Regular scope and batch decisions |
+| `workflows.super_alpha` | Build and execute BRAIN-native Super research | Owns Super scope and mechanism |
+| `workflows.optimization` | Read the source Alpha and evaluate independent branches | Uses the source family constraints and a read-only baseline |
+| `expressions` | Parse and validate Regular and Super expressions | Both Super and Optimization use the shared selection/combo validator |
+| `simulation` | Persist experiment intents, match recovery evidence, and cache backtest evidence | Workflow and task recovery retain their own state transitions |
+| `qualification` | Apply Candidate, Preferred, and optional PPA policies and maintain the pools | Gate order and qualification are determined by evidence |
+| `state` | Resolve state paths, validate shared records, and implement file writes and locks | Storage is independent of model and BRAIN clients |
+| `integrations` | Bridge BRAIN operations and configurable model providers | Callers supply the research scope and operation inputs |
+| `knowledge`, `config` | Supply research context and effective configuration | Workflows consume the context and persist decision provenance |
+
+The CLI composes the system. Command dispatch selects the workflow, which
+owns scope resolution and experiment decisions. Workflows receive platform
+operations through an injected gateway and share deterministic validation,
+qualification, and state services. Optimization reuses expression validation
+without importing the Super workflow. The task engine operates on adapter
+outputs and saved records. The driver is a separate process behind the BRAIN
+gateway, with a local JSON protocol.
+
 
 ## Decision and evidence flow
 
@@ -47,6 +57,4 @@ audit; neither a model response nor simulation completion can promote it.
    audit each branch independently.
 3. Super: inspect live BRAIN selection/combo settings and ACTIVE submitted
    Alpha pool; implement native simulation, recovery and Super audit.
-4. Move legacy Regular batch orchestration out of `agent.py` only after its
-   behavior is preserved. Remove superseded active rules, keep historical
-   evidence and verify all three workflow routes.
+4. Verify execution, recovery and qualification through all three routes.

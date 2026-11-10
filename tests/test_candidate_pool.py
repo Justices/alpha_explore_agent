@@ -10,15 +10,15 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.gatekeeper import correlation_verdict
-from nastu_quant.research.candidate_pool import CandidatePool
-from nastu_quant.research.candidate_qualification import (
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.qualification.gates import correlation_verdict
+from alpha_research.qualification.pool import CandidatePool
+from alpha_research.qualification.service import (
     CandidateQualificationService, _upsert,
 )
-from nastu_quant.research.records import ResearchRecordStore
+from alpha_research.state.records import ResearchRecordStore
 
 
 class DummyGateway:
@@ -265,7 +265,7 @@ class TestGlobalCandidatePool(unittest.TestCase):
         service = CandidateQualificationService(
             DummyGateway({}), self.root, copy.deepcopy(DEFAULT_CONFIG))
         details = {"id": "A_TX", "settings": {"region": "GLB"}, "is": {"checks": []}}
-        module = __import__("nastu_quant.research.candidate_qualification",
+        module = __import__("alpha_research.qualification.service",
                             fromlist=["_upsert"])
         original = module._upsert
         failed = {"value": False}
@@ -274,7 +274,7 @@ class TestGlobalCandidatePool(unittest.TestCase):
                 failed["value"] = True
                 raise OSError("injected preferred write failure")
             return original(store, kind, record)
-        with patch("nastu_quant.research.candidate_qualification._upsert",
+        with patch("alpha_research.qualification.service._upsert",
                    side_effect=fail_preferred_once):
             with self.assertRaises(OSError):
                 service._persist(

@@ -1,4 +1,4 @@
-# nastu_quant Project Agent Contract
+# Alpha Research Project Agent Contract
 
 This file governs research-agent behavior in this repository. Other
 repositories' `AGENTS.md` files are not policy sources for this project.
@@ -70,7 +70,7 @@ superseded constraints from them. The user's current request takes precedence.
 
 ## State, credentials, and portability
 
-- Store runtime state outside the source tree under `NASTU_QUANT_HOME` or the
+- Store runtime state outside the source tree under `ALPHA_RESEARCH_HOME`, the legacy `NASTU_QUANT_HOME`, or the
   platform-specific per-user default. Keep research evidence in a case-scoped
   directory and retain enough inputs and receipts for recovery.
 - Read platform credentials through `BRAIN_CREDENTIALS_FILE` using this

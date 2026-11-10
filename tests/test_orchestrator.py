@@ -5,8 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from nastu_quant.research.orchestrator import (
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from alpha_research.orchestration.engine import (
     MainOrchestrator, OfflineResearchAdapter, OrchestrationError, STEPS,
 )
 

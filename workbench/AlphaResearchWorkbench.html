@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="description" content="WorldQuant BRAIN Alpha 研究与审计"><title>Alpha 研究工作台</title><style>:root{color-scheme:dark;--bg:#0c111b;--panel:#121a28;--line:#263447;--muted:#96a7bd;--text:#edf3fb;--teal:#59e3cc;--amber:#f4ca79;--red:#ff9caa;font:14px/1.6 system-ui,"Microsoft YaHei",sans-serif}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text)}button,input,select,textarea{font:inherit}button{cursor:pointer;color:inherit;border:1px solid var(--line);background:#172335;border-radius:8px;padding:8px 13px;white-space:nowrap}button:hover{border-color:var(--teal)}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--teal);outline-offset:2px}.primary{background:var(--teal);color:#08231e;font-weight:750;border-color:transparent}.quiet{background:transparent}.sidebar{width:224px;position:fixed;inset:0 auto 0 0;background:#101725;border-right:1px solid var(--line);display:flex;flex-direction:column;padding:26px 16px;z-index:2}.brand{display:flex;align-items:center;gap:11px;font-weight:800;letter-spacing:.12em;padding:0 8px 32px}.brand small,.sidebarfoot small{display:block;font-size:11px;color:var(--muted);letter-spacing:.05em;font-weight:500}.logo{display:grid;place-items:center;background:#183f42;color:var(--teal);border:1px solid #2a6a67;border-radius:11px;width:39px;height:39px;font-size:27px;line-height:1}.navlabel{color:var(--muted);font-size:11px;padding:0 10px 9px;letter-spacing:.16em}nav{display:grid;gap:5px}nav button{text-align:left;background:none;border-color:transparent;color:#aebdd0;padding:9px 12px}nav button span{display:inline-block;width:20px}nav button.active{background:#163234;border-color:#23534f;color:var(--teal)}.sidebarfoot{margin-top:auto;padding:12px 8px;color:#bdc9d8}.dot{display:inline-block;width:7px;height:7px;background:var(--teal);border-radius:50%;margin-right:6px}.main{margin-left:224px}header{min-height:66px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 30px;color:var(--muted)}header strong{color:var(--text)}.sep{padding:0 8px}.header-actions,.actions,.toolbar,.dialog-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}main{padding:28px 30px;max-width:1580px;margin:auto}.hero{border:1px solid #25434c;background:radial-gradient(ellipse at 88% 10%,#164043 0%,transparent 55%),#121e2c;padding:25px 30px;border-radius:14px;margin-bottom:20px}.eyebrow{font:700 11px ui-monospace,Consolas,monospace;letter-spacing:.15em;color:var(--teal)}h1{font-size:clamp(27px,4vw,39px);margin:8px 0 2px;letter-spacing:-.035em}h2{font-size:18px;margin:0}h3{margin:0 0 7px;font-size:15px}p{margin:5px 0;color:var(--muted)}.stats,.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:18px}.stat,.panel,.card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:15px}.stat strong{display:block;font:700 29px ui-monospace,Consolas,monospace;color:var(--teal);margin-top:4px}.stat span,.muted{color:var(--muted)}.panel{padding:0;margin-bottom:16px;overflow:hidden}.panel-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:15px 17px;flex-wrap:wrap}.toolbar{padding:0 17px 14px}input,select,textarea{min-width:0;border:1px solid var(--line);border-radius:7px;background:#0e1725;color:var(--text);padding:8px 10px}.toolbar input{width:138px}.scroll{overflow:auto}table{border-collapse:collapse;width:100%;text-align:left}th,td{padding:11px 14px;border-top:1px solid var(--line);white-space:nowrap}th{font-size:12px;color:var(--muted);font-weight:600;background:#101826}td{font-variant-numeric:tabular-nums}td:first-child,th:first-child{padding-left:17px}.tag{display:inline-block;padding:2px 8px;border-radius:999px;background:#20304a;color:#bed4f3;font-size:11px}.good{background:#153c38;color:var(--teal)}.warn{background:#3a3023;color:var(--amber)}.bad{background:#422735;color:var(--red)}.empty{text-align:center;padding:27px 16px;border-top:1px solid var(--line)}.empty p{margin:7px auto 13px;max-width:500px}.steps{display:flex;flex-wrap:wrap;gap:8px;padding:0 17px 15px}.steps span{border:1px solid var(--line);border-radius:7px;padding:6px 10px;color:#b9c9d8}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card p{overflow-wrap:anywhere;white-space:pre-wrap}.card .actions{margin-top:12px}.card .tag{margin-right:4px}.details{display:grid;gap:12px;padding:0 17px 16px}.detail{background:#0e1725;border:1px solid var(--line);border-radius:8px;padding:12px;white-space:pre-wrap;overflow-wrap:anywhere}.metric{color:var(--teal);font-weight:700}footer{font-size:12px;color:var(--muted);padding:7px 0}footer span{padding:0 6px}dialog{background:#121a28;color:var(--text);border:1px solid #36546b;border-radius:14px;width:min(760px,94vw);max-height:88vh;padding:0}dialog::backdrop{background:#050a12bc}form{padding:18px}.dialog-head,.dialog-actions{display:flex;align-items:center;justify-content:space-between;gap:10px}.dialog-head{margin-bottom:13px}.dialog-actions{justify-content:flex-end;margin-top:12px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.field{display:grid;gap:4px;align-content:start;color:#c5d1df;font-size:13px}.wide{grid-column:1/-1}textarea{resize:vertical;min-height:60px}.section{margin:14px 0 8px;border-bottom:1px solid var(--line);padding-bottom:5px}#form-error{color:var(--red)}#toast{position:fixed;right:18px;bottom:16px;z-index:4;background:#1e333e;color:var(--text);border-radius:8px;padding:0;max-width:min(440px,90vw)}#toast:not(:empty){padding:10px 14px}@media(max-width:800px){.sidebar{position:static;width:auto;padding:10px;border-right:0;border-bottom:1px solid var(--line)}.brand{padding:0 6px 9px}.navlabel,.sidebarfoot{display:none}nav{display:flex;flex-wrap:wrap}.main{margin:0}header,main{padding-left:12px;padding-right:12px}.hero{padding:18px}.stats{grid-template-columns:repeat(2,1fr)}.cards{grid-template-columns:1fr}}@media(max-width:430px){header{flex-wrap:wrap}.grid{grid-template-columns:1fr}.toolbar>*{max-width:100%}}
+[hidden]{display:none!important}.dialog-actions{margin-top:16px}.detail+.actions,.grid+.actions{margin-top:12px}
+</style></head>
+<body><aside class="sidebar"><div class="brand"><span class="logo">α</span><div>ALPHA LAB<small>量化研究工作台</small></div></div><div class="navlabel">研究空间</div><nav aria-label="工作台导航"><button data-view="board" class="active"><span>▦</span> 研究总览</button><button data-view="cases"><span>◈</span> 研究任务</button><button data-view="compare"><span>▥</span> 指标对比</button><button data-view="audit"><span>◎</span> 审核与优选</button></nav><div class="sidebarfoot"><span class="dot"></span> 证据记录模式<small>WorldQuant BRAIN · Research</small></div></aside>
+<div class="main"><header><div>研究空间 <span class="sep">/</span> <strong id="crumb">研究总览</strong></div><div class="header-actions"><button id="import" class="quiet">导入</button><button id="export" class="quiet">导出</button><button class="primary" id="new-case">＋ 新建研究</button></div></header>
+<main><section class="hero"><div class="eyebrow">WORLDQUANT BRAIN / RESEARCH DESK</div><h1 id="heading">Alpha 研究工作台</h1><p id="description">管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。</p></section><div id="content"></div><footer>ALPHA LAB <span>·</span> 浏览器保存研究记录，使用 JSON 导入与导出迁移。平台审计结果由 Agent 提供。</footer></main></div>
+<dialog id="editor"><form id="form"><div class="dialog-head"><h2 id="form-title"></h2><button type="button" id="close" class="quiet" aria-label="关闭">✕</button></div><div id="fields"></div><p id="form-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancel" class="quiet">取消</button><button class="primary" type="submit">保存记录</button></div></form></dialog><input id="file" type="file" accept=".json,application/json" hidden><div id="toast" role="status"></div><script>"use strict";
+const $ = (s) => document.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
+const labels = {regular:"Regular Alpha",super:"Super Alpha",optimization:"指定 Alpha 优化"};
+const pages = {board:["研究总览","Alpha 研究工作台","管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。"],cases:["研究任务","研究任务","保留用户硬约束、平台有效组合、预算与研究分支。"],compare:["指标对比","回测指标对比","选择最多四条 Alpha，逐项比较已记录的回测指标。"],audit:["审核与优选","审核与优选","从终态 RA 证据开始，依次核对相关性、Candidate 和 Preferred 结果。"]};
+const phases = {scope:"范围验证",hypothesis:"假设与构建",simulation:"回测证据",review:"审核",closed:"复盘归档"};
+const metrics = {sharpe:"Sharpe",fitness:"Fitness",turnover:"Turnover",drawdown:"Drawdown",coverage:"Coverage",robustness:"Robustness",costs:"Transaction costs",local:"本地自相关",prod:"生产相关性",self:"平台自相关",pairwise:"组内相关性",weight:"最大权重"};
+const statuses = {draft:"研究草稿",pending:"证据待补",raFail:"RA 未通过",corrReady:"待相关性",corrFail:"相关性未通过",audit:"待完整审计",candidate:"Candidate",preferred:"优选",blocked:"审核阻塞"};
+const key = "alpha-research-desk-v1";
+const localAgent = location.protocol === "http:" && location.hostname === "127.0.0.1";
+let agentStatus, agentError, agentLoading = false;
+function agentPanel(){
+ const refresh=localAgent?button(agentLoading?"读取中…":"刷新 Agent 状态","agent-refresh"):"";
+ if(!localAgent)return panel("Agent 项目状态",blank("当前为独立文件模式","运行 python workbench/serve.py，再打开终端显示的地址，即可读取 Agent 项目状态。"));
+ if(agentError)return panel("Agent 项目状态",blank("读取失败",agentError),refresh);
+ if(!agentStatus)return panel("Agent 项目状态",blank("等待本地状态","正在读取项目研究记录。"),refresh);
+ const groups=[
+   ["Regular 任务",agentStatus.v11_campaigns],["Super 任务",agentStatus.v11_super_runs],
+   ["优化分支",agentStatus.v11_candidate_branches],["Candidate 池",agentStatus.v11_candidates],
+   ["Preferred 池",agentStatus.v11_preferred],["候选评估记录",agentStatus.v11_candidate_evaluations]
+ ];
+ const records=groups.flatMap(([kind,items])=>(items||[]).map(row=>[
+   esc(kind),esc(row.alpha_id||row.candidate_alpha_id||row.source_alpha_id||row.campaign_id||row.id||"—"),
+   esc(row.workflow||"—"),esc(row.candidate_status||row.status||"—"),esc(row.preferred_status||"—")
+ ]));
+ const warning=agentStatus.global_alpha_pool?.status==="unavailable"
+   ? '<p class="toolbar">Agent 候选池暂不可读，任务与评估记录仍可查看。</p>' : "";
+ return panel("Agent 项目状态 · 只读",warning+(records.length
+   ? table(["记录类型","Alpha / 任务 ID","工作流","状态","优选"],records)
+   : blank("当前状态目录没有研究记录","如果 Agent 使用了自定义状态目录，请用 --state-root 启动。")),refresh);
+}
+async function refreshAgent(){
+ if(!localAgent||agentLoading)return;
+ agentLoading=true;
+ render();
+ try{
+   const result=await fetch("/api/status",{cache:"no-store"});
+   if(!result.ok)throw Error("本地 Agent 状态不可读");
+   agentStatus=await result.json();
+   agentError=null;
+ }catch{
+   agentError="请检查启动终端、Python 依赖及状态目录，然后重试。";
+ }finally{
+   agentLoading=false;
+   render();
+ }
+}
+const empty = () => ({version:1,cases:[],alphas:[]});
+let data=empty();
+try { const saved=localStorage.getItem(key); if(saved) data=JSON.parse(saved); } catch {}
+let view="board", selected=new Set(), filters={}, editing, toastTimer;
+const tag=(s,t="")=>'<span class="tag '+t+'">'+esc(s)+'</span>';
+const button=(label, action, id="", css="")=>'<button type="button" class="'+css+'" data-act="'+action+'" data-id="'+esc(id)+'">'+esc(label)+'</button>';
+const text=(v)=>typeof v==="string" && v.trim().length>0;
+const numeric=(v)=>typeof v==="number" && Number.isFinite(v);
+const num=(v)=>numeric(v)?String(v):"—";
+const workflow=(c)=>labels[c.workflow]+(c.ppa?" · PPA":"");
+const findCase=(id)=>data.cases.find(c=>c.id===id);
+const fieldSet=(value)=>String(value??"").split(/[,，\n]+/).map(v=>v.trim()).filter(Boolean);
+function notify(message){$("#toast").textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("#toast").textContent="",4500);}
+function persist(next){localStorage.setItem(key,JSON.stringify(next));data=next;}
+function raPassed(a){return a.raCount===0 && a.raFinal==="pass" && text(a.raRef);}
+function review(a,c){
+  const m=a.metrics??{}, pending=[];
+  if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
+  if(!raPassed(a)) return [a.receipt?"pending":"draft","待补终态 RA 证据与失败数"];
+  if(!numeric(a.corrLimit)||a.corrLimit<=0||a.corrLimit>1||!text(a.policyRef)) return ["pending","待补有效相关性策略与出处"];
+  if(!numeric(m.local)||!text(a.localRef)) return ["pending","待补本地自相关预检证据"];
+  if(Math.abs(m.local)>=a.corrLimit) return ["corrFail","本地自相关达到阈值"];
+  if(a.localComplete!=="pass") return ["pending","待补近四年同区域非 PPA OS 样本的完整预检结论"];
+  if(!numeric(m.prod)||!numeric(m.self)||!text(a.corrRef)) return ["corrReady","可在 Agent 中查询，回填 PC / SC 证据"];
+  if(Math.abs(m.prod)>=a.corrLimit||Math.abs(m.self)>=a.corrLimit) return ["corrFail","PC 或 SC 达到阈值"];
+  if(c.ppa && (!numeric(m.sharpe)||!numeric(a.operatorCount)||!fieldSet(a.fields).length||m.sharpe<1||a.operatorCount>8||new Set(fieldSet(a.fields)).size>3))
+    pending.push("PPA 本地资格证据未通过");
+  if(!text(a.receipt)||!text(a.settings)||!text(a.expression)||!text(a.alphaId)||!text(c.scopeEvidence)) pending.push("回测回执、定义、范围或有效设置待补");
+  if(c.workflow==="regular" && (!text(a.dataset)||!text(a.category)||!text(a.universe)||!numeric(a.delay))) pending.push("Regular 有效范围待补");
+  if(c.workflow==="optimization" && (!text(c.sourceSnapshot)||!text(c.region)||!text(c.sourceType))) pending.push("来源快照、类型或区域待补");
+  if(a.pairwise==="fail"||a.auditStatus==="failed") return ["blocked","审计失败或组内冲突待裁决"];
+  if(a.pairwise!=="pass"||!text(a.pairRef)) pending.push("组内去重证据待补");
+  if(a.auditStatus!=="candidate"||!text(a.auditRef)) pending.push("Agent 完整 Candidate 审计与回读待补");
+  if(pending.length) return ["audit",pending.join(" · ")];
+  if(a.preferredStatus==="preferred"&&text(a.preferredRef)&&numeric(m.sharpe)&&numeric(m.fitness)&&numeric(m.turnover)&&numeric(m.weight)&&m.sharpe>=1.25&&m.fitness>=1&&m.turnover>=.01&&m.turnover<=.70&&m.weight<=.10&&a.subUniverse==="pass")
+    return ["preferred","Candidate 已核对，Preferred 证据通过"];
+  return ["candidate",a.preferredStatus==="failed"?"Preferred 未通过":"待核对 preferred-v1 结果"];
+}
+function badge(a){const [s]=review(a,findCase(a.caseId));return tag(statuses[s],["candidate","preferred"].includes(s)?"good":["blocked","corrFail","raFail"].includes(s)?"bad":s==="draft"?"":"warn");}
+const opts=(items,value,placeholder)=> (placeholder?'<option value="">'+esc(placeholder)+'</option>':"")+Object.entries(items).map(([k,v])=>'<option value="'+esc(k)+'" '+(String(value)===k?"selected":"")+'>'+esc(v)+'</option>').join("");
+const panel=(title,body,actions="")=>'<section class="panel"><div class="panel-head"><h2>'+title+'</h2>'+actions+'</div>'+body+'</section>';
+const blank=(title,desc,action="")=>'<div class="empty"><h3>'+title+'</h3><p>'+desc+'</p>'+action+'</div>';
+const table=(headers,rows)=>'<div class="scroll"><table><thead><tr>'+headers.map(h=>'<th scope="col">'+h+'</th>').join("")+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(v=>'<td>'+v+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>';
+const line=(name,v)=>'<div class="detail"><h3>'+esc(name)+'</h3>'+esc(v||"待补")+'</div>';
+function toolbar(){
+ const regions=Object.fromEntries([...new Set(data.cases.map(c=>c.region).filter(Boolean))].sort().map(r=>[r,r]));
+ return '<div class="toolbar"><select aria-label="区域" data-filter="region">'+opts(regions,filters.region,"全部区域")+'</select><select aria-label="工作流" data-filter="workflow">'+opts({...labels,ppa:"Regular · PPA"},filters.workflow,"全部工作流")+'</select><select aria-label="状态" data-filter="status">'+opts(statuses,filters.status,"全部状态")+'</select><select aria-label="指标" data-filter="metric">'+opts(metrics,filters.metric,"选择指标")+'</select><input aria-label="指标下限" type="number" step="any" placeholder="指标下限" data-filter="min" value="'+esc(filters.min)+'"><input aria-label="指标上限" type="number" step="any" placeholder="指标上限" data-filter="max" value="'+esc(filters.max)+'">'+button("清空","clear")+'</div>';
+}
+function rows(){
+ return data.alphas.filter(a=>{const c=findCase(a.caseId), m=a.metrics?.[filters.metric];
+ return (!filters.region||c.region===filters.region)&&(!filters.workflow||(filters.workflow==="ppa"?c.ppa:c.workflow===filters.workflow))&&(!filters.status||review(a,c)[0]===filters.status)&&(!filters.metric||numeric(m)&&(!filters.min||m>=Number(filters.min))&&(!filters.max||m<=Number(filters.max)));});
+}
+function board(){
+ const counts=[data.cases.length,data.alphas.length,data.alphas.filter(a=>["candidate","preferred"].includes(review(a,findCase(a.caseId))[0])).length,data.alphas.filter(a=>review(a,findCase(a.caseId))[0]==="preferred").length];
+ const stat='<div class="stats">'+["研究任务","Alpha 记录","Candidate 池","Preferred 池"].map((s,i)=>'<div class="stat"><span>'+s+'</span><strong>'+counts[i]+'</strong></div>').join("")+'</div>';
+ return stat+panel("候选 Alpha 看板",toolbar()+(rows().length?table(["Alpha","区域 / 流程","状态","Sharpe","Turnover","PC / SC","对比"],rows().map(a=>{
+ const c=findCase(a.caseId),m=a.metrics;
+ return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的 Alpha":"看板等待研究记录",data.alphas.length?"调整筛选条件后再试。":"创建研究任务，然后记录 Alpha 的研究设计、回测指标和审计证据。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
+}
+function cases(){
+ if(!data.cases.length) return panel("任务列表",blank("还没有研究任务","新建 Regular、Super 或优化任务，保存研究范围与当前阶段。",button("新建研究","new-case","","primary")));
+ return '<div class="cards">'+data.cases.map(c=>{
+ const scope=c.workflow==="regular"?["dataset","category","delay","universe"].map(k=>k+" = "+(c[k]??"待探索")).join(" · "):c.workflow==="super"?"BRAIN 原生 selection / combo":"来源 Alpha "+c.sourceId+" · "+(c.sourceType||"类型待核对");
+ const alphas=data.alphas.filter(a=>a.caseId===c.id);
+ return '<article class="card"><h3>'+esc(c.name)+'</h3>'+tag(workflow(c))+tag(c.region||"区域待解析")+tag(phases[c.phase],"good")+'<p>'+esc(scope)+'</p><p>'+esc(c.objective||"研究目标待补")+'</p><p>'+alphas.length+' 条 Alpha 记录</p><div class="actions">'+button("任务详情","case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div></article>';}).join("")+'</div>';
+}
+function compare(){
+ const items=data.alphas.filter(a=>selected.has(a.id));
+ const chooser='<div class="toolbar"><select aria-label="选择 Alpha" id="comparison-options">'+opts(Object.fromEntries(data.alphas.filter(a=>!selected.has(a.id)).map(a=>[a.id,a.name])),"","选择 Alpha")+'</select>'+button("加入对比","add-comparison")+'</div>';
+ return panel("并排对比",chooser+(items.length?table(["指标",...items.map(a=>esc(a.name)+" "+button("移除","remove-comparison",a.id,"quiet"))],[["状态",...items.map(badge)],...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics[k]))])]):blank("选择要对比的 Alpha","保留原始指标数值。比较之前请核对回测设置、指标口径和单位。")));
+}
+function audit(){
+ const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
+ const rows=data.alphas.map(a=>[button(a.name,"alpha",a.id,"quiet"),num(a.raCount),num(a.metrics.local),num(a.metrics.prod)+" / "+num(a.metrics.self),badge(a),esc(review(a,findCase(a.caseId))[1]),button("录入审计","edit-alpha",a.id)]);
+ return panel("共享审核队列",steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
+}
+function render(){
+ const [crumb,title,desc]=pages[view];
+ $("#crumb").textContent=crumb;$("#heading").textContent=title;$("#description").textContent=desc;
+ document.querySelectorAll("nav button").forEach(b=>{b.classList.toggle("active",b.dataset.view===view);if(b.dataset.view===view)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current");});
+ $("#content").innerHTML={board,cases,compare,audit}[view]()+ (view==="board"?agentPanel():"");
+}
+const dialog=$("#editor");
+function show(title,body,mode){
+ editing=mode;$("#form-title").textContent=title;$("#form-error").textContent="";$("#fields").innerHTML=body;
+ $("#form").querySelector(".dialog-actions").hidden=!mode;
+ if(!dialog.open) dialog.showModal();
+}
+function field(k,label,value="",type="text",required=false,items=null){
+ const val=esc(value), req=required?" required":"";
+ let input;
+ if(items) input='<select name="'+k+'"'+req+'>'+opts(items,value,"请选择 / 待补")+'</select>';
+ else if(type==="area") input='<textarea name="'+k+'"'+req+'>'+val+'</textarea>';
+ else input='<input name="'+k+'" type="'+type+'" value="'+val+'"'+req+(type==="number"?' step="any"':"")+'>';
+ return '<label class="field '+(type==="area"?"wide":"")+'">'+esc(label)+input+'</label>';
+}
+const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
+const section=(s)=>'<h3 class="section">'+s+'</h3>';
+function caseForm(c={},kind=c.workflow||"regular"){
+ const regular=kind==="regular", optimization=kind==="optimization";
+ show(c.id?"编辑研究证据":"新建研究",grid(field("name","任务名称",c.name,"text",true),c.id?line("工作流",workflow(c)):field("workflow","工作流",kind,"text",true,labels),
+ c.id&&c.region?line("已锁定区域",c.region):field("region",optimization?"区域（以来源快照核实）":"区域（必填）",c.region,"text",!optimization),
+ field("phase","研究阶段",c.phase||"scope","text",true,phases),
+ ...(regular&&!c.id?[field("dataset","Dataset ID（多个用逗号分隔）",c.dataset),field("category","Category",c.category),field("delay","Delay",c.delay,"number"),field("universe","Universe",c.universe),field("ppa","PPA Profile",c.ppa?"yes":"no","text",true,{no:"普通 Regular",yes:"显式启用 PPA"})]:[]),
+ ...(optimization?[c.id?line("来源 Alpha ID",c.sourceId):field("sourceId","来源 Alpha ID",c.sourceId,"text",true),field("sourceType","来源类型（按快照核实）",c.sourceType,"text",false,{regular:"Regular",super:"Super"}),field("sourceSnapshot","只读来源快照引用",c.sourceSnapshot,"area")]:[]),
+ field("objective","研究目标",c.objective,"area"),field("constraints","额外硬约束（创建时锁定）",c.constraints,"area"),field("scopeEvidence",kind==="super"?"平台 selection / combo 范围与证据":"平台范围证据 / Dataset 选择理由",c.scopeEvidence,"area"),field("coverage","有效组合、已探索、未探索与未解决项",c.coverage,"area"),field("budget","预算、已消耗与停止原因",c.budget,"area")), {kind:"case",record:c,workflow:kind});
+ if(c.id) {const f=$("#form").elements.constraints;f.readOnly=true;if(text(c.objective))$("#form").elements.objective.readOnly=true;}
+}
+function alphaForm(c,a={}){
+ const m=a.metrics||{}, regular=c.workflow==="regular";
+ const choices={pass:"通过",fail:"失败 / 冲突",pending:"待补"};
+ show(a.id?"编辑 Alpha 与审计":"新增 Alpha 记录",grid(field("name","记录名称",a.name,"text",true),field("alphaId","BRAIN Alpha ID",a.alphaId),
+ ...(regular?[field("dataset","有效 Dataset ID",a.dataset),field("category","有效 Category",a.category),field("delay","有效 Delay",a.delay,"number"),field("universe","有效 Universe",a.universe)]:[]),
+ field("expression",c.workflow==="super"||c.sourceType==="super"?"Selection / Combo 定义":"表达式 / 优化定义",a.expression,"area"),field("fields","数据字段（逗号或换行分隔）",a.fields,"area"),field("operators","操作符及组合记录",a.operators,"area"),...(c.ppa?[field("operatorCount","操作符调用次数（PPA）",a.operatorCount,"number")]:[]),
+ field("idea","Idea",a.idea,"area"),field("dataReason","Rationale for data used",a.dataReason,"area"),field("operatorReason","Rationale for operators used",a.operatorReason,"area"),field("economics","经济含义、失效条件和不确定性",a.economics,"area"),field("settings","固定回测设置、字段验证与预回测证据",a.settings,"area"),field("receipt","模拟回执 / 恢复 ID / 分支引用",a.receipt,"area"))
+ +section("回测指标 · 保留原始口径")+grid(...Object.entries(metrics).filter(([k])=>!["local","prod","self","pairwise"].includes(k)).map(([k,v])=>field("metric_"+k,v,m[k],"number")),field("units","成本、覆盖率和稳健性口径",a.units,"area"))
+ +section("01 · RA 终态")+grid(field("raCount","RA fail count",a.raCount,"number"),field("raFinal","RA 检查已终结",a.raFinal,"text",false,choices),field("raRef","RA 终态证据引用",a.raRef,"area"))
+ +'<div id="corr-fields">'+section("02–03 · 相关性证据")+grid(field("corrLimit","配置中的 PC / SC 阈值（严格小于）",a.corrLimit??0.70,"number"),field("policyRef","阈值来源 / 策略版本",a.policyRef),field("metric_local","本地自相关",m.local,"number"),field("localRef","近四年同区域非 PPA OS 预检证据",a.localRef),field("localComplete","本地预检完整性结论",a.localComplete,"text",false,choices),...["prod","self","pairwise"].map(k=>field("metric_"+k,metrics[k],m[k],"number")),field("corrRef","平台 PC / SC 回读证据",a.corrRef,"area"))+'</div>'
+ +section("04–05 · Agent 审计回读")+grid(field("pairwise","组内去重 / 用户裁决",a.pairwise,"text",false,choices),field("pairRef","去重或裁决证据",a.pairRef),field("auditStatus","Agent Candidate 结论",a.auditStatus,"text",false,{candidate:"CANDIDATE",failed:"失败",pending:"待补"}),field("auditRef","Candidate 完整审计引用",a.auditRef),field("subUniverse","LOW_SUB_UNIVERSE_SHARPE",a.subUniverse,"text",false,choices),field("preferredStatus","Agent Preferred 结论",a.preferredStatus,"text",false,{preferred:"PREFERRED",failed:"NOT_PREFERRED",pending:"待补"}),field("preferredRef","Preferred 评估引用",a.preferredRef),field("submissionNote","提交候选人工复核决定 / 复盘备注",a.submissionNote,"area")),
+ {kind:"alpha",record:a,caseId:c.id});
+ syncGate();
+}
+function syncGate(){
+ const f=$("#form").elements;
+ if(!f.raCount)return;
+ const ra=f.raCount.value!==""&&Number(f.raCount.value)===0&&f.raFinal.value==="pass"&&text(f.raRef.value);
+ const local=ra&&f.metric_local.value!==""&&Math.abs(Number(f.metric_local.value))<Number(f.corrLimit.value)&&text(f.localRef.value)&&text(f.policyRef.value)&&f.localComplete.value==="pass";
+ ["metric_local","localRef","localComplete"].forEach(k=>f[k].disabled=!ra);
+ ["metric_prod","metric_self","metric_pairwise","corrRef"].forEach(k=>f[k].disabled=!local);
+}
+function checkCase(c){
+ if(!text(c.name)||!Object.hasOwn(labels,c.workflow)||!Object.hasOwn(phases,c.phase)) throw Error("请检查任务名称、工作流和阶段。");
+ if(c.workflow==="optimization"?!text(c.sourceId):!text(c.region)) throw Error("请填写所需的区域或来源 Alpha ID。");
+ if(c.delay!=null&&(!Number.isInteger(c.delay)||c.delay<0)) throw Error("Delay 必须是非负整数。");
+}
+function checkAlpha(a,c){
+ if(!c||!text(a.name)||!a.metrics||Array.isArray(a.metrics))throw Error("Alpha 记录缺少有效任务、名称或指标对象。");
+ for(const [k,v] of Object.entries(a.metrics)){
+   if(!Object.hasOwn(metrics,k)||!numeric(v))throw Error("无效的指标值。");
+   if(["local","prod","self","pairwise"].includes(k)&&Math.abs(v)>1)throw Error("相关性必须在 -1 到 1 之间。");
+ }
+ for(const k of ["delay","raCount","operatorCount"]) if(a[k]!=null&&(!Number.isInteger(a[k])||a[k]<0))throw Error("Delay、RA fail count 和操作符次数必须是非负整数。");
+ if(c.workflow==="regular"){
+   if(c.dataset&&a.dataset&&!fieldSet(c.dataset).includes(a.dataset))throw Error("有效 Dataset 超出用户指定范围。");
+   for(const k of ["category","delay","universe"])if(c[k]!=null&&a[k]!=null&&c[k]!==a[k])throw Error("有效 "+k+" 与用户硬约束冲突。");
+ }
+}
+function submit(e){
+ e.preventDefault();
+ if(!editing)return;
+ const fields=Object.fromEntries(new FormData(e.target));const values={};
+ for(const [k,v] of Object.entries(fields)) values[k]=v.trim()||null;
+ for(const k of ["delay","raCount","corrLimit","operatorCount"]) if(values[k]!=null)values[k]=Number(values[k]);
+ const original=editing.record;
+ const next=structuredClone(data);
+ try {
+   if(editing.kind==="case"){
+     const c={...original,...values,id:original.id||crypto.randomUUID(),workflow:editing.workflow,ppa:original.id?original.ppa:values.ppa==="yes"};
+     if(original.region)c.region=original.region;
+     if(c.region)c.region=c.region.toUpperCase();
+     checkCase(c);
+     if(original.phase!==c.phase)c.history=[...(original.history||[]),{phase:c.phase,at:new Date().toISOString()}];
+     next.cases=next.cases.filter(x=>x.id!==c.id).concat(c);
+     view="cases";
+   }else{
+     const measured={};
+     for(const k of Object.keys(metrics))if(values["metric_"+k]!=null)measured[k]=Number(values["metric_"+k]);
+     for(const k of Object.keys(metrics))delete values["metric_"+k];
+     const a={...original,...values,id:original.id||crypto.randomUUID(),caseId:editing.caseId,metrics:measured};
+     if(!raPassed(a)||!numeric(measured.local)||Math.abs(measured.local)>=a.corrLimit) a.corrRef=null;
+     checkAlpha(a,findCase(a.caseId));
+     next.alphas=next.alphas.filter(x=>x.id!==a.id).concat(a);
+   }
+   persist(next);dialog.close();render();notify("记录已保存");
+ }catch(err){$("#form-error").textContent=err.message;}
+}
+function inspectCase(c){
+ show("研究任务详情",grid(line("任务",c.name),line("工作流",workflow(c)),line("区域",c.region),line("阶段",phases[c.phase]),line("阶段流转",(c.history||[]).map(h=>phases[h.phase]+" · "+new Date(h.at).toLocaleString("zh-CN")).join("\n")),line("硬约束",[c.dataset,c.category,c.delay,c.universe,c.constraints].filter(v=>v!=null).join(" / ")),line("研究目标",c.objective),line("来源 Alpha / 快照",[c.sourceId,c.sourceType,c.sourceSnapshot].filter(Boolean).join(" / ")),line("范围证据",c.scopeEvidence),line("范围覆盖",c.coverage),line("预算与停止原因",c.budget))+'<div class="actions">'+button("编辑研究证据","edit-case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div>',null);
+}
+function inspectAlpha(a){
+ const c=findCase(a.caseId);
+ show(a.name,'<p>'+esc(workflow(c))+' · '+esc(c.region||"待解析")+' · '+badge(a)+'</p>'+grid(line("当前审核",review(a,c)[1]),line("Alpha ID",a.alphaId),line("表达式 / Selection / Combo",a.expression),line("数据字段",a.fields),line("操作符",a.operators),line("Idea",a.idea),line("Rationale for data used",a.dataReason),line("Rationale for operators used",a.operatorReason),line("经济含义",a.economics),line("有效设置",a.settings),line("回测回执",a.receipt),line("RA 证据",[a.raCount,a.raRef].filter(v=>v!=null).join(" / ")),line("相关性证据",[a.localRef,a.corrRef,a.pairRef].filter(Boolean).join(" / ")),line("审计与优选证据",[a.auditRef,a.preferredRef].filter(Boolean).join(" / ")),line("人工复核决定",a.submissionNote))+'<div class="actions">'+button("编辑记录与审核","edit-alpha",a.id,"primary")+'</div>',null);
+}
+function addComparison(id){if(!id)return;if(selected.size>=4&&!selected.has(id)){notify("最多对比四条 Alpha");return;}selected.add(id);}
+document.addEventListener("click",e=>{
+ const b=e.target.closest("button");if(!b)return;
+ if(b.dataset.view){view=b.dataset.view;render();return;}
+ const {act,id}=b.dataset;
+ if(!act)return;
+ const a=data.alphas.find(x=>x.id===id),c=findCase(id);
+ switch(act){
+ case "agent-refresh":refreshAgent();return;
+ case "new-case":caseForm();return;
+ case "edit-case":caseForm(c);return;
+ case "case":inspectCase(c);return;
+ case "new-alpha":alphaForm(c);return;
+ case "edit-alpha":alphaForm(findCase(a.caseId),a);return;
+ case "alpha":inspectAlpha(a);return;
+ case "clear":filters={};break;
+ case "compare":view="compare";break;
+ case "add-comparison":addComparison($("#comparison-options").value);break;
+ case "remove-comparison":selected.delete(id);break;
+ }
+ render();
+});
+document.addEventListener("change",e=>{
+ const t=e.target;
+ if(t.dataset.filter){filters[t.dataset.filter]=t.value;render();}
+ if(t.dataset.compare){if(t.checked)addComparison(t.dataset.compare);else selected.delete(t.dataset.compare);t.checked=selected.has(t.dataset.compare);}
+ if(t.name==="workflow"&&editing?.kind==="case"){
+   const draft={...editing.record,...Object.fromEntries(new FormData($("#form")))};
+   caseForm({...draft,ppa:draft.ppa==="yes"},t.value);
+ }
+});
+$("#form").addEventListener("input",syncGate);
+$("#form").addEventListener("submit",submit);
+$("#new-case").onclick=()=>caseForm();
+$("#close").onclick=$("#cancel").onclick=()=>dialog.close();
+$("#import").onclick=()=>$("#file").click();
+$("#export").onclick=()=>{
+ const href=URL.createObjectURL(new Blob([JSON.stringify(data,null,2)],{type:"application/json"}));
+ const link=document.createElement("a");link.href=href;link.download="alpha-research-workbench.json";link.click();setTimeout(()=>URL.revokeObjectURL(href),1000);
+};
+$("#file").onchange=async(e)=>{
+ const file=e.target.files[0];e.target.value="";if(!file)return;
+ try {
+   if(file.size>5*1024*1024)throw Error("文件超过 5 MB。");
+   const incoming=JSON.parse(await file.text());
+   if(incoming?.version!==1||!Array.isArray(incoming.cases)||!Array.isArray(incoming.alphas))throw Error("请选择工作台导出的 v1 JSON。");
+   const merge=(existing,items,check)=>{
+     const records=new Map(existing.map(item=>[item.id,item]));
+     for(const item of items){
+       if(!item||!text(item.id))throw Error("记录缺少 ID。");
+       check(item);
+       if(records.has(item.id)&&JSON.stringify(records.get(item.id))!==JSON.stringify(item))throw Error("发现同 ID 的不同版本，导入已停止。");
+       records.set(item.id,item);
+     }
+     return [...records.values()];
+   };
+   const cases=merge(data.cases,incoming.cases,checkCase);
+   const alphas=merge(data.alphas,incoming.alphas,a=>checkAlpha(a,cases.find(c=>c.id===a.caseId)));
+   persist({version:1,cases,alphas});render();notify("已合并导入研究记录");
+ }catch(err){notify("导入失败。"+err.message);}
+};
+render();
+if(localAgent)refreshAgent();
+
+</script></body></html>
+

@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from nastu_quant.knowledge import KnowledgeError, KnowledgeService
+from alpha_research.knowledge import KnowledgeError, KnowledgeService
 
 
 class TestKnowledgeAdmin(unittest.TestCase):

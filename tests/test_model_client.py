@@ -4,9 +4,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.model_client import ConfiguredModelClient, DecisionRecorder, ModelError
+from alpha_research.integrations.model import ConfiguredModelClient, DecisionRecorder, ModelError
 
 
 class TestConfiguredModelClient(unittest.TestCase):

@@ -2,9 +2,9 @@ import sys
 import unittest
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.gateway import Gateway, GatewayError
+from alpha_research.integrations.brain.gateway import Gateway, GatewayError
 
 
 class TestGateway(unittest.TestCase):

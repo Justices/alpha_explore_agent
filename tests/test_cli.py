@@ -15,16 +15,16 @@ ROOT = Path(__file__).parent.parent
 
 def cli(*args):
     env = dict(os.environ)
-    env["PYTHONPATH"] = str(ROOT / "src")
-    return subprocess.run([sys.executable, "-m", "nastu_quant", *args],
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run([sys.executable, "-m", "alpha_research", *args],
                           cwd=ROOT, env=env, capture_output=True, text=True,
                           timeout=10)
 
 
 class TestCli(unittest.TestCase):
     def test_run_once_reports_local_ppa_eligibility(self):
-        sys.path.insert(0, str(ROOT / "src"))
-        from nastu_quant import __main__ as entry
+        sys.path.insert(0, str(ROOT))
+        from alpha_research import cli as entry
         with tempfile.TemporaryDirectory() as temp:
             config = Path(temp) / "config.json"
             config.write_text(json.dumps({"model": {}}), encoding="utf-8")
@@ -132,8 +132,8 @@ class TestCli(unittest.TestCase):
 
 
     def test_rebuild_pools_holds_single_writer_lock(self):
-        sys.path.insert(0, str(ROOT / "src"))
-        from nastu_quant import __main__ as entry
+        sys.path.insert(0, str(ROOT))
+        from alpha_research import cli as entry
         with tempfile.TemporaryDirectory() as temp:
             with patch.object(entry, "SingleWriterLock") as lock, \
                     redirect_stdout(StringIO()):

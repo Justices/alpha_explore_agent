@@ -3,11 +3,11 @@ requires = ["setuptools>=61"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "nastu-quant"
+name = "alpha-research"
 version = "0.1.0"
-description = "nastu_quant: autonomous Alpha exploration agent for WorldQuant BRAIN"
+description = "Evidence-driven Alpha research workflows for WorldQuant BRAIN"
 requires-python = ">=3.11"
 dependencies = ["requests>=2.28,<3"]
 
 [tool.setuptools.packages.find]
-where = ["src"]
+include = ["alpha_research", "alpha_research.*"]

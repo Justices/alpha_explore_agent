@@ -5,14 +5,16 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import Mock, patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant.research.recovery import RecoveryCoordinator, RecoveryError
-from nastu_quant.research.orchestrator import MainOrchestrator, OfflineResearchAdapter
-from nastu_quant.research.regular.campaign import _key
-from nastu_quant.state_store import atomic_write_json
-from nastu_quant.research.simulation_intent import (
+from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
+from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter
+from alpha_research.workflows.regular.campaign import _key, run_regular_campaign
+from alpha_research.state.records import ResearchRecordStore
+from alpha_research.state.store import atomic_write_json
+from alpha_research.simulation.intent import (
     create_simulation_intent, transition_simulation_intent,
 )
 
@@ -45,6 +47,44 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.gateway = FakeGateway()
+
+    def test_campaign_projects_blocked_item_and_retains_its_failure_after_resume(self):
+        agent = Mock(runs_root=self.root / "runs", stop_flag=None)
+        result = {"batch_dir": "batch", "alpha_ids": ["A1"],
+                  "candidate_status": {"A1": "EVIDENCE_PENDING"}}
+        agent.run_once.side_effect = [RuntimeError("model response lost"), result, result]
+        combo = {"region": "GLB", "delay": 1, "universe": "TOP3000"}
+        plan = {"unresolved": [], "datasets": [
+            {"dataset_id": name, "category": "analyst", "combinations": [combo]}
+            for name in ("analyst69", "analyst70")]}
+        request = {"objective": "audit child state", "region": "GLB",
+                   "dataset_ids": ["analyst69", "analyst70"], "max_batches": 2}
+        store = ResearchRecordStore(self.root)
+        with patch("alpha_research.workflows.regular.campaign.discover_regular_scope",
+                   return_value=plan):
+            gateway = Mock()
+            with self.assertRaisesRegex(RuntimeError, "model response lost"):
+                run_regular_campaign(agent, gateway, **request)
+
+            campaign, = store.list("campaign")
+            blocked, untouched = sorted(store.list("dataset_subtask"),
+                                        key=lambda row: row["dataset_id"])
+            blocked_combo = store.get("combination", blocked["combination_ids"][0])
+            self.assertEqual(blocked["status"], "unresolved")
+            self.assertEqual(blocked_combo["status"], "unresolved")
+            self.assertEqual(blocked_combo["failure_history"][0]["reason"],
+                             "model response lost")
+            self.assertEqual(untouched["status"], "eligible")
+            self.assertEqual(campaign["budget"]["reserved"]["batches"], 1)
+            self.assertEqual(campaign["coverage"]["unexamined_combinations"], 2)
+            self.assertEqual(agent.run_once.call_count, 1)
+
+            resumed = run_regular_campaign(agent, gateway, **request)
+        self.assertEqual(resumed["status"], "budget_complete")
+        self.assertEqual(resumed["budget"]["used"]["batches"], 2)
+        recovered_combo = store.get("combination", blocked_combo["combination_id"])
+        self.assertEqual(recovered_combo["status"], "completed")
+        self.assertEqual(recovered_combo["failure_history"], blocked_combo["failure_history"])
 
     def _regular_target(self, status="SUBMITTING"):
         batch = self.root / "runs" / "batch-001"
@@ -224,6 +264,10 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         atomic_write_json(batch / "batch_context.json", {
             "objective": request["objective"], "started_at": started_at.isoformat(),
         })
+        # An unrelated batch can have the same scope, objective and time range.
+        atomic_write_json(batch.with_name("other-batch") / "batch_context.json", {
+            "objective": request["objective"], "started_at": started_at.isoformat(),
+        })
         atomic_write_json(batch / "prereg.json", {"variants": [{"expression": "rank(x)"}]})
         atomic_write_json(batch / "simulation_intent.json", {
             "status": "SUBMITTING", "expressions": ["rank(x)"],
@@ -288,6 +332,11 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         reconciled = coordinator.recover_task(
             runner, task["task_id"], gateway=self.gateway, agent=agent)
         self.assertEqual(reconciled["checkpoints"]["execute"]["status"], "budget_complete")
+        self.assertEqual(reconciled["checkpoints"]["execute"]["completed"][0]["batch_dir"],
+                         str(batch))
+        with self.assertRaisesRegex(ValueError, "missing from Campaign receipts"):
+            run_regular_campaign(
+                agent, self.gateway, **request, recovery_batch=batch.with_name("other-batch"))
         self.assertEqual(agent.calls, 1)
         self.assertEqual(self.gateway.calls, [])
         completed = runner.execute(task["task_id"])

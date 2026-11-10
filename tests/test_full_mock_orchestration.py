@@ -13,11 +13,11 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.research.orchestrator import MainOrchestrator, OrchestrationError
-from nastu_quant.research.workflow_adapter import MockWorkflowAdapter
-from nastu_quant.research.records import ResearchRecordStore
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
+from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
+from alpha_research.state.records import ResearchRecordStore
 
 
 class ScriptedGateway:
@@ -124,10 +124,10 @@ class FullMockWorkflowTests(unittest.TestCase):
             request["alpha_id"] = "SOURCE"
         task = runner.create(workflow, request)
         patches = [
-            patch("nastu_quant.research.super.research.KnowledgeService", FakeKnowledge),
-            patch("nastu_quant.research.super.research.DecisionRecorder", ScriptedRecorder),
-            patch("nastu_quant.research.optimization.research.KnowledgeService", FakeKnowledge),
-            patch("nastu_quant.research.optimization.research.DecisionRecorder", ScriptedRecorder),
+            patch("alpha_research.workflows.super_alpha.workflow.KnowledgeService", FakeKnowledge),
+            patch("alpha_research.workflows.super_alpha.workflow.DecisionRecorder", ScriptedRecorder),
+            patch("alpha_research.workflows.optimization.workflow.KnowledgeService", FakeKnowledge),
+            patch("alpha_research.workflows.optimization.workflow.DecisionRecorder", ScriptedRecorder),
         ]
         from contextlib import ExitStack
         with ExitStack() as stack:

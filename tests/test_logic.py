@@ -7,11 +7,14 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from nastu_quant import gatekeeper, metering, paths, recovery, state_store
-from nastu_quant.config import DEFAULT_CONFIG
-from nastu_quant.submission_gate import SubmissionGate
+from alpha_research.qualification import gates as gatekeeper
+from alpha_research.simulation import matching as recovery
+from alpha_research.state import metering, paths
+from alpha_research.state import store as state_store
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.state.operation_lock import SubmissionGate
 
 
 class TestConfig(unittest.TestCase):
