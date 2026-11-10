@@ -32,18 +32,20 @@ superseded constraints from them. The user's current request takes precedence.
   never repost a possibly submitted simulation.
 - If platform evidence or an operation is unavailable, report it as unresolved;
   never bypass local validation or substitute a successful result.
-- Never submit an Alpha or mutate Alpha properties automatically. Simulation
+- After verified Regular simulation readback, apply and verify research
+  provenance tags, using a distinct tag for diagnostic probes. Never submit
+  an Alpha or automatically change other Alpha properties. Simulation
   completion is not Candidate or submission proof.
 
 ## Research scope and evidence
 
 - Region is required. Preserve every user-supplied Region, Dataset, objective,
   and other scope value. Never silently substitute scope.
-- For Regular Campaigns, an omitted Dataset permits Agent selection from
-  current platform evidence with a recorded rationale. Omitted Category,
-  Delay, and Universe require discovery of every platform-valid combination
-  consistent with user constraints; budgets limit execution, not requested
-  coverage. Report every unexamined or unresolved combination. Fix all
+- Regular Campaigns run at Delay 1. When Dataset is omitted, schedule all
+  eligible Datasets from current platform evidence. Visit one combination per
+  Dataset in each round, with the batch limit applied per Dataset. Omitted
+  Category and Universe require discovery of every platform-valid combination
+  consistent with user constraints. Report every unexamined or unresolved combination. Fix all
   effective settings before backtesting; a script default is not evidence.
 - Keep each Regular expression within one Dataset and the platform's validated
   field and operator constraints. Super Alpha uses BRAIN's dedicated selection

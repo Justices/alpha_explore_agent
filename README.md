@@ -51,9 +51,12 @@ implementations in `workflows/` through the CLI.
   state root in `state/research_v1_1/plans/`. This command does not simulate.
   `run-campaign --objective ... --max-batches N` executes the discovered
   combinations serially, one batch at a time, and records Campaign progress
-  under `state/research_v1_1/campaign_runs/`. Repeated `--dataset` arguments
-  fix multiple Datasets. Omitting `--dataset` randomly selects one verified
-  Dataset. Each effective scope uses a saved pool of up to 100 randomly
+  under `state/research_v1_1/campaign_runs/`. Regular research runs at Delay 1.
+  Repeated `--dataset` arguments
+  fix multiple Datasets in the supplied order. Omitting `--dataset` schedules all
+  verified Datasets by ID. Each round visits one combination per Dataset before
+  returning for the next combination. The batch budget applies per Dataset.
+  Each effective scope uses a saved pool of up to 100 randomly
   sampled admissible fields, or all admissible fields when fewer are available.
   Dataset and field reads check account-specific exact-scope snapshots before
   fetching a complete catalog from BRAIN. Operators use one account-wide
@@ -69,16 +72,21 @@ implementations in `workflows/` through the CLI.
   stop reports unvisited combinations. An interrupted draft with no submission
   evidence remains recoverable and allows unrelated research to proceed.
   Retrying the same Campaign archives its verified unsubmitted draft before
-  replanning. A batch with unresolved submission evidence requires recovery.
+  replanning. Completed diagnostic probes can be resumed by their Campaign.
+  A failed attempt is recorded and consumes one batch slot, and the Campaign
+  continues within its remaining budget. Pending submissions stay recoverable.
+  The platform runner rejects matching requests with unsettled POST evidence
+  without blocking unrelated expressions or settings.
   Regular requests, including Regular optimization, check the account's
   completed-request Bloom cache before POST and index completed readback.
   Run `sync-backtest-cache` to index compatible Regular FASTEXPR requests from
   BRAIN IS and OS history. History entries with unverifiable or different
   effective settings are reported separately.
-  Completed production Regular simulations save local provenance tag plans.
-  Use `tag-alpha <alpha-id>` to preview the changes, add `--diagnostic` to
-  include available audited correlation name and color, and use `--apply`
-  for an explicit platform write with readback verification. Super workflows
+  Completed Regular simulations apply and verify provenance tags after readback.
+  Field diagnostics receive `DIAGNOSTIC_PROBE` and their Dataset tag.
+  Use `tag-alpha <alpha-id> --apply` to retry a pending tag. For production
+  Alphas, `--diagnostic` adds the audited correlation name and color to an
+  explicit update. Super workflows
   use the qualification audit without Bloom caching or tag plans.
   `recover-workflow --workflow regular <batch-dir>`, or the same
   command with `super` / `optimization` and a simulation-intent

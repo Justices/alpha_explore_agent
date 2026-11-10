@@ -291,9 +291,13 @@ class TestResearchAgent(unittest.TestCase):
         self.gateway.is_offline_mock = True
         self.model.is_offline_mock = True
         original_call = self.gateway.call
+        settings_schema = original_call("get_simulation_settings_schema")
+        self.gateway.calls.clear()
 
         def call_with_category(command, **params):
             result = original_call(command, **params)
+            if command == "get_platform_setting_options" and params.get("include_schema"):
+                return {**result, "simulation_settings_schema": settings_schema}
             if command == "get_datasets":
                 return [{**row, "category": {"id": "analyst", "name": "Analyst Estimates"}}
                         for row in result]
@@ -319,6 +323,10 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(context["research_id"], f"regular:campaign:{campaign['campaign_id']}")
         calls = [name for name, _ in self.gateway.calls]
         self.assertEqual(calls.count("simulate_batch"), 1)
+        self.assertEqual(calls.count("get_datasets"), 1)
+        self.assertEqual(calls.count("get_platform_setting_options"), 1)
+        self.assertEqual(calls.count("get_simulation_settings_schema"), 0)
+        self.assertEqual(calls.count("validate_simulation_settings"), 1)
         self.assertNotIn("submit_alpha", calls)
         self.assertEqual(runner.resume(task["task_id"]), done)
         self.assertEqual([name for name, _ in self.gateway.calls].count("simulate_batch"), 1)
@@ -607,8 +615,6 @@ class TestResearchAgent(unittest.TestCase):
         batch = next(Path(self.tmp.name).rglob("prereg.json")).parent
         intent = json.loads((batch / "simulation_intent.json").read_text(encoding="utf-8"))
         self.assertEqual(intent["status"], "SUBMITTING")
-        with self.assertRaises(ResearchError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
         # Platform records carry settings in the platform's own
         # (camelCase) key shape, not the intent's snake_case shape.
         platform_keys = {"instrument_type": "instrumentType",
@@ -813,13 +819,29 @@ class TestResearchAgent(unittest.TestCase):
             agent.run_once("slow lending signal", dataset_id="risk60")
         self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
 
-    def test_incomplete_catalog_without_probes_blocks_construction(self):
+    def test_catalog_coverage_allows_construction_without_optional_evidence_or_probes(self):
         self.gateway.catalog_incomplete = True
+        self.model.decisions["plan_probes"].update({
+            "required_dimensions": {field: ["nominal_coverage"] for field in ("signal_a", "signal_b")},
+            "requirement_reason": {"signal_a": "coverage for the primary signal",
+                                   "signal_b": "coverage for the comparison signal"},
+        })
+        self.model.decisions["construct_batch"].pop("field_report")
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
-        with self.assertRaises(ResearchError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
-        self.assertNotIn("construct_batch", self.model.tasks)
+        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
+
+    def test_construct_batch_uses_screened_fields_without_requiring_a_field_report(self):
+        self.model.decisions["construct_batch"]["field_report"] = {"signal_a": {"nominal_coverage": 0.9}}
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once("use screened fields", dataset_id="risk60")
+        self.assertEqual(self.model.tasks.count("construct_batch"), 1)
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        prereg = json.loads((Path(result["batch_dir"]) / "prereg.json").read_text(encoding="utf-8"))
+        self.assertNotIn("field_report", prereg["proposal"])
 
     def test_probe_alpha_id_alone_does_not_prove_field_properties(self):
         self.gateway.catalog_incomplete = True
@@ -827,17 +849,19 @@ class TestResearchAgent(unittest.TestCase):
         self.model.decisions["plan_probes"] = {"core_fields": ["signal_a"],
             "probes": [{"field_id": "signal_a", "expression": "signal_a",
                         "question": "field distribution",
-                        "measures": ["usable_observations", "refresh_rate",
-                                     "scale_units", "typical_level", "distribution"],
+                        "measures": ["usable_observations"],
                         "economic_relevance": "slow signal", "expected": "stable",
                         "failure_criterion": "unknown"}]}
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
-        with self.assertRaises(ResearchError):
+        with self.assertRaisesRegex(ResearchError, "outside the screened pool"):
             agent.run_once("slow lending signal", dataset_id="risk60")
-        self.assertNotIn("construct_batch", self.model.tasks)
+        evidence = next(Path(self.tmp.name).rglob("probe_evidence.json"))
+        probe = json.loads(evidence.read_text(encoding="utf-8"))["observations"][0]
+        self.assertFalse(probe.get("observations"))
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
 
-    def test_nonmaterial_unknown_field_properties_are_explicitly_recorded(self):
+    def test_completed_legacy_probes_resume_with_catalog_coverage_only(self):
         self.gateway.catalog_incomplete = True
         self.gateway.single_ids = ["P1", "A1"]
         self.gateway.single_probe_counts = True
@@ -867,8 +891,26 @@ class TestResearchAgent(unittest.TestCase):
         }]
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
-        result = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.model.fail_task_once = "construct_batch"
+        with self.assertRaisesRegex(RuntimeError, "model response lost"):
+            agent.run_once("slow lending signal", dataset_id="risk60")
+        batch = agent._unfinished_batch()
+        plan_path = batch / "probe_plan.json"
+        saved_plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        saved_plan["required_dimensions"]["signal_a"].extend(
+            ["refresh_rate", "scale_units", "typical_level", "distribution"])
+        plan_path.write_text(json.dumps(saved_plan), encoding="utf-8")
+        self.assertIsNone(agent._unfinished_batch(objective="another research"))
+        raw_path = batch / "probe_1_raw.json"
+        saved_raw = raw_path.read_bytes()
+        raw_path.unlink()
+        self.assertEqual(agent._unfinished_batch(objective="slow lending signal"), batch)
+        raw_path.write_bytes(saved_raw)
+        result = agent.recover(batch, completed_probes_only=True)
         self.assertEqual(result["alpha_ids"], ["A1"])
+        simulations = [args["label"] for command, args in self.gateway.calls
+                       if command == "simulate_batch"]
+        self.assertEqual(simulations, ["probe_1", "production"])
 
     def test_missing_universe_is_selected_from_live_options(self):
         self.config["scope"]["universe"] = None
@@ -949,8 +991,6 @@ class TestResearchAgent(unittest.TestCase):
             {"id": "P2", "regular": {"code": "signal_b"},
              "settings": intent["settings"]},
         ]
-        with self.assertRaises(ResearchError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
         with self.assertRaisesRegex(ResearchError, "provenance"):
             agent.recover(batch)
         recovery = json.loads((batch / "probe_1_recovery.json").read_text(encoding="utf-8"))
@@ -966,8 +1006,6 @@ class TestResearchAgent(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             agent.run_once("slow lending signal", dataset_id="risk60")
         batch = next(Path(self.tmp.name).rglob("batch_context.json")).parent
-        with self.assertRaises(ResearchError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
         result = agent.recover(batch)
         self.assertEqual(result["alpha_ids"], ["A1", "A2"])
         self.assertEqual(sum(name == "simulate_batch"
@@ -984,6 +1022,15 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(result["alpha_ids"], ["A1", "A2"])
         self.assertEqual(agent._unfinished_batch(), draft)
         self.assertFalse((draft / "void.json").exists())
+
+    def test_run_case_continues_after_failed_batch_and_counts_only_completed_batches(self):
+        self.model.fail_task_once = "plan_probes"
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        summary = agent.run_case("bounded research", max_batches=2, dataset_id="risk60")
+        self.assertEqual(summary["status"], "PARTIAL")
+        self.assertEqual(summary["batches_completed"], 1)
+        self.assertEqual(summary["failures"][0]["attempt"], 1)
+        self.assertEqual(summary["new_alpha_ids"], ["A1", "A2"])
 
     def test_recover_after_simulation_response_uses_saved_children(self):
         self.model.fail_task_once = "attribute_results"
@@ -1023,7 +1070,7 @@ class TestResearchAgent(unittest.TestCase):
             with self.assertRaisesRegex(ResearchError, "required field diagnostics"):
                 agent.run_once("diagnostic contract", dataset_id="risk60")
         self.assertTrue(any("不支持的诊断维度" in call.args[0]
-                            and "scale_units" in call.args[0] for call in progress.call_args_list))
+                            and "nominal_coverage" in call.args[0] for call in progress.call_args_list))
         self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
 
     def test_rejected_probe_expression_is_replanned_before_any_submission(self):
@@ -1053,8 +1100,6 @@ class TestResearchAgent(unittest.TestCase):
         with self.assertRaises(ResearchError):
             agent.run_once("slow lending signal", dataset_id="risk60")
         batch = next(Path(self.tmp.name).rglob("batch_context.json")).parent
-        with self.assertRaises(ResearchError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
         agent.void_batch(batch, "invalid model proposal")
         self.assertTrue((batch / "batch_context.json").exists())
         self.assertTrue((batch / "void.json").exists())
@@ -1071,8 +1116,7 @@ class TestResearchAgent(unittest.TestCase):
         batch = next(Path(self.tmp.name).rglob("simulation_intent.json")).parent
         with self.assertRaises(ResearchError):
             agent.void_batch(batch, "try to skip")
-        with self.assertRaisesRegex(ResearchError, "unfinished batch requires recovery"):
-            agent.run_once("unrelated research", dataset_id="risk60")
+        self.assertEqual(agent._unfinished_batch(), batch)
         self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
 
     def test_completed_diagnostics_can_be_archived_if_alpha_draft_is_invalid(self):

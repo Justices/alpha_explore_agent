@@ -60,8 +60,8 @@ def campaign_arguments(data):
             raise ValueError(f"{key} 必须是非空文本")
     if type(data["max_batches"]) is not int or data["max_batches"] < 1:
         raise ValueError("批次预算必须是正整数")
-    if "delay" in data and (type(data["delay"]) is not int or data["delay"] < 0):
-        raise ValueError("Delay 必须是非负整数")
+    if "delay" in data and (type(data["delay"]) is not int or data["delay"] != 1):
+        raise ValueError("Regular 研究仅支持 Delay 1")
     datasets = data.get("dataset_ids", [])
     if (not isinstance(datasets, list)
             or any(not isinstance(value, str) or not value.strip() or "\x00" in value

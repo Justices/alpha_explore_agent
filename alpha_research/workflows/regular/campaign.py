@@ -3,11 +3,13 @@
 import hashlib
 import json
 from datetime import datetime, timezone, timedelta
+from itertools import zip_longest
 from pathlib import Path
-from random import choice
 
-from alpha_research.workflows.regular.scope import discover_regular_scope
-from alpha_research.state.store import atomic_write_json, is_pre_submission_draft
+from alpha_research.workflows.regular.scope import discover_regular_scope, regular_delay
+from alpha_research.state.store import (
+    atomic_write_json, has_only_completed_probes, is_pre_submission_draft, read_json,
+)
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.progress import write_progress
 
@@ -23,13 +25,13 @@ def _key(request):
 
 
 def _work_items(plan):
-    return [{"dataset_id": dataset["dataset_id"],
-             "category": dataset["category"],
-             "region": combo["region"],
-             "delay": combo["delay"],
-             "universe": combo["universe"]}
-            for dataset in plan["datasets"]
-            for combo in dataset["combinations"]]
+    by_dataset = [
+        [{"dataset_id": dataset["dataset_id"], "category": dataset["category"],
+          "region": combo["region"], "delay": combo["delay"], "universe": combo["universe"]}
+         for combo in dataset["combinations"]]
+        for dataset in plan["datasets"]]
+    return [item for round_items in zip_longest(*by_dataset)
+            for item in round_items if item is not None]
 
 
 def _subtask_summary(state):
@@ -47,7 +49,10 @@ def _subtask_summary(state):
             group["status"] = status
         elif index in completed:
             status = "completed"
-        elif state["status"] == "budget_complete":
+        elif index in failures:
+            status = "unresolved"
+            group["status"] = "unresolved"
+        elif state["status"] in {"budget_complete", "partial", "unresolved"}:
             status = "skipped_budget"
         else:
             status = "eligible"
@@ -62,7 +67,7 @@ def _subtask_summary(state):
             continue
         if all(item["status"] == "completed" for item in group["combinations"]):
             group["status"] = "covered"
-        elif state["status"] == "budget_complete":
+        elif state["status"] in {"budget_complete", "partial", "unresolved"}:
             group["status"] = "partial_budget"
     return [groups[key] for key in sorted(groups)]
 
@@ -78,6 +83,9 @@ def _persist_record(store, kind, record):
         previous = store.get(kind, record[identity])
     except FileNotFoundError:
         previous = None
+    if previous is not None and {key: value for key, value in previous.items()
+                                 if key not in {"created_at", "updated_at"}} == record:
+        return
     now = datetime.now(timezone.utc)
     if previous is not None:
         last = datetime.fromisoformat(previous["updated_at"])
@@ -92,12 +100,13 @@ def _persist_record(store, kind, record):
         expected_updated_at=previous["updated_at"] if previous else None)
 
 
-def _sync_subtasks(state, state_root):
-    """Persist Campaign -> Dataset -> Combination lineage and coverage."""
+def _checkpoint_campaign(state, state_root, path):
+    """Commit the Campaign before updating its derived records."""
     store = ResearchRecordStore(state_root)
     summaries = _subtask_summary(state)
     completed = {entry["item_index"] for entry in state["completed"]}
     subtask_ids = []
+    records = []
     for summary in summaries:
         subtask_id = _key({"campaign_id": state["campaign_id"],
                            "dataset_id": summary["dataset_id"]})
@@ -122,7 +131,7 @@ def _sync_subtasks(state, state_root):
             receipts = [
                 entry for entry in state["completed"]
                 if entry["item_index"] == index]
-            _persist_record(store, "combination", {
+            records.append(("combination", {
                 "schema_version": 1, "combination_id": combination_id,
                 "subtask_id": subtask_id, "effective_settings": effective,
                 "support_evidence_ref": support_ref, "status": combination["status"],
@@ -130,19 +139,19 @@ def _sync_subtasks(state, state_root):
                 "batch_refs": [entry["batch_dir"] for entry in receipts],
                 "candidate_statuses": [
                     entry["candidate_status"] for entry in receipts],
-                "completed_batches": len(receipts)})
+                "completed_batches": len(receipts)}))
         summary["combination_ids"] = combination_ids
-        _persist_record(store, "dataset_subtask", {
+        records.append(("dataset_subtask", {
             "schema_version": 1, "subtask_id": subtask_id,
             "campaign_id": state["campaign_id"],
             "dataset_id": summary["dataset_id"],
             "combination_ids": combination_ids,
             "combinations": summary["combinations"],
             "completed_batches": summary["completed_batches"],
-            "status": summary["status"]})
+            "status": summary["status"]}))
     state["subtasks"] = summaries
     request = state["request"]
-    _persist_record(store, "campaign", {
+    records.append(("campaign", {
         "schema_version": 2, "campaign_id": state["campaign_id"],
         "workflow": "regular",
         "request": {
@@ -158,14 +167,24 @@ def _sync_subtasks(state, state_root):
         "status": state["status"],
         "stop_reason": state.get("error") or (
             state["status"] if state["status"] in
-            ("budget_complete", "user_stopped", "unresolved") else None),
+            ("budget_complete", "partial", "user_stopped", "unresolved") else None),
         "coverage": {
             "eligible_combinations": len(state["items"]),
             "completed_combinations": len(completed),
             "unexamined_combinations": len(state["items"]) - len(completed),
             "unselected_dataset_ids":
                 state["plan"].get("unselected_dataset_ids", []),
-            "unresolved": state["plan"].get("unresolved", [])}})
+            "unresolved": state["plan"].get("unresolved", [])}}))
+    state["updated_at"] = _now()
+    atomic_write_json(path, state)
+    failed_records = 0
+    for kind, record in records:
+        try:
+            _persist_record(store, kind, record)
+        except (OSError, ValueError):
+            failed_records += 1
+    if failed_records:
+        write_progress(f"Campaign 已保存，{failed_records} 条派生记录待同步")
 
 
 def _reconcile_active(agent, state, recovery_batch=None):
@@ -199,6 +218,8 @@ def _reconcile_active(agent, state, recovery_batch=None):
                 agent.void_batch(batch_dir, "Campaign retry after interruption before submission")
             write_progress(f"已归档本 Campaign 未提交回测的草稿，将重新规划 · {batch_dir}")
             matches.clear()
+        elif context.get("research_id") == research_id and has_only_completed_probes(batch_dir):
+            return batch_dir
     if not matches:
         if recovery_batch is not None:
             raise ValueError("bound recovery batch does not match the active Campaign item")
@@ -228,7 +249,23 @@ def _reconcile_active(agent, state, recovery_batch=None):
     state["active_item"] = None
     state.pop("active_started_at", None)
     state["budget"]["reserved"]["batches"] = 0
-    state["budget"]["used"]["batches"] = len(state["completed"])
+    state["budget"]["used"]["batches"] += 1
+    state["status"] = "active"
+    state.pop("error", None)
+
+
+def _record_attempt_failure(state, reason, batch_ref=None):
+    used = state["budget"]["used"]
+    failure = {
+        "item_index": state["active_item"], "attempt": used["batches"] + 1,
+        "started_at": state.pop("active_started_at", None),
+        "reason": reason, "recorded_at": _now()}
+    if isinstance(batch_ref, Path):
+        failure["batch_ref"] = str(batch_ref)
+    state.setdefault("failures", []).append(failure)
+    used["batches"] += 1
+    state["budget"]["reserved"]["batches"] = 0
+    state["active_item"] = None
     state["status"] = "active"
     state.pop("error", None)
 
@@ -246,11 +283,19 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         raise ValueError("max_batches must be positive")
     if not isinstance(objective, str) or not objective.strip():
         raise ValueError("objective is required")
+    if recovery_batch is None:
+        regular_delay(delay)
     request = {"objective": objective, "region": region,
                "dataset_ids": dataset_ids, "category": category,
                "delay": delay, "universe": universe,
                "max_batches": max_batches, "ppa_profile": ppa_profile}
-    campaign_id = _key(request)
+    legacy_id = _key(request)
+    campaign_id = _key({**request, "batch_budget": "per_dataset"})
+    if recovery_batch is not None:
+        context = read_json(Path(recovery_batch) / "batch_context.json", default={})
+        if isinstance(context, dict) and context.get("research_id") in (
+                None, f"regular:campaign:{legacy_id}"):
+            campaign_id = legacy_id
     research_id = f"regular:campaign:{campaign_id}"
     state_root = Path(agent.runs_root).resolve().parent
     path = (state_root / "state" /
@@ -259,6 +304,9 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         recovery_batch = Path(recovery_batch).resolve()
     if recovery_batch is not None and not path.exists():
         raise ValueError("Campaign state is missing; recovery cannot reconstruct it safely")
+    resume_probes = None
+    scope_options = None
+    fresh_dataset_proofs = {}
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
         if "plan_evidence_ref" not in state:
@@ -273,23 +321,25 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 state["failures"] = [{"item_index": active_before,
                                       "reason": state["error"],
                                       "recorded_at": state["updated_at"]}]
-            _reconcile_active(agent, state, recovery_batch)
-            state["updated_at"] = _now()
-            _sync_subtasks(state, state_root)
-            atomic_write_json(path, state)
+            try:
+                resume_probes = _reconcile_active(agent, state, recovery_batch)
+            except ValueError as exc:
+                if recovery_batch is not None or (execution_context and state["budget"]["limits"]["batches"] == 1):
+                    raise
+                _record_attempt_failure(state, str(exc))
+                write_progress("先前批次需要单独恢复，继续处理剩余预算")
+            _checkpoint_campaign(state, state_root, path)
         if recovery_batch is not None:
             if not any(Path(entry["batch_dir"]).resolve() == recovery_batch
                        for entry in state["completed"]):
                 raise ValueError("bound recovery batch is missing from Campaign receipts")
             state.pop("error", None)
-            if len(state["completed"]) >= max_batches:
+            if len(state["completed"]) >= state["budget"]["limits"]["batches"]:
                 state["status"] = "budget_complete"
             state["remaining_items"] = [
                 item for index, item in enumerate(state["items"])
                 if index not in {entry["item_index"] for entry in state["completed"]}]
-            state["updated_at"] = _now()
-            _sync_subtasks(state, state_root)
-            atomic_write_json(path, state)
+            _checkpoint_campaign(state, state_root, path)
             return {"campaign_id": campaign_id, "status": state["status"],
                     "batches_completed": len(state["completed"]),
                     "budget": state["budget"], "completed": state["completed"],
@@ -302,22 +352,21 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         write_progress("正在核验 BRAIN 数据集与研究范围")
         gateway.call("set_case", case_key=campaign_id,
                      run_id=campaign_id)
+        scope_options = gateway.call("get_platform_setting_options", include_schema=True)
         plan = discover_regular_scope(
             gateway, region=region, dataset_ids=dataset_ids,
-            category=category, delay=delay, universe=universe)
-        if dataset_ids is None and plan["datasets"]:
-            chosen = choice(plan["datasets"])
-            plan["agent_selection"] = [{
-                "dataset_id": chosen["dataset_id"], "mode": "random",
-                "reason": "Dataset omitted; uniformly sampled from verified eligible Datasets"}]
-            plan["unselected_dataset_ids"] = [
-                item["dataset_id"] for item in plan["datasets"]
-                if item["dataset_id"] != chosen["dataset_id"]]
-            items = _work_items({"datasets": [chosen]})
-        else:
-            items = _work_items(plan)
+            category=category, delay=delay, universe=universe, options=scope_options)
+        items = _work_items(plan)
+        plan["execution_order"] = items
+        plan["batches_per_dataset"] = max_batches
         evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
         atomic_write_json(evidence_path, plan)
+        for dataset in plan["datasets"]:
+            for combo in dataset["combinations"]:
+                if "detail_scope" in combo and "scope_evidence_source" in combo:
+                    fresh_dataset_proofs[(dataset["dataset_id"], combo["delay"], combo["universe"])] = {
+                        **combo, "dataset_id": dataset["dataset_id"],
+                        "requested_category": category, "plan_evidence_ref": str(evidence_path)}
         write_progress(f"范围核验完成，确认 {len(plan['datasets'])} 个可用数据集")
         if not items:
             write_progress("没有通过范围核验的研究组合")
@@ -327,28 +376,35 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                  "plan_evidence_ref": str(evidence_path),
                  "request": request, "plan": plan, "items": items,
                  "completed": [], "active_item": None,
-                 "budget": {"limits": {"batches": max_batches},
+                 "budget": {"limits": {"batches": max_batches * len({item["dataset_id"] for item in items})},
                             "reserved": {"batches": 0},
                             "used": {"batches": 0}},
                  "status": "planned", "created_at": _now(),
                  "updated_at": _now()}
-        _sync_subtasks(state, state_root)
-        atomic_write_json(path, state)
+        _checkpoint_campaign(state, state_root, path)
     items = state["items"]
-    while len(state["completed"]) < max_batches:
+    items_by_dataset = {}
+    for index, item in enumerate(items):
+        items_by_dataset.setdefault(item["dataset_id"], []).append(index)
+    dataset_slots = list(items_by_dataset.values())
+    attempt_limit = state["budget"]["limits"]["batches"]
+    while state["budget"]["used"]["batches"] < attempt_limit:
         if agent.stop_flag and agent.stop_flag.exists():
             state["status"] = "user_stopped"
             break
-        index = len(state["completed"]) % len(items)
+        used = state["budget"]["used"]["batches"]
+        round_number, dataset_slot = divmod(used, len(dataset_slots))
+        combinations = dataset_slots[dataset_slot]
+        index = (state["active_item"] if resume_probes is not None
+                 else combinations[round_number % len(combinations)])
         item = items[index]
-        write_progress(f"开始执行第 {len(state['completed']) + 1}/{max_batches} 批")
+        write_progress(f"开始执行第 {used + 1}/{attempt_limit} 批 · {item['dataset_id']}")
         state["active_item"] = index
-        state["active_started_at"] = _now()
+        if resume_probes is None:
+            state["active_started_at"] = _now()
         state["budget"]["reserved"]["batches"] = 1
         state["status"] = "running"
-        _sync_subtasks(state, state_root)
-        state["updated_at"] = _now()
-        atomic_write_json(path, state)
+        _checkpoint_campaign(state, state_root, path)
         try:
             run_kwargs = {
                 "fixed_scope": {"region": region, "delay": item["delay"],
@@ -360,48 +416,74 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             }
             if execution_context is not None:
                 run_kwargs["execution_context"] = execution_context
-            result = agent.run_once(
-                objective, dataset_id=item["dataset_id"], **run_kwargs)
+            if resume_probes is None:
+                if scope_options is None:
+                    scope_options = gateway.call("get_platform_setting_options", include_schema=True)
+                if isinstance(scope_options, dict):
+                    run_kwargs["scope_options"] = scope_options
+                proof = fresh_dataset_proofs.get((item["dataset_id"], item["delay"], item["universe"]))
+                if proof is not None:
+                    run_kwargs["dataset_scope_proof"] = proof
+                result = agent.run_once(objective, dataset_id=item["dataset_id"], **run_kwargs)
+            else:
+                write_progress("核验并复用已完成的字段诊断回测")
+                result = agent.recover(resume_probes, completed_probes_only=True,
+                                       execution_context=execution_context)
+                resume_probes = None
+            batch_dir = result.get("batch_dir") if isinstance(result, dict) else None
+            if (not isinstance(batch_dir, (str, Path)) or not str(batch_dir).strip()
+                    or not isinstance(result.get("alpha_ids"), list) or not result["alpha_ids"]
+                    or any(not isinstance(value, str) or not value.strip() for value in result["alpha_ids"])
+                    or not isinstance(result.get("candidate_status"), (dict, str))):
+                raise ValueError("batch returned an incomplete receipt")
+            receipt = {
+                "item_index": index, "dataset_id": item["dataset_id"],
+                "batch_dir": str(batch_dir), "alpha_ids": result["alpha_ids"],
+                "candidate_status": result["candidate_status"], "completed_at": _now(),
+            }
         except Exception as exc:
+            if not (execution_context and attempt_limit == 1):
+                batch_ref = resume_probes or getattr(getattr(agent, "recorder", None), "batch_dir", None)
+                _record_attempt_failure(state, str(exc), batch_ref)
+                resume_probes = None
+                _checkpoint_campaign(state, state_root, path)
+                write_progress(f"第 {used + 1} 批未完成，已记录失败 · {type(exc).__name__}")
+                continue
             state["status"] = "unresolved"
             state["error"] = str(exc)
             state["updated_at"] = _now()
             state.setdefault("failures", []).append({
                 "item_index": index, "reason": state["error"],
                 "recorded_at": state["updated_at"]})
-            # Keep the recovery checkpoint even if a derived record cannot be written.
-            atomic_write_json(path, state)
-            _sync_subtasks(state, state_root)
-            atomic_write_json(path, state)
+            _checkpoint_campaign(state, state_root, path)
             raise
-        state["completed"].append({
-            "item_index": index, "dataset_id": item["dataset_id"],
-            "batch_dir": result["batch_dir"],
-            "alpha_ids": result["alpha_ids"],
-            "candidate_status": result["candidate_status"],
-            "completed_at": _now()})
-        write_progress(f"已完成 {len(state['completed'])}/{max_batches} 批")
+        state["completed"].append(receipt)
+        write_progress(f"已完成 {len(state['completed'])}/{attempt_limit} 批")
         state["active_item"] = None
         state.pop("active_started_at", None)
         state["budget"]["reserved"]["batches"] = 0
-        state["budget"]["used"]["batches"] = len(state["completed"])
+        state["budget"]["used"]["batches"] += 1
         state.pop("error", None)
         state["status"] = "active"
-        _sync_subtasks(state, state_root)
-        state["updated_at"] = _now()
-        atomic_write_json(path, state)
+        _checkpoint_campaign(state, state_root, path)
     else:
-        state["status"] = "budget_complete"
+        if agent.stop_flag and agent.stop_flag.exists():
+            state["status"] = "user_stopped"
+        elif not state["completed"]:
+            state["status"] = "unresolved"
+        elif state["budget"]["used"]["batches"] > len(state["completed"]):
+            state["status"] = "partial"
+        else:
+            state["status"] = "budget_complete"
     state["remaining_items"] = [
         item for index, item in enumerate(items)
         if index not in {entry["item_index"] for entry in state["completed"]}]
-    state["updated_at"] = _now()
-    _sync_subtasks(state, state_root)
-    atomic_write_json(path, state)
+    _checkpoint_campaign(state, state_root, path)
     return {"campaign_id": campaign_id, "status": state["status"],
             "batches_completed": len(state["completed"]),
             "budget": state["budget"],
             "completed": state["completed"],
+            "failures": state.get("failures", []),
             "remaining_items": state["remaining_items"],
             "subtasks": state["subtasks"],
             "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),

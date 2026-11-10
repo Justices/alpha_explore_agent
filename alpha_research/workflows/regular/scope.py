@@ -6,12 +6,20 @@ Discovery is read-only and never chooses simulation defaults.
 
 from datetime import datetime, timezone
 
+from alpha_research.integrations.brain.gateway import GatewayError
+
 
 class ScopeDiscoveryError(ValueError):
     pass
 
 
 SCOPE_KEYS = ("region", "delay", "universe")
+
+
+def regular_delay(value):
+    if value is not None and (type(value) is not int or value != 1):
+        raise ScopeDiscoveryError("Regular research supports Delay 1 only")
+    return 1
 
 
 def exact_catalog_scope(row, scope):
@@ -44,7 +52,7 @@ def _rows(value):
 
 
 def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
-                           delay=None, universe=None):
+                           delay=None, universe=None, options=None):
     """Return every proven eligible Dataset/Delay/Universe combination.
 
     A supplied Dataset or Category whose eligibility cannot be proved is
@@ -52,12 +60,14 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
     """
     if not isinstance(region, str) or not region:
         raise ScopeDiscoveryError("Region is required")
+    delay = regular_delay(delay)
     if dataset_ids is not None:
         if (not isinstance(dataset_ids, list) or not dataset_ids or
                 any(not isinstance(item, str) or not item for item in dataset_ids) or
                 len(set(dataset_ids)) != len(dataset_ids)):
             raise ScopeDiscoveryError("dataset_ids must be a nonempty unique list")
-    options = gateway.call("get_platform_setting_options")
+    if options is None:
+        options = gateway.call("get_platform_setting_options")
     rows = options.get("instrument_options") if isinstance(options, dict) else None
     if not isinstance(rows, list) or not rows:
         raise ScopeDiscoveryError("platform settings are unavailable")
@@ -68,7 +78,7 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
         if row.get("Region") != region:
             continue
         current_delay = row.get("Delay")
-        if delay is not None and current_delay != delay:
+        if current_delay != delay:
             continue
         universes = row.get("Universe")
         if not isinstance(universes, list):
@@ -87,7 +97,11 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
     for current_delay, current_universe in settings:
         scope = {"instrument_type": "EQUITY", "region": region,
                  "delay": current_delay, "universe": current_universe}
-        catalog = _rows(gateway.call("get_datasets", **scope))
+        try:
+            catalog = _rows(gateway.call("get_datasets", **scope))
+        except (GatewayError, ScopeDiscoveryError):
+            unresolved.append({"scope": scope, "reason": "dataset_catalog_unavailable"})
+            continue
         catalogs.append({"scope": scope, "count": len(catalog)})
         by_id = {item.get("id"): item for item in catalog
                  if isinstance(item, dict) and isinstance(item.get("id"), str)}
@@ -106,8 +120,11 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
             detail = None
             if evidence is None or (category is not None and actual_category is None):
                 if dataset_id not in detail_cache:
-                    detail_cache[dataset_id] = gateway.call(
-                        "get_dataset_details", dataset_id=dataset_id)
+                    try:
+                        detail_cache[dataset_id] = gateway.call(
+                            "get_dataset_details", dataset_id=dataset_id)
+                    except GatewayError:
+                        detail_cache[dataset_id] = None
                 detail = detail_cache[dataset_id]
                 if not isinstance(detail, dict) or detail.get("id") != dataset_id:
                     unresolved.append({"dataset_id": dataset_id, "scope": scope,
@@ -144,6 +161,7 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                 "dataset_ids": dataset_ids, "category": category,
                 "delay": delay, "universe": universe},
             "observed_at": datetime.now(timezone.utc).isoformat(),
-            "datasets": [discovered[key] for key in sorted(discovered)],
+            "datasets": [discovered[key] for key in (dataset_ids or sorted(discovered))
+                         if key in discovered],
             "unresolved": unresolved, "catalogs": catalogs,
             "coverage_complete": not unresolved}

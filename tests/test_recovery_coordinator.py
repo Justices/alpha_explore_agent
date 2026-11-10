@@ -11,7 +11,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
 from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter
-from alpha_research.workflows.regular.campaign import _key, _reconcile_active, run_regular_campaign
+from alpha_research.integrations.brain.gateway import GatewayError
+from alpha_research.workflows.regular.campaign import (
+    _key, _persist_record, _reconcile_active, run_regular_campaign,
+)
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.store import atomic_write_json
 from alpha_research.simulation.intent import (
@@ -73,49 +76,67 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(state["status"], "planned")
         self.assertEqual(state["budget"]["reserved"]["batches"], 0)
 
-    def test_unspecified_campaign_dataset_is_chosen_randomly_from_exact_catalog(self):
+    def test_unspecified_campaign_attempts_all_d1_datasets_with_budget_one_each(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)
         agent.run_once.return_value = {"batch_dir": "batch", "alpha_ids": ["A1"],
                                        "candidate_status": {"A1": "EVIDENCE_PENDING"}}
-        scope = {"region": "HKG", "delay": 1, "universe": "TOP800"}
-        rows = [{"id": name, "category": {"id": "analyst", "name": "Analyst Estimates"}, **scope}
-                for name in ("model101", "model102")]
+        ids = [f"model{number}" for number in range(101, 106)]
         gateway = Mock()
-        gateway.call.side_effect = lambda command, **kwargs: {
-            "set_case": {},
-            "get_platform_setting_options": {"instrument_options": [{
-                "InstrumentType": "EQUITY", "Region": "HKG", "Delay": 1,
-                "Universe": ["TOP800"]}]},
-            "get_datasets": rows,
-        }[command]
-        with patch("alpha_research.workflows.regular.campaign.choice", create=True,
-                   side_effect=lambda eligible: eligible[-1]):
-            result = run_regular_campaign(
-                agent, gateway, **scope, category="Analyst", objective="random dataset", max_batches=2)
-        self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list],
-                         ["model102", "model102"])
-        agent._decide.assert_not_called()
-        self.assertEqual(result["unselected_dataset_ids"], ["model101"])
-        paths = [call.kwargs["field_pool_path"] for call in agent.run_once.call_args_list]
-        self.assertEqual(paths[0], paths[1])
 
-    def test_campaign_projects_blocked_item_and_retains_its_failure_after_resume(self):
+        def call(command, **kwargs):
+            if command == "get_platform_setting_options":
+                return {"instrument_options": [
+                    {"InstrumentType": "EQUITY", "Region": "HKG", "Delay": delay,
+                     "Universe": ["TOP500", "TOP800"]} for delay in (0, 1)]}
+            if command == "get_datasets":
+                self.assertEqual(kwargs["delay"], 1)
+                return [{"id": name, "category": {"id": "analyst", "name": "Analyst Estimates"}, **kwargs}
+                        for name in reversed(ids)]
+            return {}
+
+        gateway.call.side_effect = call
+        result = run_regular_campaign(
+            agent, gateway, region="HKG", category="Analyst",
+            objective="all eligible datasets", max_batches=1)
+        self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list],
+                         ids)
+        self.assertEqual(result["budget"]["limits"]["batches"], 5)
+        self.assertEqual(result["batches_completed"], 5)
+        self.assertEqual(sum(call.args[0] == "get_platform_setting_options"
+                             for call in gateway.call.call_args_list), 1)
+        self.assertTrue(all(call.kwargs["dataset_scope_proof"]["delay"] == 1
+                            for call in agent.run_once.call_args_list))
+        agent._decide.assert_not_called()
+        paths = [call.kwargs["field_pool_path"] for call in agent.run_once.call_args_list]
+        self.assertEqual(len(set(paths)), 5)
+        with self.assertRaisesRegex(ValueError, "Delay 1 only"):
+            run_regular_campaign(agent, gateway, region="HKG", delay=0,
+                                 objective="unsupported delay", max_batches=1)
+        agent.run_once.reset_mock()
+        result = run_regular_campaign(
+            agent, gateway, region="HKG", category="Analyst",
+            objective="two rounds across eligible datasets", max_batches=2)
+        self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list], ids * 2)
+        self.assertEqual([call.kwargs["fixed_scope"]["universe"] for call in agent.run_once.call_args_list],
+                         ["TOP500"] * 5 + ["TOP800"] * 5)
+        self.assertEqual(result["budget"]["used"]["batches"], 10)
+
+    def test_campaign_records_failed_attempt_and_continues_to_next_dataset(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)
         result = {"batch_dir": "batch", "alpha_ids": ["A1"],
                   "candidate_status": {"A1": "EVIDENCE_PENDING"}}
-        agent.run_once.side_effect = [RuntimeError("model response lost"), result, result]
+        agent.run_once.side_effect = [RuntimeError("model response lost"), result]
         combo = {"region": "GLB", "delay": 1, "universe": "TOP3000"}
         plan = {"unresolved": [], "datasets": [
             {"dataset_id": name, "category": "analyst", "combinations": [combo]}
             for name in ("analyst69", "analyst70")]}
         request = {"objective": "audit child state", "region": "GLB",
-                   "dataset_ids": ["analyst69", "analyst70"], "max_batches": 2}
+                   "dataset_ids": ["analyst69", "analyst70"], "max_batches": 1}
         store = ResearchRecordStore(self.root)
         with patch("alpha_research.workflows.regular.campaign.discover_regular_scope",
                    return_value=plan):
             gateway = Mock()
-            with self.assertRaisesRegex(RuntimeError, "model response lost"):
-                run_regular_campaign(agent, gateway, **request)
+            outcome = run_regular_campaign(agent, gateway, **request)
 
             campaign, = store.list("campaign")
             blocked, untouched = sorted(store.list("dataset_subtask"),
@@ -125,17 +146,70 @@ class RecoveryCoordinatorTests(unittest.TestCase):
             self.assertEqual(blocked_combo["status"], "unresolved")
             self.assertEqual(blocked_combo["failure_history"][0]["reason"],
                              "model response lost")
-            self.assertEqual(untouched["status"], "eligible")
-            self.assertEqual(campaign["budget"]["reserved"]["batches"], 1)
-            self.assertEqual(campaign["coverage"]["unexamined_combinations"], 2)
-            self.assertEqual(agent.run_once.call_count, 1)
+            self.assertEqual(untouched["status"], "covered")
+            self.assertEqual(campaign["budget"]["reserved"]["batches"], 0)
+            self.assertEqual(campaign["coverage"]["unexamined_combinations"], 1)
+            self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list],
+                             ["analyst69", "analyst70"])
 
             resumed = run_regular_campaign(agent, gateway, **request)
-        self.assertEqual(resumed["status"], "budget_complete")
+        self.assertEqual(outcome["status"], "partial")
+        self.assertEqual(resumed["status"], "partial")
         self.assertEqual(resumed["budget"]["used"]["batches"], 2)
-        recovered_combo = store.get("combination", blocked_combo["combination_id"])
-        self.assertEqual(recovered_combo["status"], "completed")
-        self.assertEqual(recovered_combo["failure_history"], blocked_combo["failure_history"])
+        self.assertEqual(resumed["batches_completed"], 1)
+        self.assertEqual(agent.run_once.call_count, 2)
+
+    def test_unavailable_catalog_scope_does_not_block_other_verified_combinations(self):
+        agent = Mock(runs_root=self.root / "runs", stop_flag=None)
+        agent.run_once.return_value = {"batch_dir": "batch", "alpha_ids": ["A1"],
+                                       "candidate_status": {"A1": "EVIDENCE_PENDING"}}
+        gateway = Mock()
+
+        def call(command, **kwargs):
+            if command == "get_platform_setting_options":
+                return {"instrument_options": [{"InstrumentType": "EQUITY",
+                    "Region": "HKG", "Delay": 1, "Universe": ["TOP500", "TOP800"]}]}
+            if command == "get_datasets":
+                if kwargs["universe"] == "TOP500":
+                    raise GatewayError("catalog request failed")
+                return [{"id": "model101", **kwargs}]
+            return {}
+
+        gateway.call.side_effect = call
+        outcome = run_regular_campaign(agent, gateway, objective="partial scope", region="HKG",
+                                       max_batches=1)
+        self.assertEqual(agent.run_once.call_args.kwargs["fixed_scope"]["universe"], "TOP800")
+        self.assertEqual(outcome["batches_completed"], 1)
+        self.assertEqual(outcome["unresolved"][0]["scope"]["universe"], "TOP500")
+        self.assertEqual(outcome["unresolved"][0]["reason"], "dataset_catalog_unavailable")
+
+    def test_campaign_keeps_running_with_bad_batch_receipt_and_failed_projection(self):
+        agent = Mock(runs_root=self.root / "runs", stop_flag=None)
+        agent.run_once.side_effect = [
+            {},
+            {"batch_dir": "second-batch", "alpha_ids": ["A2"],
+             "candidate_status": {"A2": "EVIDENCE_PENDING"}},
+        ]
+        combo = {"region": "GLB", "delay": 1, "universe": "TOP3000"}
+        plan = {"unresolved": [], "datasets": [
+            {"dataset_id": name, "category": "analyst", "combinations": [combo]}
+            for name in ("analyst69", "analyst70")]}
+
+        def persist(store, kind, record):
+            if kind == "combination" and record["effective_settings"]["dataset_id"] == "analyst69":
+                raise OSError("derived record unavailable")
+            return _persist_record(store, kind, record)
+
+        with (
+            patch("alpha_research.workflows.regular.campaign.discover_regular_scope", return_value=plan),
+            patch("alpha_research.workflows.regular.campaign._persist_record", side_effect=persist),
+        ):
+            result = run_regular_campaign(agent, Mock(), objective="isolation", region="GLB", max_batches=1)
+        saved = json.loads(Path(result["state_path"]).read_text(encoding="utf-8"))
+        self.assertEqual(saved["status"], "partial")
+        self.assertEqual([row["dataset_id"] for row in saved["completed"]], ["analyst70"])
+        self.assertEqual(len(saved["failures"]), 1)
+        self.assertEqual(saved["budget"]["used"]["batches"], 2)
 
     def _regular_target(self, status="SUBMITTING"):
         batch = self.root / "runs" / "batch-001"

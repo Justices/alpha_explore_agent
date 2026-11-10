@@ -45,15 +45,16 @@ Changing an established scope requires the approval required by the agent
 contract. Other effective settings must be supported by evidence and fixed
 before each backtest.
 
-For Regular Research, omitted Category, Delay or Universe means the **full set
+Regular Research runs at Delay 1. Omitted Category or Universe means the **full set
 of platform-valid combinations** consistent with the Region, Dataset and other
 user constraints. This is a coverage obligation, not permission to invent a
 Cartesian product: validate combinations against current platform evidence.
 Plan and record the eligible set, the order of work, and any unavailable
 evidence. Configured budgets may limit what is actually explored; report the
 unexplored or unresolved remainder and do not call a budget-limited run
-exhaustive. When Dataset is omitted, a Regular Campaign randomly selects one
-verified eligible Dataset and records the choice and unselected Datasets. A
+exhaustive. When Dataset is omitted, a Regular Campaign schedules all verified
+eligible Datasets by ID. Each round visits one combination per Dataset before
+returning for the next combination. The batch limit applies per Dataset. A
 fixed Dataset with no valid combination is reported as such. An empty or
 unverifiable eligible set is unresolved, and the Campaign retains its scope
 evidence.

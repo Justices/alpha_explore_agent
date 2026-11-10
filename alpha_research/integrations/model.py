@@ -25,11 +25,8 @@ class ModelError(RuntimeError):
 FIELD_EVIDENCE_KEYS = {
     "nominal_coverage": "coverage",
     "usable_observations": "zeroFraction",
-    "refresh_rate": "updateFrequency",
-    "scale_units": "units",
-    "typical_level": "median",
-    "distribution": "distribution",
 }
+REQUIRED_FIELD_DIMENSIONS = ("nominal_coverage",)
 
 
 TASK_INSTRUCTIONS = {
@@ -70,24 +67,22 @@ TASK_INSTRUCTIONS = {
         "Return {dataset_id, reason}."
     ),
     "plan_probes": (
-        "Before hypothesis design, inspect field evidence and identify material gaps. "
-        "For required_dimensions and probe measures use only these exact dimension IDs: "
+        "Screen fields using the supplied platform catalog: field description, type, coverage, "
+        "dateCoverage, alphaCount, userCount, and valueScore when present. "
+        "Popularity and scores are screening signals, not proof of performance. "
+        "For probe measures use only these exact dimension IDs: "
         + ", ".join(FIELD_EVIDENCE_KEYS) + ". "
-        "Use scale_units for units. Discuss publication timing and tradeability in reason "
-        "when relevant, and mark them unknown if evidence is missing. They are not dimension IDs. "
         "Generic diagnostic simulations only provide approximate nominal coverage and, with a "
         "nonzero-value test, usable observations. Do not claim other evidence from these probes. "
-        "For a MATRIX field, use a direct field expression for nominal coverage and "
-        "`FIELD != 0 ? 1 : 0` for usable observations, replacing FIELD with the exact field ID. "
         "Do not use field-to-field division or subtraction, including a field divided by itself. "
         "Use only operators in context.operators when supplied. If validation_feedback is present, "
         "correct the rejected probe in previous_probe_plan and return a complete revised plan. "
         "Return core_fields as a nonempty list of unique exact field IDs from context.fields. "
-        "Choose a required_dimensions map for each core field, "
-        "including nominal_coverage and usable_observations; justify this in "
-        "requirement_reason. Where catalog evidence is missing for either mandatory dimension, "
-        "provide a targeted probe if the supplied field and scope can support it. Use only "
-        "targeted probes for material unknowns. Each probe "
+        "Set required_dimensions to nominal_coverage only for each core field and explain the field "
+        "choice in requirement_reason as a nonempty string or a map with one nonempty string for "
+        "each exact core field ID. Use the platform's coverage as evidence. Return no probes "
+        "for routine field screening. Propose a probe only when the research objective calls for a "
+        "specific diagnostic question that the supplied catalog cannot answer. Each probe "
         "needs field_id (one of core_fields), expression, question, measures, "
         "economic_relevance, expected, failure_criterion, "
         "and a research object with nonempty idea, data_rationale, operator_rationale, "
@@ -101,8 +96,8 @@ TASK_INSTRUCTIONS = {
         "into design choices; never invent missing probe evidence. Return a JSON object with "
         "hypothesis, expected_sign, structure_window_rationale, data_rationale, "
         "operator_rationale, field_relationship, settings_rationale, failure_criterion, "
-        "field_report, mechanism_tags, field_generation_tags, and variants. Field reports must cite available evidence for each "
-        "required dimension and list nonmaterial unknowns with reason and why_not_material. "
+        "mechanism_tags, field_generation_tags, and variants. Use only the screened core_fields "
+        "and record relevant limitations in the research rationale. "
         "Each variant needs expression and ex-ante reason. These top-level rationale "
         "fields plus hypothesis, expected_sign, and failure_criterion must be substantive, "
         "nonempty research evidence suitable for the local pre-backtest receipt. "

@@ -186,7 +186,8 @@ function board(){
 function runtimeTasks(){
  if(!localAgent)return "";
  const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
-   esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—")
+   esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—"),
+   esc(row.batches_attempted??"—")
  ]);
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
@@ -201,7 +202,7 @@ function runtimeTasks(){
  const warning=config&&config.status!=="loaded"?
    '<p class="toolbar">'+(config.status==="missing"?"缺少研究配置文件。":"研究配置文件无法读取。")+
    ' <code>'+esc(config.path)+'</code></p>':"";
- const records=rows.length?table(["Campaign ID","执行状态","已完成批次"],rows):
+ const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次"],rows):
    launchState?.status==="running"
      ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。Campaign 记录写入后会自动显示。")
      : blank("暂无 CLI Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
@@ -254,18 +255,18 @@ const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
 const section=(s)=>'<h3 class="section">'+s+'</h3>';
 function launchForm(){
  show("启动 Regular Campaign",
-   '<p>启动后，Agent 会核验范围，并在预算内向 BRAIN 发起符合条件的模拟。每个有效组合随机抽取最多 100 个合格字段，少于 100 个时全部使用。</p>'+
+   '<p>填 1 时，每个可用 Dataset 尝试一批，每批可含 1–8 条表达式。每个有效组合抽取最多 100 个合格字段，后续批次复用同一字段池。</p>'+
    grid(field("region","Region","", "text",true),
-        field("max_batches","批次预算",1,"number",true),
-        field("dataset_ids","Dataset ID（留空时随机选一个，多个用逗号分隔）"),
+        field("max_batches","每个 Dataset 的研究批次数",1,"number",true),
+        field("dataset_ids","Dataset ID（留空时依次处理可用 Dataset，多个用逗号分隔）"),
         field("category","Category"),
-        field("delay","Delay","","number"),
+        field("delay","Delay",1,"number"),
         field("universe","Universe"),
         field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
         field("objective","研究目标","","area",true)), {kind:"launch"});
  const form=$("#form").elements;
  form.max_batches.min=1;form.max_batches.step=1;
- form.delay.min=0;form.delay.step=1;
+ form.delay.readOnly=true;
 }
 
 function credentialsForm(){

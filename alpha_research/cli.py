@@ -66,7 +66,7 @@ def main(argv=None):
     campaign.add_argument("--category")
     campaign.add_argument("--delay", type=int)
     campaign.add_argument("--universe")
-    campaign.add_argument("--max-batches", type=int, required=True)
+    campaign.add_argument("--max-batches", type=int, required=True, help="attempt budget per Dataset")
     campaign.add_argument("--ppa", action="store_true",
                           help="apply the optional PPA Profile")
     campaign.add_argument("--brain-credentials-stdin", action="store_true",
@@ -292,6 +292,7 @@ def main(argv=None):
                         "campaign_id": saved.get("campaign_id"),
                         "status": saved.get("status"),
                         "batches_completed": len(saved.get("completed", [])),
+                        "batches_attempted": saved.get("budget", {}).get("used", {}).get("batches"),
                         "subtasks": saved.get("subtasks", []),
                         "active_item": saved.get("active_item"),
                         "path": str(path)})

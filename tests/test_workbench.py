@@ -73,6 +73,7 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertNotIn(credentials["password"], header)
                 cookie = header.split(";", 1)[0]
                 self.assertEqual(post(origin, '{"region":"EUR"}', cookie=cookie)[0], 400)
+                self.assertEqual(post(origin, json.dumps({**request, "delay": 0}), cookie=cookie)[0], 400)
                 self.assertEqual(post(origin, cookie=cookie)[0], 202)
                 self.assertTrue(entered.wait(3))
                 running = status()

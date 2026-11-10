@@ -1,5 +1,8 @@
 """Cache keys for completed BRAIN Regular requests and account history."""
 
+import hashlib
+import json
+
 
 _SETTINGS = {
     "instrumentType", "region", "universe", "delay", "decay", "neutralization",
@@ -23,6 +26,17 @@ def cache_record(payload):
     return {"expression": payload["regular"], "dataset_id": "PLATFORM_REGULAR",
             "scope": {key: settings[key] for key in ("region", "delay", "universe")},
             "settings": settings}
+
+
+def submission_key(payload):
+    """Identify a platform request independently of its batch and research."""
+    normalized = _normalize(payload)
+    expressions = ("regular",) if payload["type"] == "REGULAR" else ("selection", "combo")
+    for key in expressions:
+        normalized[key] = normalized[key].strip()
+    encoded = json.dumps(normalized, sort_keys=True, separators=(",", ":"),
+                         ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def history_payload(alpha):

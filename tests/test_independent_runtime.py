@@ -342,6 +342,25 @@ class TestIndependentRuntime(unittest.TestCase):
             self.runtime.run_simulation_batch(self._request())
         self.assertFalse(any(call[:2] == ("POST", "/simulations") for call in self.client.calls))
 
+    def test_regular_production_submission_does_not_recheck_catalog_coverage(self):
+        original = self.client.request
+
+        def request(method, path, **kwargs):
+            response = original(method, path, **kwargs)
+            if path == "/data-fields":
+                payload = response.json()
+                payload["results"][0].pop("coverage")
+                return Response(payload)
+            return response
+
+        self.client.request = request
+        self._admit()
+        for overrides in ({"label": "probe_1"}, {"origin_alpha_id": "source_alpha"}):
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(PlatformError, "coverage evidence"):
+                self.runtime.run_simulation_batch({**self._request(), **overrides})
+        result = self.runtime.run_simulation_batch(self._request())
+        self.assertEqual(result["runner"]["status"], "COMPLETE")
+
     def test_completed_platform_request_blocks_a_second_batch_before_post(self):
         self._admit()
         self.runtime.run_simulation_batch(self._request())
@@ -427,11 +446,8 @@ class TestIndependentRuntime(unittest.TestCase):
         self.assertNotIn("research_tags", result["results"][0])
         self.assertFalse((self.runtime.root / "tag_plans").exists())
 
-    def test_completed_alpha_tag_preview_is_read_only_and_apply_is_verified(self):
+    def test_completed_alpha_tags_are_automatically_written_and_verified(self):
         self._admit()
-        result = self.runtime.run_simulation_batch(self._request())
-        self.assertEqual(result["results"][0]["research_tags"]["tags"],
-                         ["DS:analyst69", "ORG_ALPHA"])
         platform_tags = ["existing"]
         writes = []
         original = self.client.request
@@ -442,19 +458,37 @@ class TestIndependentRuntime(unittest.TestCase):
                     writes.append(json)
                     platform_tags[:] = json["tags"]
                     return Response({})
-                return Response({"id": "A1", "type": "REGULAR", "tags": platform_tags.copy()})
+                payload = original(method, path, params=params, json=json).json()
+                return Response({**payload, "tags": platform_tags.copy()})
             return original(method, path, params=params, json=json)
 
         self.client.request = request
+        result = self.runtime.run_simulation_batch({**self._request(), "label": "probe_1"})
+        self.assertEqual(result["results"][0]["research_tags"]["tags"],
+                         ["DS:analyst69", "DIAGNOSTIC_PROBE"])
+        self.assertEqual(platform_tags, ["existing", "DS:analyst69", "DIAGNOSTIC_PROBE"])
+        self.assertEqual(len(writes), 1)
+        receipt = self.runtime._tag_plan_path("A1").with_suffix(".receipt.json")
+        self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["status"], "applied")
         preview = self.runtime.dispatch("tag_alpha", {"alpha_id": "A1"})
         self.assertEqual(preview["status"], "preview")
-        self.assertEqual(writes, [])
-        applied = self.runtime.dispatch("tag_alpha", {"alpha_id": "A1", "apply": True})
-        self.assertEqual(applied["status"], "applied")
-        self.assertEqual(platform_tags, ["existing", "DS:analyst69", "ORG_ALPHA"])
         self.assertEqual(self.runtime.dispatch("tag_alpha", {
             "alpha_id": "A1", "apply": True})["status"], "already_applied")
         self.assertEqual(len(writes), 1)
+
+    def test_tag_failure_keeps_completed_simulation_and_resume_retries_only_tags(self):
+        self._admit()
+        request = self._request()
+        with patch.object(self.runtime, "tag_alpha", side_effect=PlatformError("tag write failed")):
+            completed = self.runtime.run_simulation_batch(request)
+        self.assertEqual(completed["runner"]["status"], "COMPLETE")
+        with patch.object(self.runtime, "tag_alpha",
+                          return_value={"status": "applied"}) as tag:
+            self.runtime.resume_simulation_batch({
+                "batch_id": request["batch_id"], "label": request["label"]})
+        self.assertTrue(tag.called)
+        self.assertEqual(sum(method == "POST" and path == "/simulations"
+                             for method, path, _, _ in self.client.calls), 1)
 
     def test_live_schema_is_translated_to_exact_scope_choices(self):
         def by_region(values):
@@ -473,7 +507,9 @@ class TestIndependentRuntime(unittest.TestCase):
                 return Response({"actions": {"POST": {"settings": {"children": schema}}}})
             return original(method, path, params=params, json=json)
         self.client.request = with_options
-        rows = self.runtime.dispatch("get_platform_setting_options", {})["instrument_options"]
+        options = self.runtime.dispatch("get_platform_setting_options", {"include_schema": True})
+        self.assertEqual(options["simulation_settings_schema"], schema)
+        rows = options["instrument_options"]
         self.assertEqual(rows, [{"InstrumentType": "EQUITY", "Region": "GLB", "Delay": 1,
                                  "Universe": ["TOP3000"], "Neutralization": ["MARKET", "NONE"]}])
 
@@ -697,6 +733,33 @@ class TestIndependentRuntime(unittest.TestCase):
         with self.assertRaises(PlatformError):
             self.runtime.resume_simulation_batch(self.runner)
         self.assertEqual(sum(call[0] == "POST" for call in self.client.calls), 1)
+
+    def test_pending_post_blocks_same_expression_across_cases_only(self):
+        self._admit()
+        self.client.post_error = TimeoutError("response lost")
+        with self.assertRaises(PlatformError):
+            self.runtime.run_simulation_batch(self._request())
+        marker_path = next(self.runtime.run_root.glob("batches/*.post_started.json"))
+        self.client.post_error = None
+        self.runtime.set_case("other_case", "other_run")
+        self._admit()
+        request = self._request()
+        with self.assertRaisesRegex(PlatformError, "identical simulation request is pending"):
+            self.runtime.check_simulation_cache({
+                "settings": SETTINGS, "expressions": ["rank(field_a)"]})
+        with self.assertRaisesRegex(PlatformError, "identical simulation request is pending"):
+            self.runtime.run_simulation_batch(request)
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        marker.pop("submission_keys")
+        marker.pop("account_namespace")
+        marker_path.write_text(json.dumps(marker), encoding="utf-8")
+        with self.assertRaisesRegex(PlatformError, "identical simulation request is pending"):
+            self.runtime.run_simulation_batch(request)
+        request["batch_id"] = "20261028_120001_abcdef12"
+        request["variants"][0]["expression"] = "rank(ts_mean(field_a, 5))"
+        result = self.runtime.run_simulation_batch(request)
+        self.assertEqual(result["runner"]["status"], "COMPLETE")
+        self.assertEqual(sum(call[0] == "POST" for call in self.client.calls), 2)
 
     def test_interrupted_poll_resumes_saved_location_without_reposting(self):
         self._admit()

@@ -41,6 +41,46 @@ def is_pre_submission_draft(batch_dir: Path) -> bool:
     )
 
 
+def has_only_completed_probes(batch_dir: Path) -> bool:
+    """Verify that every diagnostic submission is settled and production has not started."""
+    try:
+        names = {path.name for path in batch_dir.iterdir()}
+    except OSError:
+        return False
+    if names.intersection({"simulation_intent.json", "simulation_raw.json",
+                           "results.json", "gate.json", "void.json"}):
+        return False
+    plan = read_json(batch_dir / "probe_plan.json")
+    probes = plan.get("probes") if isinstance(plan, dict) else None
+    if (not isinstance(probes, list) or not probes or
+            any(not isinstance(probe, dict) or not isinstance(probe.get("expression"), str)
+                or not probe["expression"].strip() for probe in probes)):
+        return False
+    evidence_files = {name for name in names
+                      if name.startswith("probe_") and name.endswith(("_intent.json", "_raw.json"))}
+    for number, offset in enumerate(range(0, len(probes), 8), start=1):
+        intent_name = f"probe_{number}_intent.json"
+        raw_name = f"probe_{number}_raw.json"
+        expressions = [probe["expression"] for probe in probes[offset:offset + 8]]
+        intent = read_json(batch_dir / intent_name)
+        raw = read_json(batch_dir / raw_name)
+        rows = raw.get("alpha_results") if isinstance(raw, dict) else None
+        if (not isinstance(intent, dict) or intent.get("status") != "READ_BACK"
+                or intent.get("expressions") != expressions
+                or not isinstance(rows, list) or len(rows) != len(expressions)):
+            return False
+        alpha_ids = set()
+        for expression, row in zip(expressions, rows):
+            if (not isinstance(row, dict) or row.get("success") is not True
+                    or row.get("expression") != expression
+                    or not isinstance(row.get("alpha_id"), str) or not row["alpha_id"].strip()
+                    or row["alpha_id"] in alpha_ids):
+                return False
+            alpha_ids.add(row["alpha_id"])
+        evidence_files.difference_update((intent_name, raw_name))
+    return not evidence_files
+
+
 # --- research state -------------------------------------------------------
 
 def research_state_path() -> Path:

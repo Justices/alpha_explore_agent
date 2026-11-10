@@ -23,7 +23,7 @@ from alpha_research.progress import write_progress
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
 from alpha_research.simulation.matching import SETTING_KEYS
 from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
-from alpha_research.simulation.platform_cache import cache_record, history_payload
+from alpha_research.simulation.platform_cache import cache_record, history_payload, submission_key
 from alpha_research.simulation.tags import diagnostic_properties, research_tags
 from alpha_research.state.store import atomic_write_json, file_sha256, read_json
 from alpha_research.state.records import ResearchRecordStore
@@ -249,7 +249,7 @@ class PlatformRuntime:
             raise PlatformError("platform simulation settings schema is unreadable")
         return schema
 
-    def _setting_options(self):
+    def _setting_options(self, *, include_schema=False):
         schema = self._settings_schema()
         try:
             types = schema["instrumentType"]["choices"]
@@ -271,7 +271,10 @@ class PlatformRuntime:
             raise PlatformError("platform scope choices are unreadable") from exc
         if not rows:
             raise PlatformError("platform scope choices are empty")
-        return {"instrument_options": rows, "total_combinations": len(rows)}
+        result = {"instrument_options": rows, "total_combinations": len(rows)}
+        if include_schema:
+            result["simulation_settings_schema"] = schema
+        return result
 
     @staticmethod
     def _catalog_layout(relative):
@@ -540,8 +543,10 @@ class PlatformRuntime:
             if verdict.get("verdict") != "PASS" or not verdict.get("fields"):
                 raise PlatformError("expression failed local field or operator validation")
             fields_used = [by_id[field] for field in verdict["fields"]]
-            if any(not isinstance(row.get("coverage"), (int, float)) or isinstance(row.get("coverage"), bool)
-                   or not math.isfinite(row["coverage"]) or not 0 <= row["coverage"] <= 1 for row in fields_used):
+            if (request.get("origin_alpha_id") or request["label"].startswith("probe_")) and any(
+                    not isinstance(row.get("coverage"), (int, float)) or isinstance(row.get("coverage"), bool)
+                    or not math.isfinite(row["coverage"]) or not 0 <= row["coverage"] <= 1
+                    for row in fields_used):
                 raise PlatformError("field coverage evidence is unavailable")
             research = variant.get("research")
             required = ("idea", "data_rationale", "operator_rationale", "field_relationship",
@@ -705,8 +710,13 @@ class PlatformRuntime:
         payloads = self._simulation_payloads(request)
         if request.get("type") != "SUPER":
             self._assert_platform_uncached(payloads)
+        account = self._account_namespace()
+        submission_keys = {submission_key(payload) for payload in payloads}
+        self._assert_no_pending_submission(submission_keys, account)
         atomic_write_json(paths["post_started"], {"request_sha256": progress["request_sha256"],
-                                                  "receipt_sha256": progress["receipt_sha256"]})
+                                                  "receipt_sha256": progress["receipt_sha256"],
+                                                  "account_namespace": account,
+                                                  "submission_keys": sorted(submission_keys)})
         progress.pop("unsubmitted_proof", None)
         progress["status"] = "SUBMITTING"
         atomic_write_json(paths["progress"], progress)
@@ -726,6 +736,32 @@ class PlatformRuntime:
                     for row in request["variants"]]
         return [{"type": "REGULAR", "settings": settings, "regular": row["expression"]}
                 for row in request["variants"]]
+
+    def _assert_no_pending_submission(self, submission_keys, account):
+        """Check durable POST markers under the submission gate before starting new work."""
+        for marker_path in (self.root / "cases").glob("*/sessions/*/batches/*.post_started.json"):
+            marker = self._load(marker_path)
+            if not isinstance(marker, dict):
+                raise PlatformError("pending simulation marker is unreadable")
+            if marker.get("account_namespace") not in (None, account):
+                continue
+            progress = read_json(marker_path.with_suffix("").with_suffix(".progress.json"))
+            request_digest = marker.get("request_sha256")
+            if (isinstance(progress, dict) and progress.get("status") == "COMPLETE"
+                    and progress.get("request_sha256") == request_digest):
+                continue
+            keys = marker.get("submission_keys")
+            if (not isinstance(keys, list) or not keys or
+                    any(not isinstance(key, str) or not re.fullmatch(r"[a-f0-9]{64}", key)
+                        for key in keys)):
+                request_path = marker_path.with_suffix("").with_suffix(".request.json")
+                if not request_path.is_file() or file_sha256(request_path) != request_digest:
+                    raise PlatformError("pending simulation request evidence is unreadable")
+                previous = self._simulation_payloads(self._load(request_path))
+                keys = [submission_key(payload) for payload in previous]
+            if submission_keys.intersection(keys):
+                write_progress("同一回测请求已有待核对的提交记录，已跳过重复提交")
+                raise PlatformError("identical simulation request is pending recovery; no simulation posted")
 
     def _assert_platform_uncached(self, payloads):
         try:
@@ -758,7 +794,10 @@ class PlatformRuntime:
             raise PlatformError("Regular cache check requires expressions")
         request = {"settings": settings,
                    "variants": [{"expression": expr} for expr in expressions]}
-        self._assert_platform_uncached(self._simulation_payloads(request))
+        payloads = self._simulation_payloads(request)
+        self._assert_platform_uncached(payloads)
+        self._assert_no_pending_submission(
+            {submission_key(payload) for payload in payloads}, self._account_namespace())
         return {"status": "clear"}
 
     def _history_stage(self, stage, cutoff):
@@ -934,7 +973,7 @@ class PlatformRuntime:
                              "alpha_id": alpha_id, "success": True, "is": details.get("is"),
                              "details": details})
         regular = request.get("type") != "SUPER"
-        if regular and not request["label"].startswith("probe_"):
+        if regular:
             tags = research_tags(request)
             for row in rows:
                 row["research_tags"] = {"status": "planned", "tags": tags}
@@ -950,7 +989,28 @@ class PlatformRuntime:
         progress["output_sha256"] = hashlib.sha256(paths["output"].read_bytes()).hexdigest()
         progress["status"] = "COMPLETE"
         atomic_write_json(paths["progress"], progress)
+        if regular:
+            self._apply_completed_tags(rows, progress["request_sha256"])
         return {"results": rows, "runner": self._metadata(paths)}
+
+    def _apply_completed_tags(self, rows, request_digest):
+        for row in rows:
+            alpha_id = row["alpha_id"]
+            try:
+                plan_path = self._tag_plan_path(alpha_id)
+                plan = read_json(plan_path)
+                if not isinstance(plan, dict) or plan.get("request_sha256") != request_digest:
+                    continue
+                receipt_path = plan_path.with_suffix(".receipt.json")
+                receipt = read_json(receipt_path)
+                if (isinstance(receipt, dict) and receipt.get("request_sha256") == request_digest
+                        and receipt.get("status") in {"applied", "already_applied"}):
+                    continue
+                result = self.tag_alpha({"alpha_id": alpha_id, "apply": True})
+            except Exception as exc:
+                write_progress(f"回测已完成，Alpha {alpha_id} 标签待补 · {type(exc).__name__}")
+            else:
+                write_progress(f"Alpha {alpha_id} 已核验回测标签 · {result['status']}")
 
     def _tag_plan_path(self, alpha_id):
         namespace = self._account_namespace()
@@ -987,8 +1047,10 @@ class PlatformRuntime:
         existing = details.get("tags", [])
         if not isinstance(existing, list) or any(not isinstance(tag, str) for tag in existing):
             raise PlatformError("existing Alpha tags are unreadable")
-        desired = research_tags(self._load(request_path))
-        if any(isinstance(row, dict) and row.get("name") == "Power Pool Alpha"
+        request = self._load(request_path)
+        desired = research_tags(request)
+        if not request["label"].startswith("probe_") and any(
+               isinstance(row, dict) and row.get("name") == "Power Pool Alpha"
                for row in (details.get("classifications") or [])):
             desired.append("PowerPoolSelected")
         changes = {}
@@ -996,6 +1058,8 @@ class PlatformRuntime:
         if merged != existing:
             changes["tags"] = merged
         if params.get("diagnostic") is True:
+            if request["label"].startswith("probe_"):
+                raise PlatformError("correlation tags apply only to production Alphas")
             if ra_correlation_check_state(details) != "pass":
                 raise PlatformError("diagnostic tag requires current terminal RA evidence")
             records = [row for row in ResearchRecordStore(self.state_root.parent).list("candidate")
@@ -1024,7 +1088,8 @@ class PlatformRuntime:
                 raise PlatformError("Alpha tag write could not be verified by readback")
         result = {"alpha_id": alpha_id, "status": "applied" if changes else "already_applied",
                   "changes": changes}
-        atomic_write_json(plan_path.with_suffix(".receipt.json"), result)
+        atomic_write_json(plan_path.with_suffix(".receipt.json"),
+                          {**result, "request_sha256": plan["request_sha256"]})
         return result
 
     def resume_simulation_batch(self, params):
@@ -1055,7 +1120,10 @@ class PlatformRuntime:
         if paths["output"].exists() and progress.get("status") == "COMPLETE":
             if progress.get("output_sha256") != hashlib.sha256(paths["output"].read_bytes()).hexdigest():
                 raise PlatformError("completed simulation result changed; recovery blocked")
-            return {"results": self._load(paths["output"]), "runner": self._metadata(paths)}
+            rows = self._load(paths["output"])
+            if request.get("type") != "SUPER":
+                self._apply_completed_tags(rows, progress["request_sha256"])
+            return {"results": rows, "runner": self._metadata(paths)}
         if not progress.get("resume_url"):
             raise PlatformError("simulation may have been submitted but has no recovery location; do not repost")
         return self._finish(request, paths, progress)
@@ -1397,7 +1465,7 @@ class PlatformRuntime:
             with SingleWriterLock(self._snapshot_root / ".catalog.lock"):
                 return self._catalog(command, params)
         if command == "get_platform_setting_options":
-            return self._setting_options()
+            return self._setting_options(include_schema=params.get("include_schema") is True)
         if command == "get_simulation_settings_schema":
             return self._settings_schema()
         if command == "get_dataset_details":
