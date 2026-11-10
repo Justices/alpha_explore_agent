@@ -3,8 +3,9 @@
 All simulation state is owned by this project. A POST is never retried after
 an uncertain response; recovery only polls the saved platform location.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
+import hmac
 import json
 import math
 import os
@@ -20,7 +21,7 @@ from alpha_research.qualification.gates import (local_self_correlation_state, pa
                          ra_correlation_check_state, terminal_correlation_check)
 from alpha_research.state.paths import default_state_root, expand_path
 from alpha_research.simulation.matching import SETTING_KEYS
-from alpha_research.state.store import atomic_write_json
+from alpha_research.state.store import atomic_write_json, file_sha256, read_json
 from alpha_research.state.operation_lock import SubmissionGate
 from alpha_research.expressions.validator import regular_operator_names, validate
 
@@ -36,10 +37,18 @@ def _component(value, label):
 
 
 class WorldQuantClient:
-    """One in-memory session. Credentials are read only from the selected file."""
+    """One in-memory session using injected credentials or the selected file."""
     base_url = "https://api.worldquantbrain.com"
 
-    def __init__(self, session=None):
+    def __init__(self, session=None, *, credentials=None):
+        self._credentials = None
+        self._account = None
+        if credentials is not None:
+            if (not isinstance(credentials, dict)
+                    or not all(isinstance(credentials.get(key), str) and credentials[key].strip()
+                               for key in ("username", "password"))):
+                raise PlatformError("BRAIN credentials input is invalid")
+            self._credentials = credentials["username"], credentials["password"]
         self.session = session or requests.Session()
         self.authenticated = False
 
@@ -51,7 +60,7 @@ class WorldQuantClient:
             raise PlatformError("platform URL has an unexpected origin")
         return url
 
-    def _login(self):
+    def _file_credentials(self):
         source = os.environ.get("BRAIN_CREDENTIALS_FILE")
         if not source:
             raise PlatformError("BRAIN_CREDENTIALS_FILE is not configured")
@@ -66,15 +75,30 @@ class WorldQuantClient:
                 raise ValueError("incomplete credentials")
         except (OSError, ValueError, AttributeError, TypeError) as exc:
             raise PlatformError("BRAIN credentials file is unavailable or invalid") from exc
+        return email, password
+
+    def _auth(self):
+        auth = self._credentials or self._file_credentials()
+        if self._account is not None and self._account != auth[0]:
+            raise PlatformError("BRAIN account changed during the platform session")
+        self._account = auth[0]
+        return auth
+
+    def _login(self):
+        auth = self._auth()
         try:
             response = self.session.post(self.base_url + "/authentication",
-                                         auth=(email, password), timeout=40,
+                                         auth=auth, timeout=40,
                                          allow_redirects=False)
         except requests.RequestException as exc:
             raise PlatformError(f"BRAIN authentication failed: {type(exc).__name__}") from exc
         if response.status_code not in (200, 201):
             raise PlatformError(f"BRAIN authentication failed: HTTP {response.status_code}")
         self.authenticated = True
+
+    @property
+    def catalog_account(self):
+        return self._account if self._account is not None else self._auth()[0]
 
     def request(self, method, path, *, params=None, json=None):
         if not self.authenticated:
@@ -99,6 +123,7 @@ class WorldQuantClient:
 class PlatformRuntime:
     """The agent's own platform adapter; it does not load other repositories."""
     BATCH_LIMIT = 8
+    CATALOG_MAX_AGE = timedelta(days=7)
 
     def __init__(self, state_root=None, *, client=None, poll_timeout=1200):
         self.state_root = Path(state_root or os.environ.get("NASTU_QUANT_STATE_DIR")
@@ -111,6 +136,7 @@ class PlatformRuntime:
         self._recent_alpha_details = {}
         self._prefilter_batch = None
         self._prefilter_cache = {}
+        self._snapshot_root = None
 
     def close(self):
         self.client.close()
@@ -239,26 +265,85 @@ class PlatformRuntime:
             raise PlatformError("platform scope choices are empty")
         return {"instrument_options": rows, "total_combinations": len(rows)}
 
+    def _catalog_snapshot_path(self, relative):
+        if self._snapshot_root is None:
+            account = getattr(self.client, "catalog_account", None)
+            if not isinstance(account, str) or not account:
+                return None
+            key_path = self.root / ".catalog-snapshot-key"
+            try:
+                descriptor = os.open(key_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            except FileExistsError:
+                pass
+            else:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(os.urandom(32))
+            key = key_path.read_bytes()
+            if len(key) != 32:
+                raise PlatformError("catalog snapshot identity key is unreadable")
+            namespace = hmac.new(key, account.encode("utf-8"), hashlib.sha256).hexdigest()
+            self._snapshot_root = self.root / "catalog_snapshots" / namespace
+        return self._snapshot_root / relative
+
+    def _cached_catalog(self, path, expected, rows_key):
+        snapshot = read_json(path) if path is not None else None
+        if not isinstance(snapshot, dict):
+            return None
+        metadata, rows = snapshot.get("metadata"), snapshot.get(rows_key)
+        if (not isinstance(metadata, dict)
+                or any(metadata.get(name) != value for name, value in expected.items())
+                or metadata.get("complete") is not True
+                or not isinstance(rows, list) or type(metadata.get("count")) is not int
+                or metadata["count"] != len(rows)
+                or any(not isinstance(row, dict) or not isinstance(row.get("id"), str)
+                       or not row["id"] for row in rows)
+                or len({row["id"] for row in rows}) != len(rows)):
+            return None
+        try:
+            fetched = datetime.fromisoformat(metadata["fetched_at"])
+            if fetched.utcoffset() is None:
+                return None
+            age = datetime.now(timezone.utc) - fetched
+            if not timedelta(0) <= age <= self.CATALOG_MAX_AGE:
+                return None
+        except (KeyError, ValueError, TypeError):
+            return None
+        return snapshot
+
     def _catalog(self, command, params):
         root = self._require_case()
         scope = self._scope(params)
-        if command == "get_datasets":
-            rows = self._paginate("/data-sets", scope)
-            atomic_write_json(root / "catalogs" / "datasets.json", {"scope": scope, "rows": rows})
-            return rows
-        if command == "get_datafields":
-            dataset = _component(params.get("dataset_id"), "Dataset ID")
-            rows = self._paginate("/data-fields", {**scope, "dataset.id": dataset})
-            if any(not isinstance(row, dict) or not isinstance(row.get("id"), str) for row in rows):
-                raise PlatformError("field catalog contains invalid rows")
-            metadata = {"region": scope["region"], "delay": scope["delay"],
-                        "universe": scope["universe"], "instrument_type": "EQUITY",
-                        "dataset": dataset, "complete": True, "count": len(rows),
-                        "source": self.client.base_url + "/data-fields",
-                        "fetched_at": datetime.now(timezone.utc).isoformat()}
-            path = root / "fields" / scope["region"] / str(scope["delay"]) / scope["universe"] / f"{dataset}.json"
-            atomic_write_json(path, {"metadata": metadata, "fields": rows})
-            return rows
+        scope_path = Path(scope["region"], str(scope["delay"]), scope["universe"])
+        if command in {"get_datasets", "get_datafields"}:
+            dataset = (_component(params.get("dataset_id"), "Dataset ID")
+                       if command == "get_datafields" else None)
+            endpoint = "/data-fields" if dataset else "/data-sets"
+            rows_key = "fields" if dataset else "rows"
+            relative = (Path("fields") / scope_path / f"{dataset}.json" if dataset
+                        else Path("catalogs") / scope_path / "datasets.json")
+            cache_path = self._catalog_snapshot_path(relative)
+            if cache_path is None:
+                raise PlatformError("BRAIN account identity is required for catalog snapshots")
+            expected = {"region": scope["region"], "delay": scope["delay"],
+                        "universe": scope["universe"], "instrument_type": scope["instrumentType"],
+                        "source": self.client.base_url + endpoint}
+            if dataset:
+                expected["dataset"] = dataset
+            snapshot = (None if params.get("refresh") is True
+                        else self._cached_catalog(cache_path, expected, rows_key))
+            if snapshot is None:
+                query = {**scope, "dataset.id": dataset} if dataset else scope
+                rows = self._paginate(endpoint, query)
+                metadata = {**expected, "complete": True, "count": len(rows),
+                            "fetched_at": datetime.now(timezone.utc).isoformat()}
+                snapshot = {"metadata": metadata, rows_key: rows}
+                if not dataset:
+                    snapshot["scope"] = scope
+                atomic_write_json(cache_path, snapshot)
+            atomic_write_json(root / relative.with_suffix(".ref.json"), {
+                "snapshot_ref": str(cache_path), "sha256": file_sha256(cache_path),
+                "fetched_at": snapshot["metadata"]["fetched_at"]})
+            return snapshot[rows_key]
         data = self._json(self._request("GET", "/operators"))
         rows = data if isinstance(data, list) else data.get("results") if isinstance(data, dict) else None
         if not isinstance(rows, list) or not rows or any(not isinstance(row, dict) or not row.get("name") for row in rows):
@@ -329,12 +414,24 @@ class PlatformRuntime:
     def _admission(self, request):
         settings = request["settings"]
         root = self._require_case()
-        path = root / "fields" / settings["region"] / str(settings["delay"]) / settings["universe"] / f"{request['dataset_id']}.json"
-        snapshot = self._load(path)
-        metadata, fields = snapshot.get("metadata"), snapshot.get("fields")
+        relative = (Path("fields") / settings["region"] / str(settings["delay"])
+                    / settings["universe"] / f"{request['dataset_id']}.json")
         expected = {"region": settings["region"], "delay": settings["delay"],
                     "universe": settings["universe"], "instrument_type": settings["instrument_type"],
                     "dataset": request["dataset_id"], "complete": True}
+        ref_path = root / relative.with_suffix(".ref.json")
+        if ref_path.exists():
+            reference = self._load(ref_path)
+            path = self._catalog_snapshot_path(relative)
+            snapshot = self._cached_catalog(
+                path, {**expected, "source": self.client.base_url + "/data-fields"}, "fields")
+            if (not isinstance(reference, dict) or snapshot is None
+                    or reference.get("snapshot_ref") != str(path)
+                    or reference.get("sha256") != file_sha256(path)):
+                raise PlatformError("field snapshot changed or expired after research admission")
+        else:
+            snapshot = self._load(root / relative)
+        metadata, fields = snapshot.get("metadata"), snapshot.get("fields")
         if (not isinstance(metadata, dict) or any(metadata.get(k) != v for k, v in expected.items())
                 or not isinstance(fields, list) or metadata.get("count") != len(fields)):
             raise PlatformError("exact-scope field snapshot is unavailable")
@@ -380,7 +477,7 @@ class PlatformRuntime:
     def _metadata(self, paths):
         progress = self._load(paths["progress"])
         return {"case_key": self.case_key, "run_id": self.run_id,
-                "field_cache_root": str(self._require_case() / "fields"),
+                "field_cache_root": str((self._snapshot_root or self._require_case()) / "fields"),
                 "output": str(paths["output"]), "progress": str(paths["progress"]),
                 "resume_url": progress.get("resume_url"), "status": progress.get("status")}
 

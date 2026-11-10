@@ -52,11 +52,11 @@ Cartesian product: validate combinations against current platform evidence.
 Plan and record the eligible set, the order of work, and any unavailable
 evidence. Configured budgets may limit what is actually explored; report the
 unexplored or unresolved remainder and do not call a budget-limited run
-exhaustive. An omitted Dataset permits agent selection from eligible Datasets,
-with recorded evidence and rationale; it does not authorize replacing a
-user-specified Dataset. A fixed Dataset with no valid combination is reported
-as such. No valid Dataset or inability to establish eligibility is a blocked or
-unresolved result, not a reason to relax constraints.
+exhaustive. When Dataset is omitted, a Regular Campaign randomly selects one
+verified eligible Dataset and records the choice and unselected Datasets. A
+fixed Dataset with no valid combination is reported as such. An empty or
+unverifiable eligible set is unresolved, and the Campaign retains its scope
+evidence.
 
 ## 3. Regular Research and Campaign boundary
 
@@ -75,6 +75,9 @@ Each Regular expression remains within one Dataset and validated field and
 operator constraints, as required by the agent contract. Dataset admission,
 field semantics, settings and applicable checks require current evidence.
 Model hypotheses and diagnostics are not evidence of Alpha performance.
+For each Campaign Dataset and effective scope, use all admissible fields up to
+100. If more are available, sample 100 distinct fields uniformly. Persist the
+pool before research and reuse it for later batches and recovery.
 
 ### Optional PPA Profile
 

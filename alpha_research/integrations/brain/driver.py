@@ -8,7 +8,7 @@ IMPORT_ROOT = Path(__file__).resolve().parents[3]
 if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
-from alpha_research.integrations.brain.runtime import PlatformRuntime  # noqa: E402
+from alpha_research.integrations.brain.runtime import PlatformRuntime, WorldQuantClient  # noqa: E402
 
 
 def write(payload):
@@ -18,7 +18,11 @@ def write(payload):
 
 def main():
     try:
-        runtime = PlatformRuntime()
+        if sys.argv[1:] == ["--brain-credentials-stdin"]:
+            credentials = json.loads(sys.stdin.readline())
+            runtime = PlatformRuntime(client=WorldQuantClient(credentials=credentials))
+        else:
+            runtime = PlatformRuntime()
     except Exception as exc:
         write({"ok": False, "stage": "configuration", "error": str(exc)[:1000]})
         return 2

@@ -52,7 +52,16 @@ implementations in `workflows/` through the CLI.
   `run-campaign --objective ... --max-batches N` executes the discovered
   combinations serially, one batch at a time, and records Campaign progress
   under `state/research_v1_1/campaign_runs/`. Repeated `--dataset` arguments
-  fix multiple Datasets; `--ppa` explicitly enables the PPA Profile. A budget
+  fix multiple Datasets. Omitting `--dataset` randomly selects one verified
+  Dataset. Each effective scope uses a saved pool of up to 100 randomly
+  sampled admissible fields, or all admissible fields when fewer are available.
+  Dataset and field reads check account-specific exact-scope snapshots before
+  fetching a complete catalog from BRAIN. A snapshot is reusable for seven days
+  after the platform fetch. Cache misses, invalid snapshots and explicit
+  refresh requests fetch again. Full catalogs are stored once in
+  `<state-root>/state/platform/catalog_snapshots`. A research run records the
+  snapshot path and digest alongside the fields it sampled or used.
+  `--ppa` explicitly enables the PPA Profile. A budget
   stop reports unvisited combinations; an
   interrupted batch requires recovery before more Campaign work.
   `recover-workflow --workflow regular <batch-dir>`, or the same
@@ -176,6 +185,22 @@ email and password, either at the top level or inside a `credentials` object.
 Set the configured model API key environment variable when the service requires
 one. The agent uses its own in-memory BRAIN session; it does not print or store
 credential values.
+
+The example model router uses the locally installed Codex CLI by default.
+`attribute_results` and `diagnose_failures` use AGY CLI. Set an entry in
+`model.routes` to a name from `model.backends` to change that decision node.
+The example includes Claude CLI as another selectable backend. CLI backends
+use the tool's existing local login and accept optional `executable`,
+`model`, and `timeout_seconds` settings. HTTP backends can be added under
+`model.backends` using the same provider settings documented above.
+An existing single-provider `model` configuration continues to work.
+
+Codex CLI research decisions share a saved Codex thread within a Regular
+Campaign, bounded Regular run, Super run, or Optimization run. Regular
+recovery uses the research identity saved with the batch and resumes the
+recorded thread by ID. Thread bindings are stored under
+`<state-root>/state/codex_threads`. The Codex CLI retains the conversation
+history in its own session storage.
 
 Install and run the project with the Python interpreter selected for this agent.
 For Windows Command Prompt:

@@ -3,7 +3,7 @@
 [hidden]{display:none!important}.dialog-actions{margin-top:16px}.detail+.actions,.grid+.actions{margin-top:12px}
 </style></head>
 <body><aside class="sidebar"><div class="brand"><span class="logo">α</span><div>ALPHA LAB<small>量化研究工作台</small></div></div><div class="navlabel">研究空间</div><nav aria-label="工作台导航"><button data-view="board" class="active"><span>▦</span> 研究总览</button><button data-view="cases"><span>◈</span> 研究任务</button><button data-view="compare"><span>▥</span> 指标对比</button><button data-view="audit"><span>◎</span> 审核与优选</button></nav><div class="sidebarfoot"><span class="dot"></span> 证据记录模式<small>WorldQuant BRAIN · Research</small></div></aside>
-<div class="main"><header><div>研究空间 <span class="sep">/</span> <strong id="crumb">研究总览</strong></div><div class="header-actions"><button id="import" class="quiet">导入</button><button id="export" class="quiet">导出</button><button class="primary" id="new-case">＋ 新建研究</button></div></header>
+<div class="main"><header><div>研究空间 <span class="sep">/</span> <strong id="crumb">研究总览</strong></div><div class="header-actions"><span id="credential-status" role="status"></span><span id="launch-status" role="status"></span><button id="import" class="quiet">导入</button><button id="export" class="quiet">导出</button><button id="new-case">＋ 新建研究记录</button><button id="brain-credentials" hidden>BRAIN 凭证</button><button class="primary" id="launch-campaign" hidden>启动 Regular 研究</button></div></header>
 <main><section class="hero"><div class="eyebrow">WORLDQUANT BRAIN / RESEARCH DESK</div><h1 id="heading">Alpha 研究工作台</h1><p id="description">管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。</p></section><div id="content"></div><footer>ALPHA LAB <span>·</span> 浏览器保存研究记录，使用 JSON 导入与导出迁移。平台审计结果由 Agent 提供。</footer></main></div>
 <dialog id="editor"><form id="form"><div class="dialog-head"><h2 id="form-title"></h2><button type="button" id="close" class="quiet" aria-label="关闭">✕</button></div><div id="fields"></div><p id="form-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancel" class="quiet">取消</button><button class="primary" type="submit">保存记录</button></div></form></dialog><input id="file" type="file" accept=".json,application/json" hidden><div id="toast" role="status"></div><script>"use strict";
 const $ = (s) => document.querySelector(s);
@@ -15,7 +15,69 @@ const metrics = {sharpe:"Sharpe",fitness:"Fitness",turnover:"Turnover",drawdown:
 const statuses = {draft:"研究草稿",pending:"证据待补",raFail:"RA 未通过",corrReady:"待相关性",corrFail:"相关性未通过",audit:"待完整审计",candidate:"Candidate",preferred:"优选",blocked:"审核阻塞"};
 const key = "alpha-research-desk-v1";
 const localAgent = location.protocol === "http:" && location.hostname === "127.0.0.1";
-let agentStatus, agentError, agentLoading = false;
+let agentStatus, agentError, agentLoading = false, agentRefreshAt = 0;
+let launchState, launchTimer, launchSubmitting = false;
+let credentialsSubmitting = false;
+const credentialEndpointUnavailable = "当前端口的工作台服务不支持凭证接口。请打开新版服务启动时显示的地址。";
+
+async function readWorkbenchJson(response){
+ const type=response.headers.get("Content-Type")?.split(";")[0].trim().toLowerCase();
+ if(type!=="application/json")throw Error(credentialEndpointUnavailable);
+ try{
+   return await response.json();
+ }catch{
+   throw Error("工作台服务返回了无效数据，请刷新后重试。");
+ }
+}
+
+async function refreshCredentials(){
+ const credentials=$("#brain-credentials");
+ const launch=$("#launch-campaign");
+ const status=$("#credential-status");
+ try{
+   const response=await fetch("/api/credentials",{cache:"no-store"});
+   const data=await readWorkbenchJson(response);
+   if(!response.ok||typeof data?.configured!=="boolean")throw Error(credentialEndpointUnavailable);
+   credentials.textContent=data.configured?"BRAIN 凭证已设置":"BRAIN 凭证";
+   credentials.hidden=false;
+   launch.hidden=false;
+   status.textContent="";
+ }catch(error){
+   credentials.hidden=true;
+   launch.hidden=true;
+   status.textContent=error instanceof TypeError
+     ?"暂时无法连接本地工作台服务，请检查启动地址。"
+     :error.message;
+ }
+}
+
+function showLaunchState(state){
+ const previous=launchState?.status;
+ launchState=state;
+ const messages={idle:"",running:"Regular 研究运行中",
+                 failed:"研究进程异常退出"+(Number.isInteger(state.exit_code)?"（退出码 "+state.exit_code+"）":"")};
+ $("#launch-status").textContent=state.status==="exited"
+   ? "Campaign "+[state.campaign_id,state.campaign_status].filter(Boolean).join(" · ")
+   : messages[state.status]||"启动状态待核实";
+ $("#launch-campaign").disabled=launchSubmitting||state.status==="running";
+ if(previous==="running"&&state.status!=="running")refreshAgent();
+ if(view==="cases"&&previous!==state.status)render();
+}
+
+async function refreshLaunch(){
+ clearTimeout(launchTimer);
+ try{
+   const response=await fetch("/api/launch",{cache:"no-store"});
+   if(!response.ok)throw Error();
+   showLaunchState(await response.json());
+ }catch{
+   $("#launch-status").textContent="启动状态暂不可读";
+ }
+ if(launchState?.status==="running"){
+   if(view==="cases"&&Date.now()-agentRefreshAt>=10000)refreshAgent();
+   launchTimer=setTimeout(refreshLaunch,2500);
+ }
+}
 function agentPanel(){
  const refresh=localAgent?button(agentLoading?"读取中…":"刷新 Agent 状态","agent-refresh"):"";
  if(!localAgent)return panel("Agent 项目状态",blank("当前为独立文件模式","运行 python workbench/serve.py，再打开终端显示的地址，即可读取 Agent 项目状态。"));
@@ -39,6 +101,7 @@ function agentPanel(){
 async function refreshAgent(){
  if(!localAgent||agentLoading)return;
  agentLoading=true;
+ agentRefreshAt=Date.now();
  render();
  try{
    const result=await fetch("/api/status",{cache:"no-store"});
@@ -111,9 +174,29 @@ function board(){
  const c=findCase(a.caseId),m=a.metrics;
  return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的 Alpha":"看板等待研究记录",data.alphas.length?"调整筛选条件后再试。":"创建研究任务，然后记录 Alpha 的研究设计、回测指标和审计证据。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
 }
+function runtimeTasks(){
+ if(!localAgent)return "";
+ const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
+   esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—")
+ ]);
+ const latest=launchState&&launchState.status!=="idle"?
+   '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
+   (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+'</p>':"";
+ const config=agentStatus?.research_config;
+ const warning=config&&config.status!=="loaded"?
+   '<p class="toolbar">'+(config.status==="missing"?"缺少研究配置文件。":"研究配置文件无法读取。")+
+   ' <code>'+esc(config.path)+'</code></p>':"";
+ const records=rows.length?table(["Campaign ID","执行状态","已完成批次"],rows):
+   launchState?.status==="running"
+     ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。Campaign 记录写入后会自动显示。")
+     : blank("暂无 CLI Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
+ return panel("Agent 执行任务",latest+warning+records,
+              button("刷新 Agent 状态","agent-refresh"));
+}
 function cases(){
- if(!data.cases.length) return panel("任务列表",blank("还没有研究任务","新建 Regular、Super 或优化任务，保存研究范围与当前阶段。",button("新建研究","new-case","","primary")));
- return '<div class="cards">'+data.cases.map(c=>{
+ const live=runtimeTasks();
+ if(!data.cases.length) return live+panel("手工研究记录",blank("还没有手工记录","可以另行记录研究证据。",button("新建研究记录","new-case","","primary")));
+ return live+'<h2>手工研究记录</h2><div class="cards">'+data.cases.map(c=>{
  const scope=c.workflow==="regular"?["dataset","category","delay","universe"].map(k=>k+" = "+(c[k]??"待探索")).join(" · "):c.workflow==="super"?"BRAIN 原生 selection / combo":"来源 Alpha "+c.sourceId+" · "+(c.sourceType||"类型待核对");
  const alphas=data.alphas.filter(a=>a.caseId===c.id);
  return '<article class="card"><h3>'+esc(c.name)+'</h3>'+tag(workflow(c))+tag(c.region||"区域待解析")+tag(phases[c.phase],"good")+'<p>'+esc(scope)+'</p><p>'+esc(c.objective||"研究目标待补")+'</p><p>'+alphas.length+' 条 Alpha 记录</p><div class="actions">'+button("任务详情","case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div></article>';}).join("")+'</div>';
@@ -138,6 +221,10 @@ const dialog=$("#editor");
 function show(title,body,mode){
  editing=mode;$("#form-title").textContent=title;$("#form-error").textContent="";$("#fields").innerHTML=body;
  $("#form").querySelector(".dialog-actions").hidden=!mode;
+ const save=$("#form").querySelector('button[type="submit"]');
+ save.textContent=mode?.kind==="launch"?"启动 BRAIN 研究":"保存记录";
+ save.disabled=(mode?.kind==="launch"&&launchSubmitting)
+   ||(mode?.kind==="credentials"&&credentialsSubmitting);
  if(!dialog.open) dialog.showModal();
 }
 function field(k,label,value="",type="text",required=false,items=null){
@@ -150,6 +237,90 @@ function field(k,label,value="",type="text",required=false,items=null){
 }
 const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
 const section=(s)=>'<h3 class="section">'+s+'</h3>';
+function launchForm(){
+ show("启动 Regular Campaign",
+   '<p>启动后，Agent 会核验范围，并在预算内向 BRAIN 发起符合条件的模拟。每个有效组合随机抽取最多 100 个合格字段，少于 100 个时全部使用。</p>'+
+   grid(field("region","Region","", "text",true),
+        field("max_batches","批次预算",1,"number",true),
+        field("dataset_ids","Dataset ID（留空时随机选一个，多个用逗号分隔）"),
+        field("category","Category"),
+        field("delay","Delay","","number"),
+        field("universe","Universe"),
+        field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
+        field("objective","研究目标","","area",true)), {kind:"launch"});
+ const form=$("#form").elements;
+ form.max_batches.min=1;form.max_batches.step=1;
+ form.delay.min=0;form.delay.step=1;
+}
+
+function credentialsForm(){
+ show("BRAIN 凭证",
+   '<p>凭证可用于接下来 24 小时内启动研究和重新认证。平台登录在启动研究时验证。</p>'+
+   grid(field("username","BRAIN 用户名","","text",true),
+        field("password","BRAIN 密码","","password",true)), {kind:"credentials"});
+ const fields=$("#form").elements;
+ fields.username.autocomplete="username";
+ fields.password.autocomplete="current-password";
+}
+
+async function saveCredentials(form){
+ if(credentialsSubmitting)return;
+ const mode=editing;
+ const {username,password}=Object.fromEntries(new FormData(form));
+ const save=form.querySelector('button[type="submit"]');
+ credentialsSubmitting=true;
+ save.disabled=true;
+ try{
+   const response=await fetch("/api/credentials",{method:"POST",
+     headers:{"Content-Type":"application/json"},body:JSON.stringify({username:username.trim(),password})});
+   const result=await readWorkbenchJson(response);
+   if(!response.ok)throw Error(result.error||"保存凭证失败");
+   if(editing===mode)dialog.close();
+   refreshCredentials();
+   notify("BRAIN 凭证已设置，有效期 24 小时");
+ }catch(error){
+   if(editing===mode)$("#form-error").textContent=error.message||"凭证状态待核实";
+ }finally{
+   credentialsSubmitting=false;
+   if(editing?.kind==="credentials"){
+     form.elements.password.value="";
+     save.disabled=false;
+   }
+ }
+}
+
+async function launchCampaign(form){
+ if(launchSubmitting)return;
+ const mode=editing;
+ const fields=Object.fromEntries(new FormData(form));
+ const request={region:fields.region.trim(),objective:fields.objective.trim(),
+                max_batches:Number(fields.max_batches),ppa:fields.ppa==="yes"};
+ const datasetIds=fields.dataset_ids.split(/[,，]/).map(id=>id.trim()).filter(Boolean);
+ if(datasetIds.length)request.dataset_ids=datasetIds;
+ for(const key of ["category","universe"]){
+   if(fields[key].trim())request[key]=fields[key].trim();
+ }
+ if(fields.delay!=="")request.delay=Number(fields.delay);
+ launchSubmitting=true;
+ const save=form.querySelector('button[type="submit"]');
+ save.disabled=true;
+ $("#form-error").textContent="";
+ try{
+   const response=await fetch("/api/launch",{method:"POST",
+     headers:{"Content-Type":"application/json"},body:JSON.stringify(request)});
+   const result=await readWorkbenchJson(response);
+   if(response.status===401)refreshCredentials();
+   if(!response.ok)throw Error(result.error||"启动请求被拒绝");
+   showLaunchState(result);
+   if(editing===mode)dialog.close();
+ }catch(error){
+   if(editing===mode)$("#form-error").textContent=error.message||"启动状态待核实";
+ }finally{
+   launchSubmitting=false;
+   if(editing?.kind==="launch")save.disabled=false;
+   refreshLaunch();
+ }
+}
 function caseForm(c={},kind=c.workflow||"regular"){
  const regular=kind==="regular", optimization=kind==="optimization";
  show(c.id?"编辑研究证据":"新建研究",grid(field("name","任务名称",c.name,"text",true),c.id?line("工作流",workflow(c)):field("workflow","工作流",kind,"text",true,labels),
@@ -200,6 +371,16 @@ function checkAlpha(a,c){
  }
 }
 function submit(e){
+ if(editing?.kind==="credentials"){
+   e.preventDefault();
+   saveCredentials(e.currentTarget);
+   return;
+ }
+ if(editing?.kind==="launch"){
+   e.preventDefault();
+   launchCampaign(e.currentTarget);
+   return;
+ }
  e.preventDefault();
  if(!editing)return;
  const fields=Object.fromEntries(new FormData(e.target));const values={};
@@ -269,6 +450,8 @@ document.addEventListener("change",e=>{
 $("#form").addEventListener("input",syncGate);
 $("#form").addEventListener("submit",submit);
 $("#new-case").onclick=()=>caseForm();
+$("#launch-campaign").onclick=launchForm;
+$("#brain-credentials").onclick=credentialsForm;
 $("#close").onclick=$("#cancel").onclick=()=>dialog.close();
 $("#import").onclick=()=>$("#file").click();
 $("#export").onclick=()=>{
@@ -297,7 +480,10 @@ $("#file").onchange=async(e)=>{
  }catch(err){notify("导入失败。"+err.message);}
 };
 render();
-if(localAgent)refreshAgent();
+if(localAgent){
+ refreshAgent();
+ refreshLaunch();
+ refreshCredentials();
+}
 
 </script></body></html>
-

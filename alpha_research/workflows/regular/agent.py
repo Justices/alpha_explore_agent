@@ -5,13 +5,14 @@ pre-registration, platform access and evidence persistence remain deterministic.
 """
 from datetime import datetime
 from pathlib import Path
+from random import sample
 from uuid import uuid4
 import hashlib
 import math
 import re
 
 from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
-from alpha_research.state.store import atomic_write_json, lock_prereg, verify_prereg
+from alpha_research.state.store import atomic_write_json, lock_prereg, read_json, verify_prereg
 from alpha_research.expressions.validator import regular_operator_names, validate
 from alpha_research.simulation.matching import match_alphas_detailed
 from alpha_research.qualification.gates import evaluate_candidate, local_self_correlation_state, parse_correlations
@@ -22,6 +23,7 @@ from alpha_research.qualification.service import CandidateQualificationService
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.workflows.regular.campaign_state import CampaignStore
 from alpha_research.workflows.regular.diagnosis import DiagnosisError, diagnose_batch
+from alpha_research.workflows.regular.scope import SCOPE_KEYS, dataset_category, exact_catalog_scope
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.integrations.model import DecisionRecorder
 import json
@@ -104,10 +106,10 @@ def _field_summaries(fields):
             for row in fields if isinstance(row, dict)]
 
 
-def _catalog(rows, dataset_id):
-    catalog = {}
+def _admissible_field_rows(rows, dataset_id):
+    eligible = {}
     for row in rows:
-        if not isinstance(row, dict) or not row.get("id"):
+        if not isinstance(row, dict) or not isinstance(row.get("id"), str) or not row["id"]:
             continue
         ds = row.get("dataset") or {}
         ds_id = ds.get("id") if isinstance(ds, dict) else ds
@@ -115,10 +117,37 @@ def _catalog(rows, dataset_id):
                 or not isinstance(row.get("description"), str)
                 or not row["description"].strip()):
             continue
-        catalog[row["id"]] = {"type": row.get("type"), "dataset": dataset_id}
-    if not catalog:
+        eligible[row["id"]] = row
+    if not eligible:
         raise ResearchError("selected Dataset has no readable fields")
-    return catalog
+    return eligible
+
+
+def _catalog(rows, dataset_id):
+    return {field_id: {"type": row["type"], "dataset": dataset_id}
+            for field_id, row in _admissible_field_rows(rows, dataset_id).items()}
+
+
+def _campaign_field_pool(path, fields, dataset_id, scope):
+    eligible = _admissible_field_rows(fields, dataset_id)
+    identity = {"dataset_id": dataset_id, "scope": {key: scope[key] for key in SCOPE_KEYS}}
+    if path.exists():
+        saved = read_json(path)
+        if not isinstance(saved, dict) or any(saved.get(key) != value
+                                               for key, value in identity.items()):
+            raise ResearchError("saved Campaign field pool does not match the Dataset scope")
+        field_ids = saved.get("field_ids")
+        if (not isinstance(field_ids, list) or not 1 <= len(field_ids) <= 100
+                or any(not isinstance(key, str) or key not in eligible for key in field_ids)
+                or len(set(field_ids)) != len(field_ids)):
+            raise ResearchError("saved Campaign field pool cannot be verified against live fields")
+    else:
+        field_ids = list(eligible)
+        if len(field_ids) > 100:
+            field_ids = sample(field_ids, 100)
+        atomic_write_json(path, {**identity, "eligible_count": len(eligible),
+                                 "field_ids": field_ids})
+    return [eligible[field_id] for field_id in field_ids]
 
 
 class ResearchAgent:
@@ -146,8 +175,8 @@ class ResearchAgent:
         if hasattr(gateway, "alpha_lookup"):
             gateway.alpha_lookup = self._lookup_alpha_state
 
-    def _begin_session(self):
-        session_id = self.recorder.begin_session()
+    def _begin_session(self, research_id=None):
+        session_id = self.recorder.begin_session(research_id=research_id)
         self._session_packs = []
         return session_id
 
@@ -1365,12 +1394,16 @@ class ResearchAgent:
         diagnosis["model_diagnosis"] = {"status": "complete", "result": response}
 
     def recover(self, batch_dir: Path) -> dict:
-        self._begin_session()
         self._assert_gate_config()
         self._assert_auth_mode()
         batch_dir = Path(batch_dir).resolve()
         if not batch_dir.is_relative_to(self.runs_root.resolve()):
             raise ResearchError("batch path outside research runs")
+        context_path = batch_dir / "batch_context.json"
+        context = read_json(context_path) if context_path.exists() else {}
+        if not isinstance(context, dict):
+            raise ResearchError("batch context is unreadable; research thread cannot be recovered")
+        self._begin_session(self._batch_research_id(batch_dir, context))
         production_intent = batch_dir / "simulation_intent.json"
         if not production_intent.exists():
             return self._recover_probes(batch_dir)
@@ -1574,12 +1607,24 @@ class ResearchAgent:
         return self.run_once(context["objective"], resume_batch_dir=batch_dir,
                              recovered_probe_results=results, cached_context=context)
 
+    @staticmethod
+    def _batch_research_id(batch_dir, context):
+        if "research_id" in context:
+            saved_id = context["research_id"]
+            if not isinstance(saved_id, str) or not saved_id:
+                raise ResearchError("saved research thread identity is invalid")
+            return saved_id
+        return "regular:legacy:" + str(Path(batch_dir).resolve())
+
     def run_once(self, objective: str, dataset_id: str = None, *,
                  resume_batch_dir: Path = None, recovered_probe_results=None,
                  cached_context=None, fixed_scope=None, diagnosis_id=None,
                  remedy_id=None, allow_remedy_round_overrun=False,
-                 ppa_profile=False, execution_context=None) -> dict:
-        self._begin_session()
+                 ppa_profile=False, execution_context=None, research_id=None,
+                 field_pool_path=None, expected_category=None) -> dict:
+        if resume_batch_dir is not None:
+            research_id = self._batch_research_id(resume_batch_dir, cached_context or {})
+        self._begin_session(research_id or f"regular:{uuid4().hex}")
         if not objective or not objective.strip():
             raise ResearchError("research objective is required")
         research_type = ((cached_context or {}).get("research_type")
@@ -1630,7 +1675,7 @@ class ResearchAgent:
                 status="active")
             context = {k: scope[k] for k in ("region", "universe", "delay")}
             datasets = _rows(self.gateway.call("get_datasets", instrument_type="EQUITY", **context))
-            available = {row.get("id") for row in datasets if isinstance(row, dict)}
+            available = {row.get("id"): row for row in datasets if isinstance(row, dict)}
             if dataset_id is None:
                 selection = self._decide("select_dataset", {
                     "objective": objective, "scope": scope, "datasets": datasets,
@@ -1647,15 +1692,25 @@ class ResearchAgent:
                     "fixed Dataset")}
             if dataset_id not in available:
                 raise ResearchError(f"Dataset not available in exact scope: {dataset_id}")
-            detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
-            exact_data = [row for row in detail.get("data", [])
-                          if isinstance(row, dict)
-                          and row.get("region") == scope["region"]
-                          and row.get("delay") == scope["delay"]
-                          and row.get("universe") == scope["universe"]]
-            if detail.get("id") != dataset_id or not exact_data:
+            dataset_row = available[dataset_id]
+            scope_evidence = exact_catalog_scope(dataset_row, scope)
+            source = "exact_catalog"
+            actual_category = dataset_category(dataset_row.get("category"))
+            if scope_evidence is None or (expected_category is not None and actual_category is None):
+                detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
+                if not isinstance(detail, dict) or detail.get("id") != dataset_id:
+                    raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
+                actual_category = dataset_category(detail.get("category")) or actual_category
+                if scope_evidence is None:
+                    data = detail.get("data")
+                    if isinstance(data, list):
+                        scope_evidence = next((row for row in data if exact_catalog_scope(row, scope)), None)
+                    source = "dataset_detail"
+            if scope_evidence is None:
                 raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
-            dataset_selection["detail_scope"] = exact_data[0]
+            if expected_category is not None and expected_category != actual_category:
+                raise ResearchError(f"Dataset no longer matches the requested Category: {dataset_id}")
+            dataset_selection.update(detail_scope=scope_evidence, scope_evidence_source=source)
             self.campaigns.update(
                 campaign_id, current_dataset=dataset_id, dataset_state="selected",
                 selection_mode=dataset_selection["mode"],
@@ -1663,6 +1718,8 @@ class ResearchAgent:
                 candidate_ledger_ref=str(case_path), status="active")
             fields = _rows(self.gateway.call("get_datafields", instrument_type="EQUITY",
                                              dataset_id=dataset_id, **context))
+            if field_pool_path is not None:
+                fields = _campaign_field_pool(field_pool_path, fields, dataset_id, scope)
             operator_rows = _rows(self.gateway.call("get_operators", **context))
             operators = regular_operator_names(operator_rows)
             operator_catalog = [row for row in operator_rows if isinstance(row, dict)
@@ -1682,9 +1739,11 @@ class ResearchAgent:
             atomic_write_json(batch_dir / "batch_context.json", {
                 "objective": objective, "research_type": research_type,
                 "scope": scope, "dataset_id": dataset_id,
+                "research_id": self.recorder.research_id,
                 "platform_case_key": platform_case_key,
                 "platform_run_id": platform_run_id,
                 "dataset_selection": dataset_selection,
+                "field_pool_ref": str(field_pool_path) if field_pool_path else None,
                 "fields": fields, "operators": sorted(operators),
                 "operator_catalog": operator_rows,
                 "started_at": datetime.now().astimezone().isoformat()})
@@ -2089,11 +2148,13 @@ class ResearchAgent:
         candidate_datasets = []
         case_path = None
         fixed_scope = None
+        research_id = f"regular:{uuid4().hex}"
         for number in range(max_batches):
             result = self.run_once(objective, dataset_id=dataset_id,
                                    fixed_scope=fixed_scope,
                                    diagnosis_id=diagnosis_id, remedy_id=remedy_id,
-                                   allow_remedy_round_overrun=allow_remedy_round_overrun)
+                                   allow_remedy_round_overrun=allow_remedy_round_overrun,
+                                   research_id=research_id)
             diagnosis_id = remedy_id = None
             allow_remedy_round_overrun = False
             if fixed_scope is None:

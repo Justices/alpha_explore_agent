@@ -43,9 +43,16 @@
     "field_root": null
   },
   "model": {
-    "provider": "json_http",
-    "url": null,
-    "model": null,
-    "api_key_env": null
+    "provider": "router",
+    "default": "codex",
+    "routes": {
+      "attribute_results": "agy",
+      "diagnose_failures": "agy"
+    },
+    "backends": {
+      "codex": {"provider": "codex_cli"},
+      "agy": {"provider": "agy_cli"},
+      "claude": {"provider": "claude_cli"}
+    }
   }
 }

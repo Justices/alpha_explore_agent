@@ -34,20 +34,28 @@ class GatewayError(RuntimeError):
 
 
 class Gateway:
-    def __init__(self, driver_path: Path = None, alpha_lookup=None):
+    def __init__(self, driver_path: Path = None, alpha_lookup=None, *, credentials=None):
         """alpha_lookup: callable(alpha_id) -> alpha state dict, used for
         the correlation precondition check (design §3.3, second layer)."""
         self.driver_path = driver_path or (Path(__file__).with_name("driver.py"))
         self.alpha_lookup = alpha_lookup
+        self._credentials = credentials
         self.proc = None
         self.auth_info = None
 
     def start(self) -> dict:
         env = os.environ.copy()
+        command = [sys.executable, str(self.driver_path)]
+        if self._credentials is not None:
+            command.append("--brain-credentials-stdin")
         self.proc = subprocess.Popen(
-            [sys.executable, str(self.driver_path)],
+            command,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
+        if self._credentials is not None:
+            self.proc.stdin.write(json.dumps(self._credentials) + "\n")
+            self.proc.stdin.flush()
+            self._credentials = None
         self.auth_info = self._read_response()
         if not self.auth_info.get("ok"):
             raise GatewayError(f"platform runtime unavailable: {self.auth_info}")

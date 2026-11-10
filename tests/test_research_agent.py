@@ -302,6 +302,10 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(done["status"], "COMPLETED", (done.get("failure"), done.get("checkpoints", {}).get("execute")))
         self.assertEqual(done["budget"]["used"], 1)
         self.assertEqual(len(done["checkpoints"]["execute"]["completed"]), 1)
+        campaign = done["checkpoints"]["execute"]
+        batch = Path(campaign["completed"][0]["batch_dir"])
+        context = json.loads((batch / "batch_context.json").read_text(encoding="utf-8"))
+        self.assertEqual(context["research_id"], f"regular:campaign:{campaign['campaign_id']}")
         calls = [name for name, _ in self.gateway.calls]
         self.assertEqual(calls.count("simulate_batch"), 1)
         self.assertNotIn("submit_alpha", calls)
@@ -437,6 +441,23 @@ class TestResearchAgent(unittest.TestCase):
         self.assertIn("get_dataset_details", calls)
         self.assertNotIn("get_datafields", calls)
         self.assertNotIn("simulate_batch", calls)
+
+    def test_campaign_samples_at_most_100_verified_fields_and_reuses_pool(self):
+        from alpha_research.workflows.regular.agent import _campaign_field_pool
+
+        scope = {"region": "GLB", "delay": 1, "universe": "TOP3000"}
+        fields = [{"id": f"field_{index}", "type": "MATRIX", "dataset": {"id": "risk60"},
+                   "description": "verified fixture field"} for index in range(105)]
+        fields.append({**fields[0], "id": "wrong_dataset", "dataset": {"id": "other"}})
+        path = Path(self.tmp.name) / "field_pool.json"
+        chosen = _campaign_field_pool(path, fields, "risk60", scope)
+        self.assertEqual(len({row["id"] for row in chosen}), 100)
+        self.assertNotIn("wrong_dataset", {row["id"] for row in chosen})
+        self.assertEqual(_campaign_field_pool(path, list(reversed(fields)), "risk60", scope),
+                         chosen)
+        few = fields[:4]
+        self.assertEqual(_campaign_field_pool(path.with_name("small.json"), few, "risk60", scope),
+                         few)
 
     def test_missing_effective_settings_are_selected_and_live_validated(self):
         for key in ("decay", "truncation", "pasteurization"):

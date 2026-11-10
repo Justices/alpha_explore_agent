@@ -6,7 +6,7 @@ import re
 import sys
 from alpha_research.workflows.regular.agent import ResearchAgent
 from alpha_research.integrations.brain.gateway import Gateway
-from alpha_research.integrations.model import ConfiguredModelClient
+from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import default_state_root, expand_path
@@ -67,6 +67,8 @@ def main(argv=None):
     campaign.add_argument("--max-batches", type=int, required=True)
     campaign.add_argument("--ppa", action="store_true",
                           help="apply the optional PPA Profile")
+    campaign.add_argument("--brain-credentials-stdin", action="store_true",
+                          help=argparse.SUPPRESS)
     optimization = sub.add_parser(
         "plan-optimization", help="capture an existing Alpha as a read-only optimization baseline")
     optimization.add_argument("--alpha-id", required=True)
@@ -212,14 +214,18 @@ def main(argv=None):
         print(json.dumps(index, ensure_ascii=False))
         return 0
     if args.command == "status":
+        config_path = args.config or root / "config" / "nastu_quant.json"
+        config_status = "loaded"
         try:
-            config_path = args.config or root / "config" / "nastu_quant.json"
-            pool_config = (json.loads(config_path.read_text(encoding="utf-8"))
-                           if config_path.exists() else DEFAULT_CONFIG)
+            pool_config = json.loads(config_path.read_text(encoding="utf-8"))
             if not isinstance(pool_config, dict):
                 raise ValueError("configuration must be an object")
             current_policy = policy_hash(pool_config)
+        except FileNotFoundError:
+            config_status = "missing"
+            current_policy = policy_hash(DEFAULT_CONFIG)
         except (OSError, ValueError, TypeError):
+            config_status = "unreadable"
             current_policy = None
         runs = root / "runs"
         unfinished = []
@@ -269,6 +275,8 @@ def main(argv=None):
         v11_root = root / "state" / "research_v1_1" / "campaign_runs"
         if v11_root.exists():
             for path in sorted(v11_root.glob("*.json")):
+                if path.name.endswith("_scope_plan.json"):
+                    continue
                 try:
                     saved = json.loads(path.read_text(encoding="utf-8"))
                     v11_campaigns.append({
@@ -331,6 +339,7 @@ def main(argv=None):
         except (OSError, ValueError, KeyError, TypeError) as exc:
             global_pool = {"status": "unavailable", "reason": type(exc).__name__}
         print(json.dumps({"global_alpha_pool": global_pool,
+                          "research_config": {"status": config_status, "path": str(config_path)},
                           "stopped": stop_flag.exists(),
                           "unfinished_batches": unfinished,
                           "campaigns": campaigns,
@@ -419,8 +428,8 @@ def main(argv=None):
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
         model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
                  or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")
-                 else ConfiguredModelClient(cfg["model"]))
-    except (OSError, ValueError, KeyError) as exc:
+                 else build_model_client(cfg["model"]))
+    except (OSError, ValueError, KeyError, ModelError) as exc:
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
     os.environ["NASTU_QUANT_STATE_DIR"] = str(root / "state")
@@ -430,7 +439,17 @@ def main(argv=None):
         if configured_credentials:
             os.environ["BRAIN_CREDENTIALS_FILE"] = str(
                 expand_path(configured_credentials).resolve())
-    gateway = Gateway()
+    if getattr(args, "brain_credentials_stdin", False):
+        try:
+            credentials = json.loads(sys.stdin.readline(16385))
+            if not isinstance(credentials, dict):
+                raise ValueError("BRAIN credentials input is invalid")
+        except (OSError, ValueError):
+            print("BRAIN credentials input is unavailable or invalid", file=sys.stderr)
+            return 2
+        gateway = Gateway(credentials=credentials)
+    else:
+        gateway = Gateway()
     agent = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research"}
              or (args.command == "recover-workflow" and args.workflow != "regular") else
              ResearchAgent(gateway, model, cfg, root / "runs",

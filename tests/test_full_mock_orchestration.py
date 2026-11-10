@@ -67,7 +67,7 @@ class ScriptedRecorder:
     def __init__(self, model, state_root):
         self.model = model
 
-    def begin_session(self):
+    def begin_session(self, *, research_id):
         pass
 
     def complete_json(self, task, context, **kwargs):

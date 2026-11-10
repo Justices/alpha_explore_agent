@@ -4,6 +4,7 @@ import hashlib
 import json
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+from random import choice
 
 from alpha_research.workflows.regular.scope import discover_regular_scope
 from alpha_research.state.store import atomic_write_json
@@ -239,6 +240,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                "delay": delay, "universe": universe,
                "max_batches": max_batches, "ppa_profile": ppa_profile}
     campaign_id = _key(request)
+    research_id = f"regular:campaign:{campaign_id}"
     state_root = Path(agent.runs_root).resolve().parent
     path = (state_root / "state" /
             "research_v1_1" / "campaign_runs" / f"{campaign_id}.json")
@@ -292,41 +294,21 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             gateway, region=region, dataset_ids=dataset_ids,
             category=category, delay=delay, universe=universe)
         if dataset_ids is None and plan["datasets"]:
-            agent._begin_session()
-            remaining = list(plan["datasets"])
-            selected = []
-            for _ in range(min(max_batches, len(remaining))):
-                decision = agent._decide("select_dataset", {
-                    "objective": objective,
-                    "scope": {"region": region, "category": category,
-                              "delay": delay, "universe": universe},
-                    "datasets": remaining,
-                    "prior_batches": []})
-                chosen = decision.get("dataset_id")
-                reason = decision.get("reason")
-                if (chosen not in {item["dataset_id"] for item in remaining}
-                        or not isinstance(reason, str) or not reason.strip()):
-                    raise ValueError("Agent Dataset selection lacks eligible ID or rationale")
-                selected.append({"dataset_id": chosen, "reason": reason})
-                remaining = [item for item in remaining
-                             if item["dataset_id"] != chosen]
-            plan["agent_selection"] = selected
+            chosen = choice(plan["datasets"])
+            plan["agent_selection"] = [{
+                "dataset_id": chosen["dataset_id"], "mode": "random",
+                "reason": "Dataset omitted; uniformly sampled from verified eligible Datasets"}]
             plan["unselected_dataset_ids"] = [
-                item["dataset_id"] for item in remaining]
-            chosen_ids = {item["dataset_id"] for item in selected}
-            items = _work_items({**plan, "datasets": [
-                item for item in plan["datasets"]
-                if item["dataset_id"] in chosen_ids]})
-            order = {item["dataset_id"]: index
-                     for index, item in enumerate(selected)}
-            items.sort(key=lambda item: order[item["dataset_id"]])
+                item["dataset_id"] for item in plan["datasets"]
+                if item["dataset_id"] != chosen["dataset_id"]]
+            items = _work_items({"datasets": [chosen]})
         else:
             items = _work_items(plan)
-        if not items:
-            return {"status": "unresolved", "plan": plan,
-                    "reason": "no_verified_work_items"}
         evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
         atomic_write_json(evidence_path, plan)
+        if not items:
+            return {"status": "unresolved", "plan": plan,
+                    "plan_evidence_ref": str(evidence_path), "reason": "no_verified_work_items"}
         state = {"schema_version": 1, "campaign_id": campaign_id,
                  "plan_evidence_ref": str(evidence_path),
                  "request": request, "plan": plan, "items": items,
@@ -357,6 +339,9 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 "fixed_scope": {"region": region, "delay": item["delay"],
                                 "universe": item["universe"]},
                 "ppa_profile": ppa_profile,
+                "research_id": research_id,
+                "field_pool_path": path.parent / "field_pools" / campaign_id / f"{_key(item)}.json",
+                "expected_category": category,
             }
             if execution_context is not None:
                 run_kwargs["execution_context"] = execution_context

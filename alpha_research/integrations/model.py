@@ -1,7 +1,6 @@
 """Replaceable JSON decision service for the research agent.
 
-The agent depends only on ``complete_json(task, context)``. Three wire
-adapters are supplied; additional providers can implement that method.
+The agent depends only on ``complete_json(task, context)``.
 """
 import json
 import hashlib
@@ -14,6 +13,7 @@ from pathlib import Path
 from urllib.request import Request, urlopen
 from uuid import uuid4
 
+from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, LocalCliModelTool
 from alpha_research.state.store import atomic_write_json
 
 
@@ -152,9 +152,33 @@ class ConfiguredModelClient:
         self.environ = os.environ if environ is None else environ
         self.last_usage = None
         self.last_response_text = None
+        self.last_model = None
+        self.last_thread_id = None
 
-    def complete_json(self, task: str, context: dict) -> dict:
+    def complete_json(self, task: str, context: dict, *, thread_path=None) -> dict:
+        self.last_usage = None
+        self.last_response_text = None
+        self.last_model = None
+        self.last_thread_id = None
         provider = self.config.get("provider")
+        if provider in CLI_COMMANDS:
+            prompt = json.dumps({
+                "task": task, "context": context,
+                "instruction": TASK_INSTRUCTIONS.get(task, "Return one JSON object only.")
+                               + " " + KNOWLEDGE_POLICY
+                               + " Answer from the supplied evidence. Do not call tools.",
+            }, ensure_ascii=False)
+            try:
+                message, self.last_usage, self.last_model, self.last_thread_id = (
+                    LocalCliModelTool(self.config, self.environ).invoke(prompt, thread_path=thread_path))
+                result = _decision_from_text(message)
+            except CliModelError as exc:
+                raise ModelError(str(exc)) from exc
+            except (TypeError, ValueError) as exc:
+                raise ModelError("local CLI returned an invalid JSON decision") from exc
+            if not isinstance(result, dict):
+                raise ModelError("model decision must be a JSON object")
+            return result
         url = self.config.get("url")
         if not isinstance(url, str) or not url.startswith("https://"):
             raise ModelError("model service requires an HTTPS url")
@@ -197,8 +221,6 @@ class ConfiguredModelClient:
         else:
             raise ModelError(f"unsupported model provider: {provider}")
 
-        self.last_usage = None
-        self.last_response_text = None
         try:
             response = self.transport(url, headers, payload)
             self.last_usage = (response.get("usage") if isinstance(response, dict) else None)
@@ -219,6 +241,62 @@ class ConfiguredModelClient:
         return result
 
 
+class RoutedModelClient:
+    """Select a configured backend for each decision node."""
+
+    def __init__(self, config):
+        backends = config.get("backends")
+        routes = config.get("routes", {})
+        default = config.get("default")
+        if (not isinstance(backends, dict) or not isinstance(routes, dict)
+                or not isinstance(default, str) or default not in backends
+                or any(not isinstance(value, str) or value not in backends
+                       for value in routes.values())):
+            raise ModelError("model router requires a default and routes to defined backends")
+        providers = {*CLI_COMMANDS, "json_http", "openai_compatible", "anthropic_compatible"}
+        if any(not isinstance(item, dict) or not isinstance(item.get("provider"), str)
+               or item["provider"] not in providers for item in backends.values()):
+            raise ModelError("model router backend provider is unsupported")
+        self.backends = {name: ConfiguredModelClient(item) for name, item in backends.items()}
+        self.routes = routes
+        self.default = default
+        self.active = None
+
+    def _backend(self, task):
+        return self.backends[self.routes.get(task, self.default)]
+
+    def config_for(self, task):
+        return self._backend(task).config
+
+    @property
+    def last_usage(self):
+        return getattr(self.active, "last_usage", None)
+
+    @property
+    def last_response_text(self):
+        return getattr(self.active, "last_response_text", None)
+
+    @property
+    def last_model(self):
+        return getattr(self.active, "last_model", None)
+
+    @property
+    def last_thread_id(self):
+        return getattr(self.active, "last_thread_id", None)
+
+    def complete_json(self, task, context, *, thread_path=None):
+        self.active = self._backend(task)
+        return self.active.complete_json(task, context, thread_path=thread_path)
+
+
+def build_model_client(config):
+    if not isinstance(config, dict):
+        raise ModelError("model configuration must be an object")
+    if config.get("provider") == "router":
+        return RoutedModelClient(config)
+    return ConfiguredModelClient(config)
+
+
 def _json_bytes(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True,
                       separators=(",", ":")).encode("utf-8")
@@ -234,11 +312,13 @@ class DecisionRecorder:
         self.global_calls_root = self.logs_root / "model_calls"
         self.log_path = self.logs_root / "model_log.jsonl"
         self.session_id = None
+        self.research_id = None
         self.batch_dir = None
         self.session_calls = []
 
-    def begin_session(self, session_id=None):
+    def begin_session(self, session_id=None, *, research_id=None):
         self.session_id = session_id or uuid4().hex
+        self.research_id = research_id or self.session_id
         self.batch_dir = None
         self.session_calls = []
         return self.session_id
@@ -401,9 +481,12 @@ class DecisionRecorder:
         global_response = self.global_calls_root / f"{call_id}.response.json"
         global_record = self.global_calls_root / f"{call_id}.record.json"
         atomic_write_json(global_context, context)
-        config = getattr(self.model, "config", {}) or {}
+        config_for = getattr(self.model, "config_for", None)
+        config = (config_for(task) if callable(config_for)
+                  else getattr(self.model, "config", {})) or {}
         record = {"ts": datetime.now().astimezone().isoformat(),
                   "call_id": call_id, "session_id": self.session_id,
+                  "research_id": self.research_id,
                   "batch_ref": str(self.batch_dir) if self.batch_dir else
                                f"session:{self.session_id}",
                   "task": task, "context_sha256": context_sha,
@@ -420,7 +503,12 @@ class DecisionRecorder:
         response_payload = None
         error = None
         try:
-            result = self.model.complete_json(task, context)
+            if config.get("provider") == "codex_cli":
+                thread_key = hashlib.sha256(self.research_id.encode("utf-8")).hexdigest()
+                thread_path = self.state_root / "codex_threads" / thread_key / "thread.json"
+                result = self.model.complete_json(task, context, thread_path=thread_path)
+            else:
+                result = self.model.complete_json(task, context)
             token_in, token_out = self._usage(self.model)
             response_payload = {"status": "ok", "result": result,
                                 "token_in": token_in, "token_out": token_out}
@@ -441,6 +529,12 @@ class DecisionRecorder:
         record.update({"response_sha256": response_sha, "token_in": token_in,
                        "token_out": token_out, "latency_ms": latency_ms,
                        "status": response_payload["status"]})
+        actual_model = getattr(self.model, "last_model", None)
+        if isinstance(actual_model, str) and actual_model:
+            record["model"] = actual_model
+        codex_thread_id = getattr(self.model, "last_thread_id", None)
+        if isinstance(codex_thread_id, str):
+            record["codex_thread_id"] = codex_thread_id
         atomic_write_json(global_record, record)
         self._write_log_record(record)
         self.session_calls.append((record, global_context, global_response, global_record))

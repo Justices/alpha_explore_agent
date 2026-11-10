@@ -29,7 +29,7 @@ class TestCli(unittest.TestCase):
             config = Path(temp) / "config.json"
             config.write_text(json.dumps({"model": {}}), encoding="utf-8")
             output = StringIO()
-            with patch.object(entry, "ConfiguredModelClient"), patch.object(entry, "Gateway"), \
+            with patch.object(entry, "build_model_client"), patch.object(entry, "Gateway"), \
                     patch.object(entry, "ResearchAgent") as agent, patch.dict(os.environ), \
                     redirect_stdout(output):
                 agent.return_value.run_once.return_value = {
@@ -46,7 +46,11 @@ class TestCli(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             first = cli("--state-root", temp, "status")
             self.assertEqual(first.returncode, 0, first.stderr)
-            self.assertFalse(json.loads(first.stdout)["stopped"])
+            status = json.loads(first.stdout)
+            self.assertFalse(status["stopped"])
+            self.assertEqual(status["research_config"]["status"], "missing")
+            self.assertEqual(Path(status["research_config"]["path"]),
+                             Path(temp) / "config" / "nastu_quant.json")
             stopped = cli("--state-root", temp, "stop")
             self.assertEqual(stopped.returncode, 0, stopped.stderr)
             second = cli("--state-root", temp, "status")

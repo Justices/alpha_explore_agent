@@ -154,7 +154,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     pack_path = run_path.with_name(f"{run_id}_knowledge_pack.json")
     atomic_write_json(pack_path, rule_pack)
     recorder = DecisionRecorder(model, root / "state")
-    recorder.begin_session()
+    recorder.begin_session(research_id=f"super:{run_id}")
     proposal = recorder.complete_json(
         "construct_super", {**context, "knowledge_pack": rule_pack},
         knowledge_pack_ref=str(pack_path))

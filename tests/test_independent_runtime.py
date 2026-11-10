@@ -8,7 +8,7 @@ import threading
 import time
 import unittest
 from copy import deepcopy
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -64,6 +64,7 @@ class Response:
 
 
 class FakeClient:
+    catalog_account = "fixture-account"
     base_url = "https://api.worldquantbrain.com"
 
     def __init__(self):
@@ -207,6 +208,60 @@ class TestIndependentRuntime(unittest.TestCase):
         self.assertFalse(any("brain-flow" in str(call) for call in self.client.calls))
         self.assertEqual(self.client.calls[0][2]["region"], "GLB")
         self.assertNotIn("dataset.id", self.client.calls[0][2])
+        self.assertEqual(self.client.calls[1][2]["dataset.id"], "analyst69")
+        relative = Path("fields", "GLB", "1", "TOP3000", "analyst69.json")
+        field_path = self.runtime._catalog_snapshot_path(relative)
+        snapshot = json.loads(field_path.read_text(encoding="utf-8"))
+        self.assertTrue(snapshot["metadata"]["complete"])
+        self.assertEqual(snapshot["metadata"]["count"], len(snapshot["fields"]))
+        self.assertFalse((self.runtime.run_root / relative).exists())
+        self.assertTrue((self.runtime.run_root / relative.with_suffix(".ref.json")).is_file())
+
+    def test_dataset_catalogs_keep_complete_evidence_for_each_exact_scope(self):
+        for universe in ("TOP3000", "TOP1000"):
+            self.runtime.dispatch("get_datasets", {**self.scope, "universe": universe})
+        for universe in ("TOP3000", "TOP1000"):
+            relative = Path("catalogs", "GLB", "1", universe, "datasets.json")
+            path = self.runtime._catalog_snapshot_path(relative)
+            self.assertTrue(path.is_file())
+            self.assertFalse((self.runtime.run_root / relative).exists())
+            evidence = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(evidence["scope"]["universe"], universe)
+            self.assertEqual(evidence["metadata"]["source"],
+                             self.client.base_url + "/data-sets")
+            self.assertEqual(evidence["metadata"]["count"], len(evidence["rows"]))
+            self.assertTrue(evidence["metadata"]["complete"])
+
+    def test_catalog_snapshots_survive_restart_and_are_account_and_scope_specific(self):
+        request = {**self.scope, "dataset_id": "analyst69"}
+        original = self.runtime.dispatch("get_datafields", request)
+        datasets = self.runtime.dispatch("get_datasets", self.scope)
+        relative = Path("fields", "GLB", "1", "TOP3000", "analyst69.json")
+        first_path = self.runtime.run_root / relative.with_suffix(".ref.json")
+        client = FakeClient()
+        restarted = PlatformRuntime(Path(self.tmp.name), client=client)
+        self.addCleanup(restarted.close)
+        restarted.set_case("case_2", "run_1")
+        self.assertEqual(restarted.dispatch("get_datafields", request), original)
+        self.assertEqual(restarted.dispatch("get_datasets", self.scope), datasets)
+        second_path = restarted.run_root / relative.with_suffix(".ref.json")
+        self.assertEqual(json.loads(first_path.read_text(encoding="utf-8")),
+                         json.loads(second_path.read_text(encoding="utf-8")))
+        self.assertEqual(self.runtime.CATALOG_MAX_AGE, timedelta(days=7))
+        self.assertEqual(client.calls, [])
+        restarted.dispatch("get_datafields", {**request, "refresh": True})
+        restarted.dispatch("get_datafields", {**request, "universe": "TOP1000"})
+        self.assertEqual([call[1] for call in client.calls], ["/data-fields"] * 2)
+        with patch.object(restarted, "CATALOG_MAX_AGE", timedelta(0)):
+            restarted.dispatch("get_datasets", self.scope)
+        self.assertEqual([call[1] for call in client.calls][-1], "/data-sets")
+        other = FakeClient()
+        other.catalog_account = "other-fixture-account"
+        other_runtime = PlatformRuntime(Path(self.tmp.name), client=other)
+        self.addCleanup(other_runtime.close)
+        other_runtime.set_case("case_3", "run_1")
+        other_runtime.dispatch("get_datafields", request)
+        self.assertEqual([call[1] for call in other.calls], ["/data-fields"])
 
     def test_duplicate_catalog_rows_are_not_treated_as_complete(self):
         original = self.client.request
@@ -217,6 +272,17 @@ class TestIndependentRuntime(unittest.TestCase):
         self.client.request = duplicate
         with self.assertRaises(PlatformError):
             self.runtime.dispatch("get_datasets", self.scope)
+
+    def test_changed_canonical_field_snapshot_blocks_old_admission(self):
+        self._admit()
+        relative = Path("fields", "GLB", "1", "TOP3000", "analyst69.json")
+        path = self.runtime._catalog_snapshot_path(relative)
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["fields"][0]["description"] = "changed field semantics"
+        path.write_text(json.dumps(payload), encoding="utf-8")
+        with self.assertRaisesRegex(PlatformError, "field snapshot changed"):
+            self.runtime.run_simulation_batch(self._request())
+        self.assertFalse(any(call[:2] == ("POST", "/simulations") for call in self.client.calls))
 
     def test_live_schema_is_translated_to_exact_scope_choices(self):
         def by_region(values):
@@ -1042,6 +1108,27 @@ class TestIndependentRuntime(unittest.TestCase):
 
 
 class TestSessionBehavior(unittest.TestCase):
+    def test_injected_credentials_reauthenticate_after_read_only_401(self):
+        class Session:
+            def __init__(self):
+                self.auth = []
+                self.methods = []
+
+            def post(self, url, **kwargs):
+                self.auth.append(kwargs["auth"])
+                return Response({}, status=201)
+
+            def request(self, method, url, **kwargs):
+                self.methods.append(method)
+                return Response({}, status=401 if len(self.methods) == 1 else 200)
+
+        session = Session()
+        client = WorldQuantClient(
+            session, credentials={"username": "fixture-user", "password": "fixture-password"})
+        self.assertEqual(client.request("GET", "/data-sets").status_code, 200)
+        self.assertEqual(session.methods, ["GET", "GET"])
+        self.assertEqual(session.auth, [("fixture-user", "fixture-password")] * 2)
+
     def test_simulation_post_401_is_not_retried(self):
         class Session:
             def __init__(self):

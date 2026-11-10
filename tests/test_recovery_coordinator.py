@@ -48,6 +48,32 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         self.gateway = FakeGateway()
 
+    def test_unspecified_campaign_dataset_is_chosen_randomly_from_exact_catalog(self):
+        agent = Mock(runs_root=self.root / "runs", stop_flag=None)
+        agent.run_once.return_value = {"batch_dir": "batch", "alpha_ids": ["A1"],
+                                       "candidate_status": {"A1": "EVIDENCE_PENDING"}}
+        scope = {"region": "HKG", "delay": 1, "universe": "TOP800"}
+        rows = [{"id": name, "category": {"id": "model"}, **scope}
+                for name in ("model101", "model102")]
+        gateway = Mock()
+        gateway.call.side_effect = lambda command, **kwargs: {
+            "set_case": {},
+            "get_platform_setting_options": {"instrument_options": [{
+                "InstrumentType": "EQUITY", "Region": "HKG", "Delay": 1,
+                "Universe": ["TOP800"]}]},
+            "get_datasets": rows,
+        }[command]
+        with patch("alpha_research.workflows.regular.campaign.choice", create=True,
+                   side_effect=lambda eligible: eligible[-1]):
+            result = run_regular_campaign(
+                agent, gateway, **scope, objective="random dataset", max_batches=2)
+        self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list],
+                         ["model102", "model102"])
+        agent._decide.assert_not_called()
+        self.assertEqual(result["unselected_dataset_ids"], ["model101"])
+        paths = [call.kwargs["field_pool_path"] for call in agent.run_once.call_args_list]
+        self.assertEqual(paths[0], paths[1])
+
     def test_campaign_projects_blocked_item_and_retains_its_failure_after_resume(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)
         result = {"batch_dir": "batch", "alpha_ids": ["A1"],

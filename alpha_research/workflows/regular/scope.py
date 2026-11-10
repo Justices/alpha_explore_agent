@@ -11,7 +11,16 @@ class ScopeDiscoveryError(ValueError):
     pass
 
 
-def _category(value):
+SCOPE_KEYS = ("region", "delay", "universe")
+
+
+def exact_catalog_scope(row, scope):
+    if isinstance(row, dict) and all(row.get(key) == scope[key] for key in SCOPE_KEYS):
+        return {key: row[key] for key in SCOPE_KEYS}
+    return None
+
+
+def dataset_category(value):
     if isinstance(value, str) and value:
         return value
     if isinstance(value, dict):
@@ -72,7 +81,7 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
         scope = {"instrument_type": "EQUITY", "region": region,
                  "delay": current_delay, "universe": current_universe}
         catalog = _rows(gateway.call("get_datasets", **scope))
-        catalogs.append({"scope": scope, "rows": catalog})
+        catalogs.append({"scope": scope, "count": len(catalog)})
         by_id = {item.get("id"): item for item in catalog
                  if isinstance(item, dict) and isinstance(item.get("id"), str)}
         selected_ids = dataset_ids if dataset_ids is not None else sorted(by_id)
@@ -83,42 +92,42 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                     unresolved.append({"dataset_id": dataset_id, "scope": scope,
                                        "reason": "not_in_exact_scope_catalog"})
                 continue
-            if dataset_id not in detail_cache:
-                detail_cache[dataset_id] = gateway.call(
-                    "get_dataset_details", dataset_id=dataset_id)
-            detail = detail_cache[dataset_id]
-            if not isinstance(detail, dict) or detail.get("id") != dataset_id:
-                unresolved.append({"dataset_id": dataset_id, "scope": scope,
-                                   "reason": "dataset_detail_unreadable"})
-                continue
-            actual_category = _category(detail.get("category")) or _category(
-                catalog_row.get("category"))
+            actual_category = dataset_category(catalog_row.get("category"))
+            evidence = exact_catalog_scope(catalog_row, scope)
+            source = "exact_catalog"
+            detail = None
+            if evidence is None or (category is not None and actual_category is None):
+                if dataset_id not in detail_cache:
+                    detail_cache[dataset_id] = gateway.call(
+                        "get_dataset_details", dataset_id=dataset_id)
+                detail = detail_cache[dataset_id]
+                if not isinstance(detail, dict) or detail.get("id") != dataset_id:
+                    unresolved.append({"dataset_id": dataset_id, "scope": scope,
+                                       "reason": "dataset_detail_unreadable"})
+                    continue
+                actual_category = dataset_category(detail.get("category")) or actual_category
+                if evidence is None:
+                    data = detail.get("data")
+                    if isinstance(data, list):
+                        evidence = next((item for item in data
+                                         if exact_catalog_scope(item, scope)), None)
+                    source = "dataset_detail"
             if category is not None and actual_category is None:
                 unresolved.append({"dataset_id": dataset_id, "scope": scope,
                                    "reason": "category_unverified"})
                 continue
             if category is not None and actual_category != category:
                 continue
-            data = detail.get("data")
-            if not isinstance(data, list):
+            if evidence is None:
                 unresolved.append({"dataset_id": dataset_id, "scope": scope,
-                                   "reason": "dataset_scope_detail_unreadable"})
-                continue
-            matches = [item for item in data if isinstance(item, dict)
-                       and item.get("region") == region
-                       and item.get("delay") == current_delay
-                       and item.get("universe") == current_universe]
-            if not matches:
-                if dataset_ids is not None:
-                    unresolved.append({"dataset_id": dataset_id, "scope": scope,
-                                       "reason": "detail_does_not_confirm_scope"})
+                                   "reason": "dataset_scope_unverified"})
                 continue
             discovered.setdefault(dataset_id, {
                 "dataset_id": dataset_id, "category": actual_category,
-                "catalog_row": catalog_row, "detail": detail,
                 "combinations": []})["combinations"].append({
                     "region": region, "delay": current_delay,
-                    "universe": current_universe, "detail_scope": matches[0]})
+                    "universe": current_universe, "detail_scope": evidence,
+                    "scope_evidence_source": source})
     if not discovered and not unresolved:
         unresolved.append({"reason": "no_eligible_dataset_confirmed"})
     return {"region": region, "requested": {
