@@ -2,11 +2,16 @@
 
 import hashlib
 import json
+import re
+import shutil
+from tempfile import mkdtemp
 from datetime import datetime, timezone, timedelta
 from itertools import zip_longest
 from pathlib import Path
 
 from alpha_research.workflows.regular.scope import discover_regular_scope, regular_delay
+from alpha_research.workflows.regular.campaign_report import prior_campaign_findings, write_campaign_summary
+from alpha_research.qualification.ppa import ppa_requested
 from alpha_research.state.store import (
     atomic_write_json, has_only_completed_probes, is_pre_submission_draft, read_json,
 )
@@ -24,6 +29,105 @@ def _key(request):
     return hashlib.sha256(raw).hexdigest()[:32]
 
 
+def load_saved_campaign(state_root, campaign_id):
+    if not isinstance(campaign_id, str) or not re.fullmatch(r"[0-9a-f]{32}", campaign_id):
+        raise ValueError("Campaign ID 无效")
+    path = Path(state_root) / "state/research_v1_1/campaign_runs" / f"{campaign_id}.json"
+    state = read_json(path, default={})
+    if not isinstance(state, dict) or state.get("campaign_id") != campaign_id or state.get("deleted_at"):
+        raise ValueError("Campaign 不存在或已删除")
+    return path, state
+
+
+def campaign_can_resume(state):
+    budget = state.get("budget", {})
+    return (state.get("active_item") is not None
+            or budget.get("used", {}).get("batches", 0) < budget.get("limits", {}).get("batches", 0))
+
+
+def delete_saved_campaign(state_root, campaign_id):
+    """Remove the files owned by this Campaign while the caller holds the writer lock."""
+    root = Path(state_root).resolve()
+    path, state = load_saved_campaign(root, campaign_id)
+    store = ResearchRecordStore(root)
+    research_id = f"regular:campaign:{campaign_id}"
+    owned = {
+        path, path.with_name(f"{campaign_id}_scope_plan.json"),
+        path.with_name(f"{campaign_id}_summary.json"),
+        path.parent / "field_pools" / campaign_id,
+        root / "state/codex_threads" / hashlib.sha256(research_id.encode()).hexdigest(),
+        store.path_for("campaign", campaign_id),
+    }
+    for item in state.get("items", []):
+        subtask_id = _key({"campaign_id": campaign_id, "dataset_id": item["dataset_id"]})
+        combination_id = _key({"subtask_id": subtask_id, **{
+            key: item[key] for key in ("region", "delay", "universe")}})
+        owned.update((store.path_for("dataset_subtask", subtask_id),
+                      store.path_for("combination", combination_id)))
+    batches = []
+    for context_path in (root / "runs").glob("*/*/*/*/*/batch_context.json"):
+        context = read_json(context_path, default={})
+        if not isinstance(context, dict) or context.get("research_id") != research_id:
+            continue
+        batch = context_path.parent
+        batches.append(batch)
+        owned.add(batch)
+        for intent_path in batch.rglob("*_intent.json"):
+            intent = read_json(intent_path, default={})
+            if not isinstance(intent, dict) or intent.get("status") not in {
+                    "READ_BACK", "PREPARED", "STOPPED_BEFORE_SUBMISSION"}:
+                raise ValueError(f"回测提交状态待确认，请先恢复 {batch.name}")
+        case_key, run_id = context.get("platform_case_key"), context.get("platform_run_id")
+        if all(isinstance(key, str) and re.fullmatch(r"[A-Za-z0-9_-]+", key)
+               for key in (case_key, run_id)):
+            session = root / "state/platform/cases" / case_key / "sessions" / run_id
+            for marker_path in (session / "batches").glob("*.post_started.json"):
+                marker = read_json(marker_path, default={})
+                progress = read_json(marker_path.with_suffix("").with_suffix(".progress.json"), default={})
+                if (not isinstance(marker, dict) or not isinstance(progress, dict)
+                        or progress.get("status") != "COMPLETE"
+                        or not marker.get("request_sha256")
+                        or progress.get("request_sha256") != marker["request_sha256"]):
+                    raise ValueError(f"BRAIN 回执待确认，请先恢复 {batch.name}")
+            owned.add(session)
+    for kind in ("candidate", "preferred"):
+        for record_path in (store.root / kind).glob("*.json"):
+            body = record_path.read_text(encoding="utf-8").casefold()
+            if any(json.dumps(str(batch), ensure_ascii=False)[1:-1].casefold() in body
+                   for batch in batches):
+                raise ValueError("此 Campaign 的文件仍被候选或优选记录引用")
+    for ref in (root / "state/logs/workbench").glob("*.campaign.json"):
+        if read_json(ref) == {"campaign_id": campaign_id}:
+            owned.update((ref, ref.with_name(ref.name.removesuffix(".campaign.json") + ".jsonl")))
+    for ref in (root / "state/logs/model_calls").glob("*.record.json"):
+        record = read_json(ref, default={})
+        if isinstance(record, dict) and record.get("research_id") == research_id:
+            call_id = ref.name.removesuffix(".record.json")
+            owned.update(ref.with_name(f"{call_id}.{kind}.json")
+                         for kind in ("record", "context", "response"))
+            session_id = record.get("session_id")
+            if isinstance(session_id, str) and re.fullmatch(r"[0-9a-f]{32}", session_id):
+                owned.add(root / "state/logs/model_sessions" / f"{session_id}.json")
+    for target in owned:
+        if not target.is_relative_to(root) or target.resolve() != target:
+            raise ValueError("研究文件路径超出所属目录")
+    staging = Path(mkdtemp(prefix=".delete-campaign-", dir=root))
+    moved = []
+    try:
+        for target in [*sorted(owned - {path}), path]:
+            if target.exists():
+                destination = staging / target.relative_to(root)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                target.rename(destination)
+                moved.append((target, destination))
+    except OSError:
+        for target, destination in reversed(moved):
+            destination.rename(target)
+        shutil.rmtree(staging)
+        raise
+    shutil.rmtree(staging)
+
+
 def _work_items(plan):
     by_dataset = [
         [{"dataset_id": dataset["dataset_id"], "category": dataset["category"],
@@ -37,6 +141,8 @@ def _work_items(plan):
 def _subtask_summary(state):
     groups = {}
     completed = {entry["item_index"] for entry in state["completed"]}
+    fully_completed = {entry["item_index"] for entry in state["completed"]
+                       if entry.get("field_research_status") != "partial"}
     failures = {}
     for failure in state.get("failures", []):
         failures.setdefault(failure["item_index"], []).append(failure)
@@ -48,11 +154,13 @@ def _subtask_summary(state):
             status = state["status"]
             group["status"] = status
         elif index in completed:
-            status = "completed"
+            status = "completed" if index in fully_completed else "partial"
+            if status == "partial" and group["status"] == "eligible":
+                group["status"] = "partial"
         elif index in failures:
             status = "unresolved"
             group["status"] = "unresolved"
-        elif state["status"] in {"budget_complete", "partial", "unresolved"}:
+        elif state["status"] in {"budget_complete", "scope_complete", "partial", "unresolved"}:
             status = "skipped_budget"
         else:
             status = "eligible"
@@ -67,7 +175,7 @@ def _subtask_summary(state):
             continue
         if all(item["status"] == "completed" for item in group["combinations"]):
             group["status"] = "covered"
-        elif state["status"] in {"budget_complete", "partial", "unresolved"}:
+        elif state["status"] in {"budget_complete", "scope_complete", "partial", "unresolved"}:
             group["status"] = "partial_budget"
     return [groups[key] for key in sorted(groups)]
 
@@ -167,7 +275,7 @@ def _checkpoint_campaign(state, state_root, path):
         "status": state["status"],
         "stop_reason": state.get("error") or (
             state["status"] if state["status"] in
-            ("budget_complete", "partial", "user_stopped", "unresolved") else None),
+            ("budget_complete", "scope_complete", "partial", "user_stopped", "unresolved") else None),
         "coverage": {
             "eligible_combinations": len(state["items"]),
             "completed_combinations": len(completed),
@@ -211,6 +319,12 @@ def _reconcile_active(agent, state, recovery_batch=None):
             raise ValueError("interrupted Campaign context is unreadable")
     if len(matches) > 1:
         raise ValueError("multiple possible interrupted batches; manual reconciliation required")
+    if matches and matches[0][1].get("research_id") == research_id:
+        saved_batch = matches[0][0]
+        if (saved_batch / "field_research_plan.json").exists():
+            return saved_batch
+        if recovery_batch is None and (saved_batch / "simulation_intent.json").exists():
+            return saved_batch
     if matches and recovery_batch is None:
         batch_dir, context = matches[0]
         if context.get("research_id") == research_id and is_pre_submission_draft(batch_dir):
@@ -272,14 +386,14 @@ def _record_attempt_failure(state, reason, batch_ref=None):
 
 def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                          category=None, delay=None, universe=None,
-                         max_batches, ppa_profile=False, execution_context=None,
-                         recovery_batch=None):
-    """Execute one batch per eligible item, then cycle while budget remains.
+                         max_batches=None, ppa_profile=False, execution_context=None,
+                         recovery_batch=None, resume_campaign_id=None):
+    """Execute every eligible scope item by default.
 
     Persist progress before and after each batch. An interrupted batch is
     unresolved until the existing recovery command has reconciled it.
     """
-    if type(max_batches) is not int or max_batches < 1:
+    if max_batches is not None and (type(max_batches) is not int or max_batches < 1):
         raise ValueError("max_batches must be positive")
     if not isinstance(objective, str) or not objective.strip():
         raise ValueError("objective is required")
@@ -296,19 +410,25 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         if isinstance(context, dict) and context.get("research_id") in (
                 None, f"regular:campaign:{legacy_id}"):
             campaign_id = legacy_id
+    if resume_campaign_id is not None:
+        if resume_campaign_id not in (campaign_id, legacy_id):
+            raise ValueError("saved Campaign ID does not match its request")
+        campaign_id = resume_campaign_id
     research_id = f"regular:campaign:{campaign_id}"
     state_root = Path(agent.runs_root).resolve().parent
     path = (state_root / "state" /
             "research_v1_1" / "campaign_runs" / f"{campaign_id}.json")
     if recovery_batch is not None:
         recovery_batch = Path(recovery_batch).resolve()
-    if recovery_batch is not None and not path.exists():
+    if (recovery_batch is not None or resume_campaign_id is not None) and not path.exists():
         raise ValueError("Campaign state is missing; recovery cannot reconstruct it safely")
-    resume_probes = None
+    resume_batch = None
     scope_options = None
     fresh_dataset_proofs = {}
     if path.exists():
         state = json.loads(path.read_text(encoding="utf-8"))
+        if state.get("deleted_at"):
+            raise ValueError("Campaign 已删除，请使用新的研究目标创建任务")
         if "plan_evidence_ref" not in state:
             evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
             atomic_write_json(evidence_path, state["plan"])
@@ -322,20 +442,20 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                                       "reason": state["error"],
                                       "recorded_at": state["updated_at"]}]
             try:
-                resume_probes = _reconcile_active(agent, state, recovery_batch)
+                resume_batch = _reconcile_active(agent, state, recovery_batch)
             except ValueError as exc:
                 if recovery_batch is not None or (execution_context and state["budget"]["limits"]["batches"] == 1):
                     raise
                 _record_attempt_failure(state, str(exc))
                 write_progress("先前批次需要单独恢复，继续处理剩余预算")
             _checkpoint_campaign(state, state_root, path)
-        if recovery_batch is not None:
+        if recovery_batch is not None and resume_batch is None:
             if not any(Path(entry["batch_dir"]).resolve() == recovery_batch
                        for entry in state["completed"]):
                 raise ValueError("bound recovery batch is missing from Campaign receipts")
             state.pop("error", None)
             if len(state["completed"]) >= state["budget"]["limits"]["batches"]:
-                state["status"] = "budget_complete"
+                state["status"] = "scope_complete" if max_batches is None else "budget_complete"
             state["remaining_items"] = [
                 item for index, item in enumerate(state["items"])
                 if index not in {entry["item_index"] for entry in state["completed"]}]
@@ -358,7 +478,10 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             category=category, delay=delay, universe=universe, options=scope_options)
         items = _work_items(plan)
         plan["execution_order"] = items
-        plan["batches_per_dataset"] = max_batches
+        if max_batches is not None:
+            plan["batches_per_dataset"] = max_batches
+        plan["field_research"] = (execution_context is None and not ppa_profile
+                                  and not ppa_requested(objective))
         evidence_path = path.with_name(f"{campaign_id}_scope_plan.json")
         atomic_write_json(evidence_path, plan)
         for dataset in plan["datasets"]:
@@ -372,17 +495,20 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             write_progress("没有通过范围核验的研究组合")
             return {"status": "unresolved", "plan": plan,
                     "plan_evidence_ref": str(evidence_path), "reason": "no_verified_work_items"}
+        attempt_limit = (len(items) if max_batches is None else
+                         max_batches * len({item["dataset_id"] for item in items}))
         state = {"schema_version": 1, "campaign_id": campaign_id,
                  "plan_evidence_ref": str(evidence_path),
                  "request": request, "plan": plan, "items": items,
                  "completed": [], "active_item": None,
-                 "budget": {"limits": {"batches": max_batches * len({item["dataset_id"] for item in items})},
+                 "budget": {"limits": {"batches": attempt_limit},
                             "reserved": {"batches": 0},
                             "used": {"batches": 0}},
                  "status": "planned", "created_at": _now(),
                  "updated_at": _now()}
         _checkpoint_campaign(state, state_root, path)
     items = state["items"]
+    history = prior_campaign_findings(path.parent, campaign_id, items)
     items_by_dataset = {}
     for index, item in enumerate(items):
         items_by_dataset.setdefault(item["dataset_id"], []).append(index)
@@ -393,14 +519,18 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             state["status"] = "user_stopped"
             break
         used = state["budget"]["used"]["batches"]
-        round_number, dataset_slot = divmod(used, len(dataset_slots))
-        combinations = dataset_slots[dataset_slot]
-        index = (state["active_item"] if resume_probes is not None
-                 else combinations[round_number % len(combinations)])
+        if resume_batch is not None:
+            index = state["active_item"]
+        elif max_batches is None:
+            index = used
+        else:
+            round_number, dataset_slot = divmod(used, len(dataset_slots))
+            combinations = dataset_slots[dataset_slot]
+            index = combinations[round_number % len(combinations)]
         item = items[index]
         write_progress(f"开始执行第 {used + 1}/{attempt_limit} 批 · {item['dataset_id']}")
         state["active_item"] = index
-        if resume_probes is None:
+        if resume_batch is None:
             state["active_started_at"] = _now()
         state["budget"]["reserved"]["batches"] = 1
         state["status"] = "running"
@@ -416,7 +546,9 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             }
             if execution_context is not None:
                 run_kwargs["execution_context"] = execution_context
-            if resume_probes is None:
+            if state["plan"].get("field_research"):
+                run_kwargs["field_research"] = True
+            if resume_batch is None:
                 if scope_options is None:
                     scope_options = gateway.call("get_platform_setting_options", include_schema=True)
                 if isinstance(scope_options, dict):
@@ -424,13 +556,24 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 proof = fresh_dataset_proofs.get((item["dataset_id"], item["delay"], item["universe"]))
                 if proof is not None:
                     run_kwargs["dataset_scope_proof"] = proof
+                prior = history[(item["dataset_id"], item["region"], item["delay"], item["universe"])]
+                if prior:
+                    run_kwargs["prior_research"] = prior
                 result = agent.run_once(objective, dataset_id=item["dataset_id"], **run_kwargs)
             else:
-                write_progress("核验并复用已完成的字段诊断回测")
-                result = agent.recover(resume_probes, completed_probes_only=True,
+                saved_execution = any((resume_batch / name).exists() for name in
+                                      ("field_research_plan.json", "simulation_intent.json"))
+                write_progress("正在恢复已保存的设计和回测进度" if saved_execution else
+                               "核验并复用已完成的字段诊断回测")
+                result = agent.recover(resume_batch, completed_probes_only=not saved_execution,
                                        execution_context=execution_context)
-                resume_probes = None
+                resume_batch = None
             batch_dir = result.get("batch_dir") if isinstance(result, dict) else None
+            if isinstance(result, dict) and result.get("field_research_status") == "user_stopped":
+                state["status"] = "user_stopped"
+                break
+            if isinstance(result, dict) and result.get("field_research_status") == "unresolved":
+                raise ValueError(f"no field expression completed; see {Path(batch_dir) / 'results.json'}")
             if (not isinstance(batch_dir, (str, Path)) or not str(batch_dir).strip()
                     or not isinstance(result.get("alpha_ids"), list) or not result["alpha_ids"]
                     or any(not isinstance(value, str) or not value.strip() for value in result["alpha_ids"])
@@ -441,11 +584,18 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 "batch_dir": str(batch_dir), "alpha_ids": result["alpha_ids"],
                 "candidate_status": result["candidate_status"], "completed_at": _now(),
             }
+            if result.get("field_research_status"):
+                receipt["field_research_status"] = result["field_research_status"]
+            if result.get("attribution_status"):
+                receipt["attribution_status"] = result["attribution_status"]
         except Exception as exc:
+            if agent.stop_flag and agent.stop_flag.exists():
+                state["status"] = "user_stopped"
+                break
             if not (execution_context and attempt_limit == 1):
-                batch_ref = resume_probes or getattr(getattr(agent, "recorder", None), "batch_dir", None)
+                batch_ref = resume_batch or getattr(getattr(agent, "recorder", None), "batch_dir", None)
                 _record_attempt_failure(state, str(exc), batch_ref)
-                resume_probes = None
+                resume_batch = None
                 _checkpoint_campaign(state, state_root, path)
                 write_progress(f"第 {used + 1} 批未完成，已记录失败 · {type(exc).__name__}")
                 continue
@@ -471,14 +621,20 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             state["status"] = "user_stopped"
         elif not state["completed"]:
             state["status"] = "unresolved"
-        elif state["budget"]["used"]["batches"] > len(state["completed"]):
+        elif (state["budget"]["used"]["batches"] > len(state["completed"])
+              or any(entry.get("field_research_status") == "partial"
+                     or entry.get("attribution_status") == "unresolved"
+                     for entry in state["completed"])):
             state["status"] = "partial"
         else:
-            state["status"] = "budget_complete"
+            state["status"] = "scope_complete" if max_batches is None else "budget_complete"
     state["remaining_items"] = [
         item for index, item in enumerate(items)
         if index not in {entry["item_index"] for entry in state["completed"]}]
     _checkpoint_campaign(state, state_root, path)
+    summary_path = path.with_name(f"{campaign_id}_summary.json")
+    write_campaign_summary(state, summary_path)
+    write_progress(f"Campaign 复盘已保存 · {summary_path}")
     return {"campaign_id": campaign_id, "status": state["status"],
             "batches_completed": len(state["completed"]),
             "budget": state["budget"],
@@ -488,4 +644,4 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "subtasks": state["subtasks"],
             "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
             "unresolved": state["plan"]["unresolved"],
-            "state_path": str(path)}
+            "state_path": str(path), "summary_path": str(summary_path)}

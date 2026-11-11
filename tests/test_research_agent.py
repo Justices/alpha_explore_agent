@@ -126,9 +126,11 @@ class FakeGateway:
         if cmd == "get_datafields":
             rows = [
                 {"id": "signal_a", "type": "MATRIX", "dataset": {"id": params["dataset_id"]},
-                 "description": "slow economic signal", "coverage": 0.9},
+                 "description": "slow economic signal", "coverage": 0.9,
+                 "dateCoverage": 0.9, "alphaCount": 1},
                 {"id": "signal_b", "type": "MATRIX", "dataset": {"id": params["dataset_id"]},
-                 "description": "independent slow signal", "coverage": 0.8},
+                 "description": "independent slow signal", "coverage": 0.8,
+                 "dateCoverage": 0.9, "alphaCount": 1},
             ]
             if not self.catalog_incomplete:
                 for row in rows:
@@ -352,6 +354,101 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(metering["alpha_expressions"], 2)
         self.assertIsNone(metering["model_tokens"])
 
+    def test_campaign_constructs_all_fields_before_execution_and_isolates_failed_group(self):
+        from alpha_research.workflows.regular.campaign import run_regular_campaign
+
+        field_ids = [f"signal_{index}" for index in range(10)]
+        fields = [{"id": field, "type": "VECTOR" if field == "signal_8" else "MATRIX",
+                   "dataset": {"id": "risk60"},
+                   "description": f"Observed description for {field}", "coverage": 0.9,
+                   "dateCoverage": 0.9, "alphaCount": 1}
+                  for field in field_ids]
+        self.model.decisions["plan_probes"]["core_fields"] = field_ids
+        def variants_for(field):
+            expressions = [f"rank({field})"]
+            if field == "signal_8":
+                expressions = [f"rank(vec_avg({field}))",
+                               f"rank(ts_mean(vec_avg({field}), 5))", f"rank({field})"]
+            elif field == "signal_9":
+                expressions += [f"rank(ts_mean({field}, 5))", "ts_mean(signal_8, 5)"]
+            return [{
+                "expression": expression, "reason": "Compare levels across the universe",
+                "research": {key: f"{field} {key}" for key in (
+                    "idea", "data_rationale", "operator_rationale", "field_relationship",
+                    "settings_rationale", "expected_behavior", "failure_criterion")}}
+                for expression in expressions]
+
+        self.model.decisions["construct_field_expressions"] = [
+            {"fields": [{"field_id": field, "variants": variants_for(field)}
+                        for field in group]}
+            for group in (field_ids[:8], field_ids[8:])]
+        repaired = {**variants_for("signal_8")[0],
+                    "expression": "rank(ts_mean(vec_avg(signal_8), 10))"}
+        self.model.decisions["construct_field_expressions"].append({"fields": [
+            {"field_id": "signal_8", "variants": [repaired]},
+            {"field_id": "signal_9", "variants": [variants_for("signal_9")[-1]]},
+        ]})
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        original_call = self.gateway.call
+        submitted = []
+        interrupted = False
+
+        def call(command, **params):
+            nonlocal interrupted
+            if command == "get_datafields":
+                return fields
+            if command == "get_datasets":
+                rows = original_call(command, **params)
+                return [{**row, "description": "Dataset documents the lender signals"} for row in rows]
+            if command == "get_operators":
+                return original_call(command, **params) + [
+                    {"name": "vec_avg", "scope": ["REGULAR"], "definition": "vec_avg(x)"},
+                    {"name": "vec_count", "scope": ["COMBO"], "definition": "vec_count(x)"},
+                ]
+            if command == "simulate_batch":
+                submitted.append(params["variants"])
+                self.assertEqual(self.model.tasks.count("construct_field_expressions"), 3)
+                self.assertTrue(list(Path(self.tmp.name).rglob("field_research_plan.json")))
+                if len(submitted) == 1:
+                    raise RuntimeError("simulated loss of execution response")
+            if (command == "set_case" and submitted and not interrupted
+                    and list(Path(self.tmp.name).rglob("execution_failure.json"))):
+                interrupted = True
+                raise KeyboardInterrupt
+            return original_call(command, **params)
+
+        with patch.object(self.gateway, "call", side_effect=call):
+            request = {"objective": "test lending signals", "region": "GLB",
+                       "dataset_ids": ["risk60"], "delay": 1, "universe": "TOP3000", "max_batches": 1}
+            with self.assertRaises(KeyboardInterrupt):
+                run_regular_campaign(agent, self.gateway, **request)
+            result = run_regular_campaign(agent, self.gateway, **request)
+            self.assertEqual(result["status"], "partial", [
+                path.read_text(encoding="utf-8") for path in
+                Path(self.tmp.name).rglob("results.json")])
+            parent = Path(result["completed"][0]["batch_dir"])
+            recovered = agent.recover(parent)
+            self.assertEqual(recovered["alpha_ids"], ["A1", "A2", "A3", "A4", "A5"])
+            target_failure, = recovered["field_failures"]
+            self.assertEqual(target_failure["field_id"], "signal_9")
+            self.assertEqual(result["subtasks"][0]["status"], "partial")
+            child = Path(recovered["child_batches"][0]["batch_dir"])
+            manifest = json.loads((child / "model_call_manifest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("construct_field_expressions", {row["task"] for row in manifest["calls"]})
+        self.assertEqual([len(group) for group in submitted], [8, 5])
+        context = self.model.contexts["construct_field_expressions"]
+        self.assertEqual(context["validation_feedback"][0]["expression"], "rank(signal_8)")
+        self.assertEqual(context["validation_feedback"][0]["reason"][0]["code"],
+                         "E_VECTOR_NOT_ADAPTED")
+        self.assertIn(repaired["expression"], [row["expression"] for row in submitted[1]])
+        self.assertEqual(context["vector_field_ids"], ["signal_8"])
+        self.assertEqual(context["vector_adapters"], ["vec_avg"])
+        self.assertEqual(submitted[1][0]["expression"], "rank(vec_avg(signal_8))")
+        self.assertEqual(context["dataset_description"], "Dataset documents the lender signals")
+        self.assertEqual([row["id"] for row in context["fields"]], field_ids[8:])
+        self.assertTrue(any(row["name"] == "rank" for row in context["operator_catalog"]))
+        self.assertEqual(submitted[1][0]["research"]["idea"], "signal_8 idea")
+
     def test_ppa_objective_records_local_eligibility_separately_from_candidate(self):
         self.gateway.single_ids = ["A1"]
         self.gateway.full_details = True
@@ -466,8 +563,15 @@ class TestResearchAgent(unittest.TestCase):
 
         scope = {"region": "GLB", "delay": 1, "universe": "TOP3000"}
         fields = [{"id": f"field_{index}", "type": "MATRIX", "dataset": {"id": "risk60"},
-                   "description": "verified fixture field"} for index in range(105)]
+                   "description": "verified fixture field", "coverage": 0.5,
+                   "dateCoverage": 0.5, "alphaCount": 800} for index in range(105)]
         fields.append({**fields[0], "id": "wrong_dataset", "dataset": {"id": "other"}})
+        rejected = [
+            {**fields[0], "id": "low_instrument_coverage", "coverage": 0.4999},
+            {**fields[0], "id": "low_date_coverage", "dateCoverage": 0.4999},
+            {**fields[0], "id": "high_alpha_count", "alphaCount": 801},
+            {**fields[0], "id": "missing_date_coverage", "dateCoverage": None},
+        ]
         path = Path(self.tmp.name) / "field_pool.json"
         chosen = _campaign_field_pool(path, fields, "risk60", scope)
         self.assertEqual(len({row["id"] for row in chosen}), 100)
@@ -475,8 +579,15 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual(_campaign_field_pool(path, list(reversed(fields)), "risk60", scope),
                          chosen)
         few = fields[:4]
-        self.assertEqual(_campaign_field_pool(path.with_name("small.json"), few, "risk60", scope),
+        small_path = path.with_name("small.json")
+        self.assertEqual(_campaign_field_pool(small_path, few + rejected, "risk60", scope),
                          few)
+        old_pool = json.loads(small_path.read_text(encoding="utf-8"))
+        old_pool["field_ids"].append(rejected[0]["id"])
+        small_path.write_text(json.dumps(old_pool), encoding="utf-8")
+        self.assertEqual(_campaign_field_pool(small_path, few + rejected, "risk60", scope), few)
+        with self.assertRaisesRegex(ResearchError, "no fields pass"):
+            _campaign_field_pool(path.with_name("empty.json"), rejected, "risk60", scope)
 
     def test_missing_effective_settings_are_selected_and_live_validated(self):
         for key in ("decay", "truncation", "pasteurization"):
@@ -1036,11 +1147,20 @@ class TestResearchAgent(unittest.TestCase):
         self.model.fail_task_once = "attribute_results"
         agent = ResearchAgent(self.gateway, self.model, self.config,
                               Path(self.tmp.name))
-        with self.assertRaises(RuntimeError):
-            agent.run_once("slow lending signal", dataset_id="risk60")
-        batch = next(Path(self.tmp.name).rglob("simulation_raw.json")).parent
+        pending = agent.run_once("slow lending signal", dataset_id="risk60")
+        self.assertEqual(pending["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(pending["attribution_status"], "unresolved")
+        batch = Path(pending["batch_dir"])
+        intent = json.loads((batch / "simulation_intent.json").read_text(encoding="utf-8"))
+        self.assertEqual(intent["status"], "READ_BACK")
+        calls_before_recovery = len(self.gateway.calls)
         result = agent.recover(batch)
         self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(result["attribution_status"], "complete")
+        evidence = self.model.contexts["attribute_results"]
+        self.assertEqual([row["alpha_id"] for row in evidence["results"]], ["A1", "A2"])
+        self.assertEqual(evidence["knowledge_pack"]["l3_evidence"], [])
+        self.assertEqual(len(self.gateway.calls), calls_before_recovery)
         self.assertNotIn("get_user_alphas", [name for name, _ in self.gateway.calls])
         self.assertEqual(sum(name == "simulate_batch"
                              for name, _ in self.gateway.calls), 1)

@@ -102,6 +102,8 @@ class RecoveryCoordinatorTests(unittest.TestCase):
                          ids)
         self.assertEqual(result["budget"]["limits"]["batches"], 5)
         self.assertEqual(result["batches_completed"], 5)
+        summary = json.loads(Path(result["summary_path"]).read_text(encoding="utf-8"))
+        self.assertEqual([row["dataset_id"] for row in summary["combinations"]], ids)
         self.assertEqual(sum(call.args[0] == "get_platform_setting_options"
                              for call in gateway.call.call_args_list), 1)
         self.assertTrue(all(call.kwargs["dataset_scope_proof"]["delay"] == 1
@@ -120,6 +122,17 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual([call.kwargs["fixed_scope"]["universe"] for call in agent.run_once.call_args_list],
                          ["TOP500"] * 5 + ["TOP800"] * 5)
         self.assertEqual(result["budget"]["used"]["batches"], 10)
+        self.assertEqual(agent.run_once.call_args_list[0].kwargs["prior_research"][0]["alpha_count"], 1)
+        self.assertNotIn("prior_research", agent.run_once.call_args_list[5].kwargs)
+        agent.run_once.reset_mock()
+        result = run_regular_campaign(
+            agent, gateway, region="HKG", category="Analyst", objective="entire selected scope")
+        self.assertEqual([call.kwargs["dataset_id"] for call in agent.run_once.call_args_list], ids * 2)
+        self.assertEqual([call.kwargs["fixed_scope"]["universe"] for call in agent.run_once.call_args_list],
+                         ["TOP500"] * 5 + ["TOP800"] * 5)
+        self.assertEqual(result["batches_completed"], 10)
+        self.assertEqual(result["status"], "scope_complete")
+        self.assertFalse(result["remaining_items"])
 
     def test_campaign_records_failed_attempt_and_continues_to_next_dataset(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)

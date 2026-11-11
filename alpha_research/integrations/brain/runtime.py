@@ -25,7 +25,7 @@ from alpha_research.simulation.matching import SETTING_KEYS
 from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
 from alpha_research.simulation.platform_cache import cache_record, history_payload, submission_key
 from alpha_research.simulation.tags import diagnostic_properties, research_tags
-from alpha_research.state.store import atomic_write_json, file_sha256, read_json
+from alpha_research.state.store import StopSignals, atomic_write_json, file_sha256, read_json
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.operation_lock import SubmissionGate
 from alpha_research.state.writer_lock import SingleWriterLock
@@ -702,7 +702,7 @@ class PlatformRuntime:
         """Start a proven-unsubmitted request while holding the submission gate."""
         if paths["post_started"].exists():
             raise PlatformError("simulation may have been submitted; do not repost")
-        if (self.state_root / "stop.flag").exists():
+        if StopSignals(self.state_root).exists():
             progress["status"] = "STOPPED_BEFORE_SUBMISSION"
             progress["unsubmitted_proof"] = "submission_gate_v1"
             atomic_write_json(paths["progress"], progress)

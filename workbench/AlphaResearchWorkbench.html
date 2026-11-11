@@ -53,15 +53,16 @@ async function refreshCredentials(){
 
 function showLaunchState(state){
  const previous=launchState?.status;
+ const previouslyStopping=launchState?.stop_requested;
  launchState=state;
- const messages={idle:"",running:"Regular 研究运行中",
+ const messages={idle:"",running:state.stop_requested?"正在终止研究":"Regular 研究运行中",
                  failed:"研究进程异常退出"+(Number.isInteger(state.exit_code)?"（退出码 "+state.exit_code+"）":"")};
  $("#launch-status").textContent=state.status==="exited"
    ? "Campaign "+[state.campaign_id,state.campaign_status].filter(Boolean).join(" · ")
    : messages[state.status]||"启动状态待核实";
  $("#launch-campaign").disabled=launchSubmitting||state.status==="running";
  if(previous==="running"&&state.status!=="running")refreshAgent();
- if(view==="cases"&&previous!==state.status)render();
+ if(view==="cases"&&(previous!==state.status||previouslyStopping!==state.stop_requested))render();
  const log=$("#launch-events");
  if(log)log.textContent=launchEvents();
 }
@@ -185,13 +186,18 @@ function board(){
 }
 function runtimeTasks(){
  if(!localAgent)return "";
+ const running=launchState?.status==="running";
  const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
    esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—"),
-   esc(row.batches_attempted??"—")
+   esc(row.batches_attempted??"—"),
+   [row.has_summary?button("查看复盘","research-summary",row.campaign_id,"quiet"):"",
+    !running&&row.resumable?button("恢复研究","resume-research",row.campaign_id):"",
+    !running?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
  ]);
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
-   (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+'</p>'+
+   (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+
+   (running&&!launchState.stop_requested?button("终止研究","stop-research",launchState.launch_id):"")+'</p>'+
    '<div class="details"><div><h3>执行日志</h3><pre class="detail" id="launch-events" aria-label="执行日志" '+
    'style="max-height:22rem;overflow:auto;margin:0">'+esc(launchEvents())+'</pre></div></div>':"";
  const config=agentStatus?.research_config;
@@ -202,12 +208,54 @@ function runtimeTasks(){
  const warning=config&&config.status!=="loaded"?
    '<p class="toolbar">'+(config.status==="missing"?"缺少研究配置文件。":"研究配置文件无法读取。")+
    ' <code>'+esc(config.path)+'</code></p>':"";
- const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次"],rows):
+ const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次","操作"],rows):
    launchState?.status==="running"
      ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。Campaign 记录写入后会自动显示。")
      : blank("暂无 CLI Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
  return panel("Agent 执行任务",latest+snapshots+warning+records,
               button("刷新 Agent 状态","agent-refresh"));
+}
+
+async function researchAction(action,id){
+ if(action==="delete"&&!window.confirm("删除这项研究及其本地文件？此操作无法撤销。"))return;
+ try{
+   const response=await fetch("/api/research",{method:"POST",headers:{"Content-Type":"application/json"},
+     body:JSON.stringify({action,id})});
+   const result=await readWorkbenchJson(response);
+   if(!response.ok)throw Error(result.error||"研究操作失败");
+   if(action==="delete"){
+     notify("研究已删除");
+     await refreshLaunch();
+     await refreshAgent();
+   }else{
+     showLaunchState(result);
+     await refreshLaunch();
+   }
+ }catch(error){
+   notify(error.message);
+ }
+}
+
+async function showResearchSummary(id){
+ try{
+   const response=await fetch("/api/research-summary?id="+encodeURIComponent(id),{cache:"no-store"});
+   const result=await readWorkbenchJson(response);
+   if(!response.ok)throw Error(result.error||"无法读取研究复盘");
+   const rows=result.combinations.map(row=>[
+     esc([row.dataset_id,row.region,"D"+row.delay,row.universe].join(" / ")),
+     esc(row.alpha_count),esc(row.best_sharpe?.sharpe??"—"),
+     esc(Object.entries(row.common_failures).map(([name,count])=>name+" × "+count).join("、")||"—"),
+     esc([...(row.attribution||[]),
+       row.attribution_status==="unresolved"?"归因待补":"",
+       row.field_failures.length?"未构造或未通过校验 "+row.field_failures.length+" 项":"",
+       row.execution_failures.length?"回测未完成 "+row.execution_failures.length+" 组":"",
+       row.reason||""].filter(Boolean).join("。")||"—")
+   ]);
+   show("研究复盘",'<p>'+esc(result.objective)+'</p>'+
+     table(["研究范围","回测数","最高 Sharpe","主要门槛失败","归因及未完成项"],rows),null);
+ }catch(error){
+   notify(error.message);
+ }
 }
 function cases(){
  const live=runtimeTasks();
@@ -255,9 +303,8 @@ const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
 const section=(s)=>'<h3 class="section">'+s+'</h3>';
 function launchForm(){
  show("启动 Regular Campaign",
-   '<p>填 1 时，每个可用 Dataset 尝试一批，每批可含 1–8 条表达式。每个有效组合抽取最多 100 个合格字段，后续批次复用同一字段池。</p>'+
+   '<p>每个组合先筛选 Instrument Coverage 和 Date Coverage 均 ≥50%、Alpha 数量 ≤800 的字段，再随机抽取最多 100 个。校验通过的表达式分组回测。</p>'+
    grid(field("region","Region","", "text",true),
-        field("max_batches","每个 Dataset 的研究批次数",1,"number",true),
         field("dataset_ids","Dataset ID（留空时依次处理可用 Dataset，多个用逗号分隔）"),
         field("category","Category"),
         field("delay","Delay",1,"number"),
@@ -265,7 +312,6 @@ function launchForm(){
         field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
         field("objective","研究目标","","area",true)), {kind:"launch"});
  const form=$("#form").elements;
- form.max_batches.min=1;form.max_batches.step=1;
  form.delay.readOnly=true;
 }
 
@@ -310,7 +356,7 @@ async function launchCampaign(form){
  const mode=editing;
  const fields=Object.fromEntries(new FormData(form));
  const request={region:fields.region.trim(),objective:fields.objective.trim(),
-                max_batches:Number(fields.max_batches),ppa:fields.ppa==="yes"};
+                ppa:fields.ppa==="yes"};
  const datasetIds=fields.dataset_ids.split(/[,，]/).map(id=>id.trim()).filter(Boolean);
  if(datasetIds.length)request.dataset_ids=datasetIds;
  for(const key of ["category","universe"]){
@@ -441,6 +487,10 @@ document.addEventListener("click",e=>{
  const a=data.alphas.find(x=>x.id===id),c=findCase(id);
  switch(act){
  case "agent-refresh":refreshAgent();return;
+ case "resume-research":researchAction("resume",id);return;
+ case "stop-research":researchAction("stop",id);return;
+ case "delete-research":researchAction("delete",id);return;
+ case "research-summary":showResearchSummary(id);return;
  case "new-case":caseForm();return;
  case "edit-case":caseForm(c);return;
  case "case":inspectCase(c);return;

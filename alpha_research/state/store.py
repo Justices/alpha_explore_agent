@@ -35,7 +35,7 @@ def is_pre_submission_draft(batch_dir: Path) -> bool:
         return False
     return not (
         names.intersection({"simulation_intent.json", "simulation_raw.json",
-                            "results.json", "gate.json"})
+                            "results.json", "gate.json", "field_research_plan.json", "execution"})
         or any(name.startswith("probe_") and name.endswith(("_intent.json", "_raw.json"))
                for name in names)
     )
@@ -125,6 +125,18 @@ def verify_prereg(prereg_path: Path, state: dict) -> bool:
 
 def stop_flag_path() -> Path:
     return paths.state_dir() / "stop.flag"
+
+
+class StopSignals:
+    """Check the shared stop flag and an optional Workbench launch flag."""
+
+    def __init__(self, state_dir):
+        self.global_flag = Path(state_dir) / "stop.flag"
+        launch_flag = os.environ.get("ALPHA_RESEARCH_LAUNCH_STOP")
+        self.launch_flag = Path(launch_flag) if launch_flag else None
+
+    def exists(self):
+        return self.global_flag.exists() or bool(self.launch_flag and self.launch_flag.exists())
 
 
 def update_stop_flag(path: Path, stopped: bool) -> None:

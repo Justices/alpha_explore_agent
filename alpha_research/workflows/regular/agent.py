@@ -13,7 +13,7 @@ import re
 
 from alpha_research.simulation.cache import BacktestCache, BacktestCacheError
 from alpha_research.state.store import (
-    atomic_write_json, has_only_completed_probes,
+    StopSignals, atomic_write_json, has_only_completed_probes,
     lock_prereg, read_json, verify_prereg,
 )
 from alpha_research.expressions.validator import regular_operator_names, validate
@@ -124,9 +124,20 @@ def _catalog(rows, dataset_id):
             for field_id, row in _admissible_field_rows(rows, dataset_id).items()}
 
 
+def _passes_field_prefilter(row):
+    coverage, date_coverage = row.get("coverage"), row.get("dateCoverage")
+    alpha_count = row.get("alphaCount")
+    return (type(coverage) in (int, float) and 0.5 <= coverage <= 1
+            and type(date_coverage) in (int, float) and 0.5 <= date_coverage <= 1
+            and type(alpha_count) is int and 0 <= alpha_count <= 800)
+
+
 def _campaign_field_pool(path, fields, dataset_id, scope):
-    eligible = _admissible_field_rows(fields, dataset_id)
+    admissible = _admissible_field_rows(fields, dataset_id)
+    eligible = {field_id: row for field_id, row in admissible.items()
+                if _passes_field_prefilter(row)}
     identity = {"dataset_id": dataset_id, "scope": {key: scope[key] for key in SCOPE_KEYS}}
+    saved = None
     if path.exists():
         saved = read_json(path)
         if not isinstance(saved, dict) or any(saved.get(key) != value
@@ -134,19 +145,28 @@ def _campaign_field_pool(path, fields, dataset_id, scope):
             raise ResearchError("saved Campaign field pool does not match the Dataset scope")
         field_ids = saved.get("field_ids")
         if (not isinstance(field_ids, list) or not 1 <= len(field_ids) <= 100
-                or any(not isinstance(key, str) or key not in eligible for key in field_ids)
+                or any(not isinstance(key, str) or key not in admissible for key in field_ids)
                 or len(set(field_ids)) != len(field_ids)):
             raise ResearchError("saved Campaign field pool cannot be verified against live fields")
+    if not eligible:
+        write_progress(f"{dataset_id} · {len(admissible)} 个可读字段中，没有字段满足覆盖率和 Alpha 数量预筛选")
+        raise ResearchError("no fields pass instrument coverage >= 50%, date coverage >= 50%, and Alpha count <= 800")
+    if saved is not None and all(field_id in eligible for field_id in saved["field_ids"]):
+        field_ids = saved["field_ids"]
         selection = "复用已保存的字段池"
     else:
         field_ids = list(eligible)
-        selection = "使用全部可用字段"
+        selection = "使用全部预筛通过的字段"
         if len(field_ids) > 100:
             field_ids = sample(field_ids, 100)
-            selection = "随机抽样"
-        atomic_write_json(path, {**identity, "eligible_count": len(eligible),
-                                 "field_ids": field_ids})
-    write_progress(f"{dataset_id} · {selection} · 目录 {len(fields)} 条，可用 {len(eligible)} 条，"
+            selection = "预筛后随机抽样"
+        if saved is not None:
+            selection = f"重新筛选字段池 · {selection}"
+    pool = {**identity, "eligible_count": len(eligible), "field_ids": field_ids}
+    if saved != pool:
+        atomic_write_json(path, pool)
+    write_progress(f"{dataset_id} · {selection} · 目录 {len(fields)} 条，可读 {len(admissible)} 条，"
+                   f"预筛通过 {len(eligible)} 条，"
                    f"选入 {len(field_ids)} 条 · {path}")
     return [eligible[field_id] for field_id in field_ids]
 
@@ -159,7 +179,8 @@ class ResearchAgent:
         self.config = config
         self.runs_root = Path(runs_root)
         self.state_root = self.runs_root.resolve().parent / "state"
-        self.stop_flag = Path(stop_flag) if stop_flag else None
+        self.stop_flag = (stop_flag if isinstance(stop_flag, StopSignals)
+                          else Path(stop_flag) if stop_flag else None)
         self.knowledge = KnowledgeService(self.state_root, self.runs_root, config)
         self.recorder = DecisionRecorder(model, self.state_root)
         self.campaigns = CampaignStore(self.state_root)
@@ -506,6 +527,9 @@ class ResearchAgent:
 
     @staticmethod
     def _production_runner_variant(proposal, variant, dataset_id, index):
+        if "field_id" in variant:
+            return {"name": f"variant_{index}", "expression": variant["expression"],
+                    "dataset": dataset_id, "research": variant["research"]}
         return {
             "name": f"variant_{index}", "expression": variant["expression"], "dataset": dataset_id,
             "research": {
@@ -636,7 +660,8 @@ class ResearchAgent:
             atomic_write_json(batch_dir / "void.json", record)
             return record
         probe_intents = list(batch_dir.glob("probe_*_intent.json"))
-        if ((batch_dir / "simulation_intent.json").exists() or any(
+        if ((batch_dir / "simulation_intent.json").exists()
+            or any((batch_dir / "execution").glob("*/simulation_intent.json")) or any(
                 json.loads(path.read_text(encoding="utf-8")).get("status") != "READ_BACK"
                 or not (batch_dir / path.name.replace("_intent.json", "_raw.json")).exists()
                 for path in probe_intents)):
@@ -1233,7 +1258,6 @@ class ResearchAgent:
                 verdict["status"] = "PAIRWISE_CONFLICT"
         case["contenders"] = contenders
         atomic_write_json(batch_dir / "gate.json", gate)
-        proposal = prereg["proposal"]
         try:
             diagnosis = diagnose_batch(
                 batch_dir, prereg, gate, readback, self.config,
@@ -1264,16 +1288,6 @@ class ResearchAgent:
                     "status": "unavailable", "error_type": type(exc).__name__,
                     "error": str(exc)}
         atomic_write_json(batch_dir / "diagnosis.json", diagnosis)
-        attribution = self._decide("attribute_results", {
-            "objective": prereg["objective"], "hypothesis": proposal["hypothesis"],
-            "dataset_id": prereg["dataset_id"], "scope": scope,
-            "mechanism_tags": proposal.get("mechanism_tags", []),
-            "field_generation_tags": proposal.get("field_generation_tags", []),
-            "failure_criterion": proposal["failure_criterion"],
-            "variants": prereg["variants"], "readback": readback, "gate": gate,
-            "failure_signatures": {key: row["signatures"]
-                                   for key, row in diagnosis["alphas"].items()},
-            "diagnosis": diagnosis}, batch_dir=batch_dir)
         if not any(item.get("batch") == str(batch_dir)
                    for item in case.get("batches", [])):
             case.setdefault("batches", []).append({
@@ -1288,7 +1302,7 @@ class ResearchAgent:
                 "statuses": {alpha_id: row["status"] for alpha_id, row in gate.items()}})
         atomic_write_json(case_path, case)
         result = {"dataset_id": prereg["dataset_id"], "alpha_ids": alpha_ids,
-                  "readback": readback, "attribution": attribution,
+                  "readback": readback, "attribution": None, "attribution_status": "pending",
                   "gate": gate, "case_path": str(case_path), "scope": scope,
                   "batch_dir": str(batch_dir),
                   "candidate_status": (
@@ -1330,6 +1344,46 @@ class ResearchAgent:
             locked=(prereg.get("dataset_selection") or {}).get("mode") == "fixed",
             auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
             status="batch_complete")
+        return self._attribute_completed_batch(batch_dir, prereg, result, diagnosis)
+
+    def _attribute_completed_batch(self, batch_dir, prereg, result, diagnosis):
+        """Record the model report separately from the durable simulation receipt."""
+        proposal = prereg["proposal"]
+        try:
+            evidence = []
+            for alpha_id, variant in zip(result["alpha_ids"], prereg["variants"], strict=True):
+                metrics = result["readback"][alpha_id]["details"].get("is") or {}
+                gate = result["gate"][alpha_id]
+                research = variant.get("research") or {}
+                checks = metrics.get("checks")
+                evidence.append({
+                    "alpha_id": alpha_id, "expression": variant["expression"],
+                    "hypothesis": research.get("idea") or proposal["hypothesis"],
+                    "failure_criterion": research.get("failure_criterion") or proposal["failure_criterion"],
+                    "metrics": {key: value for key, value in metrics.items()
+                                if type(value) in (int, float)},
+                    "checks": ([{key: row[key] for key in ("name", "result", "value", "limit")
+                                 if key in row} for row in checks if isinstance(row, dict)]
+                               if isinstance(checks, list) else None),
+                    "gate_status": gate["status"], "failed_gates": gate.get("failures", []),
+                    "pending_gates": gate.get("pending", []),
+                    "failure_signatures": diagnosis["alphas"][alpha_id]["signatures"],
+                })
+            attribution = self._decide("attribute_results", {
+                "objective": prereg["objective"],
+                "dataset_id": prereg["dataset_id"], "scope": prereg["scope"],
+                "results": evidence}, batch_dir=batch_dir)
+            summary = attribution.get("summary") if isinstance(attribution, dict) else None
+            if not isinstance(summary, str) or not summary.strip():
+                raise ResearchError("result attribution has no summary")
+        except Exception as exc:
+            result.update(attribution=None, attribution_status="unresolved",
+                          attribution_error={"type": type(exc).__name__, "reason": str(exc)})
+            write_progress(f"{prereg['dataset_id']} · 回测结果已保存，归因待补 · {type(exc).__name__}")
+        else:
+            result.update(attribution=attribution, attribution_status="complete")
+            result.pop("attribution_error", None)
+        atomic_write_json(batch_dir / "results.json", result)
         return result
 
     def _finalize_remedy_outcome(self, batch_dir, prereg, diagnosis=None):
@@ -1431,6 +1485,8 @@ class ResearchAgent:
         if not isinstance(context, dict):
             raise ResearchError("batch context is unreadable; research thread cannot be recovered")
         self._begin_session(self._batch_research_id(batch_dir, context))
+        if (batch_dir / "field_research_plan.json").exists():
+            return self._execute_field_plan(batch_dir, context)
         production_intent = batch_dir / "simulation_intent.json"
         if completed_probes_only and not has_only_completed_probes(batch_dir):
             raise ResearchError("diagnostic results are not fully reconciled; use simulation recovery")
@@ -1466,6 +1522,13 @@ class ResearchAgent:
                 locked=(prereg.get("dataset_selection") or {}).get("mode") == "fixed",
                 auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
                 status="batch_complete")
+            if result.get("attribution_status") in {"pending", "unresolved"}:
+                if result.get("alpha_ids") != intent.get("alpha_ids"):
+                    raise ResearchError("saved attribution inputs do not match the simulation receipt")
+                diagnosis = read_json(batch_dir / "diagnosis.json")
+                if not isinstance(diagnosis, dict):
+                    raise ResearchError("saved diagnosis unavailable for attribution recovery")
+                return self._attribute_completed_batch(batch_dir, prereg, result, diagnosis)
             return result
         expressions = intent["expressions"]
         raw_path = batch_dir / "simulation_raw.json"
@@ -1732,7 +1795,7 @@ class ResearchAgent:
                  remedy_id=None, allow_remedy_round_overrun=False,
                  ppa_profile=False, execution_context=None, research_id=None,
                  field_pool_path=None, expected_category=None, scope_options=None,
-                 dataset_scope_proof=None) -> dict:
+                 dataset_scope_proof=None, field_research=False, prior_research=None) -> dict:
         if resume_batch_dir is not None:
             research_id = self._batch_research_id(resume_batch_dir, cached_context or {})
         self._begin_session(research_id or f"regular:{uuid4().hex}")
@@ -1744,6 +1807,9 @@ class ResearchAgent:
             research_type = "PPA" if ppa_profile or ppa_requested(objective) else "REGULAR"
         remedy_reference = self._resolve_remedy_reference(
             objective, diagnosis_id, remedy_id, allow_remedy_round_overrun)
+        if resume_batch_dir is not None:
+            field_research = (cached_context or {}).get("field_research", False)
+        field_research = field_research and research_type == "REGULAR" and remedy_reference is None
         if remedy_reference is not None:
             if dataset_id is not None and dataset_id != remedy_reference["dataset_id"]:
                 raise ResearchError("remedy must keep the diagnosis Dataset locked")
@@ -1780,6 +1846,7 @@ class ResearchAgent:
                 auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
                 status="active")
             context = {k: scope[k] for k in ("region", "universe", "delay")}
+            detail = None
             if dataset_scope_proof is None:
                 datasets = _rows(self.gateway.call("get_datasets", instrument_type="EQUITY", **context))
                 available = {row.get("id"): row for row in datasets if isinstance(row, dict)}
@@ -1803,6 +1870,7 @@ class ResearchAgent:
                 scope_evidence = exact_catalog_scope(dataset_row, scope)
                 source = "exact_catalog"
                 category_value = dataset_row.get("category")
+                description = dataset_row.get("description")
                 if scope_evidence is None or (expected_category is not None
                                               and dataset_category(category_value) is None):
                     detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
@@ -1810,6 +1878,7 @@ class ResearchAgent:
                         raise ResearchError(f"Dataset detail does not confirm exact scope: {dataset_id}")
                     if dataset_category(detail.get("category")) is not None:
                         category_value = detail["category"]
+                    description = description or detail.get("description")
                     if scope_evidence is None:
                         data = detail.get("data")
                         if isinstance(data, list):
@@ -1820,6 +1889,7 @@ class ResearchAgent:
                 if expected_category is not None and not category_matches(category_value, expected_category):
                     raise ResearchError(f"Dataset no longer matches the requested Category: {dataset_id}")
                 dataset_selection.update(detail_scope=scope_evidence, scope_evidence_source=source)
+                dataset_selection["description"] = description
             else:
                 scope_evidence = exact_catalog_scope(dataset_scope_proof.get("detail_scope"), scope)
                 if (not dataset_id or dataset_scope_proof.get("dataset_id") != dataset_id
@@ -1831,7 +1901,14 @@ class ResearchAgent:
                     "detail_scope": scope_evidence,
                     "scope_evidence_source": dataset_scope_proof["scope_evidence_source"],
                     "plan_evidence_ref": dataset_scope_proof["plan_evidence_ref"],
+                    "description": dataset_scope_proof.get("dataset_description"),
                 }
+            if field_research:
+                description = dataset_selection.get("description")
+                if detail is None and (not isinstance(description, str) or not description.strip()):
+                    detail = self.gateway.call("get_dataset_details", dataset_id=dataset_id)
+                    if isinstance(detail, dict) and detail.get("id") == dataset_id:
+                        dataset_selection["description"] = detail.get("description")
             self.campaigns.update(
                 campaign_id, current_dataset=dataset_id, dataset_state="selected",
                 selection_mode=dataset_selection["mode"],
@@ -1862,12 +1939,14 @@ class ResearchAgent:
             batch_dir.mkdir(parents=True)
             atomic_write_json(batch_dir / "batch_context.json", {
                 "objective": objective, "research_type": research_type,
+                "field_research": field_research,
                 "scope": scope, "dataset_id": dataset_id,
                 "research_id": self.recorder.research_id,
                 "platform_case_key": platform_case_key,
                 "platform_run_id": platform_run_id,
                 "dataset_selection": dataset_selection,
                 "field_pool_ref": str(field_pool_path) if field_pool_path else None,
+                "prior_research": prior_research or [],
                 "fields": fields, "operators": sorted(operators),
                 "operator_catalog": operator_rows,
                 "started_at": datetime.now().astimezone().isoformat()})
@@ -1879,6 +1958,10 @@ class ResearchAgent:
                 "objective": objective, "scope": scope, "dataset_id": dataset_id,
                 "fields": _field_summaries(fields), "operators": sorted(operators),
                 "prior_batches": prior_case.get("batches", [])}
+            if field_research:
+                probe_context["screening_only"] = True
+            if prior_research:
+                probe_context["prior_campaign_findings"] = prior_research
             probe_plan = self._decide("plan_probes", probe_context, batch_dir=batch_dir)
         else:
             batch_dir = Path(resume_batch_dir).resolve()
@@ -1918,6 +2001,8 @@ class ResearchAgent:
                 status="active")
         catalog = _catalog(fields, dataset_id)
         probe_results = [] if recovered_probe_results is None else recovered_probe_results
+        if field_research:
+            probe_plan = {**probe_plan, "probes": []}
         core_fields, required_dimensions, probes, rejection = self._validate_probe_plan(
             probe_plan, catalog, operators, operator_catalog, dataset_id, scope, batch_dir,
             recovered_count=len(probe_results), resuming=resume_batch_dir is not None)
@@ -1935,6 +2020,11 @@ class ResearchAgent:
         field_rows = {row["id"]: row for row in fields
                       if isinstance(row, dict) and row.get("id") in core_fields}
         atomic_write_json(batch_dir / "probe_plan.json", probe_plan)
+        if field_research:
+            batch_context = read_json(batch_dir / "batch_context.json")
+            return self._construct_field_plan(batch_dir, batch_context, core_fields,
+                                              field_rows, catalog, operators,
+                                              operator_catalog, prior_case)
         if probes and len(probe_results) < len(probes):
             probe_settings = self._platform_settings(scope, probe=True)
             self.gateway.call("validate_simulation_settings", settings=probe_settings)
@@ -2186,6 +2276,239 @@ class ResearchAgent:
                                         remedy_reference.items() if key != "remedy"} | {
                                             "remedy": remedy_reference["remedy"]}
                                        if remedy_reference else None)}
+        return self._execute_production(batch_dir, prereg, runner_variants,
+                                        platform_case_key, platform_run_id,
+                                        execution_context=execution_context)
+
+    def _construct_field_plan(self, batch_dir, context, core_fields, field_rows,
+                              catalog, operators, operator_catalog, prior_case):
+        dataset_id = context["dataset_id"]
+        description = context["dataset_selection"].get("description")
+        if not isinstance(description, str) or not description.strip():
+            raise ResearchError(f"Dataset description unavailable: {dataset_id}")
+        settings = self._platform_settings(context["scope"])
+        seen = {expression for batch in prior_case.get("batches", [])
+                if batch.get("dataset_id") == dataset_id
+                for expression in batch.get("expressions", [])}
+        screened = set(core_fields)
+        vector_adapters = sorted(name for name in operators if name.startswith("vec_"))
+        variants, validation, failures = [], {}, []
+        for start in range(0, len(core_fields), 8):
+            targets = core_fields[start:start + 8]
+            feedback = {}
+            for attempt in range(2):
+                if self.stop_flag and self.stop_flag.exists():
+                    raise ResearchError("stopped before the field plan was completed")
+                request = {
+                    "objective": context["objective"], "scope": context["scope"],
+                    "simulation_settings": settings, "dataset_id": dataset_id,
+                    "dataset_description": description, "target_field_ids": targets,
+                    "fields": _field_summaries([field_rows[field_id] for field_id in targets]),
+                    "vector_field_ids": [field_id for field_id in targets
+                                         if catalog[field_id]["type"] == "VECTOR"],
+                    "vector_adapters": vector_adapters,
+                    "operator_catalog": operator_catalog,
+                    "prior_expressions": sorted(seen),
+                }
+                if feedback:
+                    request["validation_feedback"] = [
+                        error for errors in feedback.values() for error in errors]
+                if context.get("prior_research"):
+                    request["prior_campaign_findings"] = context["prior_research"]
+                try:
+                    response = self._decide("construct_field_expressions", request, batch_dir=batch_dir)
+                    rows = response.get("fields") if isinstance(response, dict) else None
+                    if not isinstance(rows, list):
+                        raise ResearchError("field construction must return a fields list")
+                except Exception as exc:
+                    for field_id in targets:
+                        originals = feedback.get(field_id) or [{"field_id": field_id}]
+                        failures.extend({**row, "repair_error": str(exc)} if attempt else
+                                        {**row, "reason": str(exc)} for row in originals)
+                    break
+                rejected = {}
+                for field_id in targets:
+                    proposals = [row for row in rows if isinstance(row, dict)
+                                 and row.get("field_id") == field_id]
+                    if len(proposals) != 1:
+                        failures.extend(feedback.get(field_id) or [
+                            {"field_id": field_id, "reason": "missing or repeated field proposal"}])
+                        continue
+                    proposed = proposals[0].get("variants")
+                    originals = feedback.get(field_id, [])
+                    limit = len(originals) if attempt else 3
+                    if not isinstance(proposed, list) or not 1 <= len(proposed) <= limit:
+                        reason = proposals[0].get("unresolved_reason") or f"expected one to {limit} variants"
+                        failures.extend([{**row, "repair_error": reason} for row in originals]
+                                        or [{"field_id": field_id, "reason": reason}])
+                        continue
+                    for variant in proposed:
+                        if not isinstance(variant, dict):
+                            variant = {}
+                        expression = variant.get("expression")
+                        reason = variant.get("reason")
+                        research = variant.get("research")
+                        failure = None
+                        if (not isinstance(expression, str) or not expression.strip()
+                                or not isinstance(reason, str) or not reason.strip()
+                                or not self._has_complete_runner_research(research)):
+                            failure = "missing expression or per-variant research"
+                        elif expression in seen:
+                            failure = "duplicate or previously tested expression"
+                        else:
+                            verdict = validate(expression, dataset_id, catalog, operators,
+                                               operator_definitions=operator_catalog)
+                            if verdict["verdict"] != "PASS":
+                                failure = verdict["errors"]
+                            elif field_id not in verdict["fields"] or set(verdict["fields"]) - screened:
+                                failure = "expression must reference its target and only screened fields"
+                        if failure:
+                            rejection = {"field_id": field_id, "expression": expression, "reason": failure}
+                            if not attempt:
+                                rejection.update(variant_reason=reason, research=research)
+                            rejected.setdefault(field_id, []).append(rejection)
+                            continue
+                        seen.add(expression)
+                        validation[expression] = verdict
+                        variants.append({"field_id": field_id, "expression": expression,
+                                         "reason": reason, "research": research})
+                    failures.extend(originals[len(proposed):])
+                if attempt:
+                    failures.extend(error for errors in rejected.values() for error in errors)
+                elif rejected:
+                    feedback = rejected
+                    targets = list(feedback)
+                    write_progress(f"{dataset_id} · 正在将校验错误反馈给模型修订")
+                else:
+                    break
+        plan = {"schema_version": 1, "dataset_id": dataset_id, "simulation_settings": settings,
+                "target_field_ids": core_fields, "variants": variants,
+                "validation": validation, "field_failures": failures}
+        atomic_write_json(batch_dir / "field_research_plan.json", plan)
+        write_progress(f"{dataset_id} · 已保存 {len(core_fields)} 个字段的设计结果 · "
+                       f"{len(variants)} 条表达式通过校验 · {len(failures)} 项未通过")
+        return self._execute_field_plan(batch_dir, context)
+
+    def _execute_field_plan(self, batch_dir, context):
+        plan_path = batch_dir / "field_research_plan.json"
+        plan_bytes = plan_path.read_bytes()
+        plan = json.loads(plan_bytes)
+        digest = hashlib.sha256(plan_bytes).hexdigest()
+        dataset_id, scope = context["dataset_id"], context["scope"]
+        settings = plan["simulation_settings"]
+        if plan["dataset_id"] != dataset_id or settings != self._platform_settings(scope):
+            raise ResearchError("field plan does not match its saved scope and settings")
+        plan_variants = plan["variants"]
+        case_key, run_id = context["platform_case_key"], context["platform_run_id"]
+        completed, failures = [], []
+        stopped = False
+        for start in range(0, len(plan_variants), 8):
+            if self.stop_flag and self.stop_flag.exists():
+                stopped = True
+                break
+            group = plan_variants[start:start + 8]
+            index = start // 8 + 1
+            suffix = hashlib.sha256(f"{batch_dir.name}:{index}".encode()).hexdigest()[:8]
+            child = batch_dir / "execution" / f"{batch_dir.name[:-8]}{suffix}"
+            child_context = {key: context[key] for key in (
+                "objective", "research_type", "scope", "dataset_id", "research_id",
+                "platform_case_key", "platform_run_id", "started_at")}
+            child_context.update(field_plan_ref=str(plan_path), field_plan_sha256=digest,
+                                 execution_group=index)
+            context_path = child / "batch_context.json"
+            if context_path.exists():
+                if read_json(context_path) != child_context:
+                    raise ResearchError("execution group no longer matches the saved field plan")
+            else:
+                if child.exists() and any(child.iterdir()):
+                    raise ResearchError("execution group is missing its saved context")
+                atomic_write_json(context_path, child_context)
+            intent_path = child / "simulation_intent.json"
+            failure_path = child / "execution_failure.json"
+            intent = read_json(intent_path, default={})
+            if failure_path.exists() and intent.get("status") != "READ_BACK":
+                failures.append(read_json(failure_path))
+                continue
+            try:
+                if intent_path.exists():
+                    result = self.recover(child)
+                else:
+                    self.gateway.call("set_case", case_key=case_key, run_id=run_id)
+                    # The child references the saved plan. Its audit calls have their own
+                    # evidence session while Codex still uses the Campaign research ID.
+                    self._begin_session(context["research_id"])
+                    self.recorder.bind_batch(child)
+                    expressions = [item["expression"] for item in group]
+                    self._ensure_expressions_uncached(
+                        expressions, dataset_id, scope, settings, child, label="production simulation")
+                    validation = {expr: plan["validation"][expr] for expr in expressions}
+                    used_fields = {field_id for verdict in validation.values()
+                                   for field_id in verdict["fields"]}
+                    proposal = {
+                        "hypothesis": "\n".join(item["research"]["idea"] for item in group),
+                        "failure_criterion": "\n".join(item["research"]["failure_criterion"] for item in group),
+                        "field_generation_tags": list(dict.fromkeys(item["field_id"] for item in group)),
+                    }
+                    prereg = {
+                        "objective": context["objective"], "dataset_id": dataset_id,
+                        "research_type": "REGULAR", "dataset_selection": context["dataset_selection"],
+                        "scope": scope, "probe_plan": {"probes": []},
+                        "fields": [row for row in context["fields"]
+                                   if isinstance(row, dict) and row.get("id") in used_fields],
+                        "field_plan_ref": str(plan_path), "field_plan_sha256": digest,
+                        "proposal": proposal, "variants": group, "simulation_settings": settings,
+                        "validation": validation, "operator_counts": {
+                            expr: verdict["operator_count"] for expr, verdict in validation.items()},
+                    }
+                    runner_variants = [self._production_runner_variant(proposal, item, dataset_id, number)
+                                       for number, item in enumerate(group, start=1)]
+                    result = self._execute_production(child, prereg, runner_variants, case_key, run_id)
+            except Exception as exc:
+                if self.stop_flag and self.stop_flag.exists():
+                    stopped = True
+                    break
+                failure = {"group": index, "batch_dir": str(child), "reason": str(exc)}
+                atomic_write_json(failure_path, failure)
+                failures.append(failure)
+                write_progress(f"{dataset_id} · 回测组 {index} 未完成 · {type(exc).__name__} · {child}")
+                continue
+            completed.append({"batch_dir": str(child), "alpha_ids": result["alpha_ids"],
+                              "candidate_status": result["candidate_status"],
+                              "attribution_status": result.get("attribution_status", "complete")})
+        self._begin_session(context["research_id"])
+        self.recorder.bind_batch(batch_dir)
+        alpha_ids = list(dict.fromkeys(alpha for child in completed for alpha in child["alpha_ids"]))
+        status = "complete"
+        if stopped:
+            status = "user_stopped"
+        elif not alpha_ids:
+            status = "unresolved"
+        elif (plan["field_failures"] or failures
+              or len(completed) < (len(plan_variants) + 7) // 8):
+            status = "partial"
+        attribution_status = ("unresolved" if any(
+            child["attribution_status"] != "complete" for child in completed)
+            else "complete" if completed else "pending")
+        # Child qualification already ran against the case ledger. Use its current
+        # contender status, since a later group can revise an earlier pairwise result.
+        contenders = self._read_case(context["objective"], scope).get("contenders", {})
+        candidate_status = ("CANDIDATE" if any(
+            contenders.get(alpha_id, {}).get("status") == "CANDIDATE"
+            for alpha_id in alpha_ids) else "PENDING_FULL_GATE")
+        result = {"dataset_id": dataset_id, "scope": scope, "batch_dir": str(batch_dir),
+                  "alpha_ids": alpha_ids, "candidate_status": candidate_status,
+                  "field_research_status": status, "field_failures": plan["field_failures"],
+                  "attribution_status": attribution_status,
+                  "execution_failures": failures, "child_batches": completed,
+                  "field_plan_ref": str(plan_path)}
+        atomic_write_json(batch_dir / "results.json", result)
+        return result
+
+    def _execute_production(self, batch_dir, prereg, runner_variants,
+                            platform_case_key, platform_run_id, *, execution_context=None):
+        dataset_id, scope = prereg["dataset_id"], prereg["scope"]
+        simulation_settings = prereg["simulation_settings"]
+        expressions = [item["expression"] for item in prereg["variants"]]
         prereg_path = batch_dir / "prereg.json"
         atomic_write_json(prereg_path, prereg)
         state = {}

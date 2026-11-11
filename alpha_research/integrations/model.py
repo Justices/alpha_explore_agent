@@ -81,7 +81,8 @@ TASK_INSTRUCTIONS = {
         "Set required_dimensions to nominal_coverage only for each core field and explain the field "
         "choice in requirement_reason as a nonempty string or a map with one nonempty string for "
         "each exact core field ID. Use the platform's coverage as evidence. Return no probes "
-        "for routine field screening. Propose a probe only when the research objective calls for a "
+        "for routine field screening. If screening_only is true, always return probes: []. "
+        "Otherwise propose a probe only when the research objective calls for a "
         "specific diagnostic question that the supplied catalog cannot answer. Each probe "
         "needs field_id (one of core_fields), expression, question, measures, "
         "economic_relevance, expected, failure_criterion, "
@@ -101,6 +102,8 @@ TASK_INSTRUCTIONS = {
         "Each variant needs expression and ex-ante reason. These top-level rationale "
         "fields plus hypothesis, expected_sign, and failure_criterion must be substantive, "
         "nonempty research evidence suitable for the local pre-backtest receipt. "
+        "First adapt every VECTOR field with a compatible vec_* operator from the supplied "
+        "REGULAR catalog before applying any time-series or cross-sectional operator. "
         "Use one Dataset per expression and one to eight variants. Apply PPA field and "
         "operator limits only when the user explicitly requests PPA; "
         "do not splice signals with + or *, use trade_when/add/multiply, or tune to prior results. "
@@ -110,9 +113,41 @@ TASK_INSTRUCTIONS = {
         "its structural action, avoid parameter grids, and cite both diagnosis_id and remedy_id "
         "in every variant reason."
     ),
+    "construct_field_expressions": (
+        "Design Regular Alpha expressions separately for every field in target_field_ids. "
+        "Read each target field's description, the Dataset description, and the supplied "
+        "REGULAR operator definitions and descriptions. Use them to justify the economic "
+        "hypothesis, operator and window choices, and expected direction. Keep the supplied "
+        "settings and Dataset fixed. Do not invent field semantics or statistical evidence. "
+        "For each field in vector_field_ids, first choose a compatible operator from "
+        "vector_adapters using its catalog description. In every expression, apply a "
+        "supplied vec_* operator directly to each VECTOR field before any time-series or "
+        "cross-sectional processing. Explain what the chosen aggregation measures in "
+        "operator_rationale. If paired elements cannot be aligned, first evaluate "
+        "single-field vector adaptations on their own merits before skipping the field. "
+        "Return {\"fields\":[{\"field_id\": ..., \"variants\":[{\"expression\": ..., "
+        "\"reason\": ..., \"research\": {...}}]}]}. For each target return 1 to 3 distinct "
+        "executable FASTEXPR variants that reference that target and only screened fields. "
+        "Each research object requires idea, data_rationale, operator_rationale, "
+        "field_relationship, settings_rationale, expected_behavior, and failure_criterion "
+        "as substantive strings. Prefer distinct hypotheses or justified controls over parameter grids. "
+        "Do not splice signals with + or *, use trade_when/add/multiply, or repeat prior expressions. "
+        "If no defensible expression is possible for a target, return an empty variants list "
+        "and an unresolved_reason for that field. For a VECTOR field, state which adapters "
+        "were considered and why they could not support the hypothesis, or that none were available. "
+        "If validation_feedback is supplied, revise only the rejected variants using their exact "
+        "validation errors and preserve the target field and original economic intent. Return "
+        "at most one replacement per rejected variant, in the same order, using the same fields "
+        "response schema. Do not repeat any expression in prior_expressions. "
+        "If a repair cannot preserve the hypothesis using the supplied catalog, explain why."
+    ),
     "attribute_results": (
+        "Return exactly one JSON object with a nonempty summary string and findings, "
+        "an array of objects with alpha_id, classification, and reason. Limit the summary "
+        "to three sentences and each reason to one sentence. "
+        "Do not write any text outside the JSON object. "
         "Report failed checks first, then measured metrics. Compare each result with the "
-        "pre-registered failure criterion and classify support, refutation, or insufficient "
+        "pre-registered failure criterion for its variant when supplied, and classify support, refutation, or insufficient "
         "evidence. Platform ERROR is technical, not hypothesis failure. Do not declare Candidate."
     ),
     "diagnose_failures": (
@@ -139,6 +174,8 @@ TASK_INSTRUCTIONS = {
 }
 
 KNOWLEDGE_POLICY = (
+    "Treat prior_campaign_findings as historical observations for avoiding repeated mistakes. "
+    "Do not infer current platform facts or a causal mechanism from prior results. "
     "Use only the supplied knowledge_pack. Treat l1_rules with source_kind=normative as "
     "controlling. l1_rules marked advisory_only are secondary and must be ignored on conflict. "
     "L3 entries marked prior_advisory are candidate historical priors, not policy or causal proof. "
@@ -193,6 +230,8 @@ class ConfiguredModelClient:
             try:
                 message, self.last_usage, self.last_model, self.last_thread_id = (
                     LocalCliModelTool(self.config, self.environ).invoke(prompt, thread_path=thread_path))
+                if isinstance(message, str):
+                    self.last_response_text = message
                 result = _decision_from_text(message)
             except CliModelError as exc:
                 raise ModelError(str(exc)) from exc

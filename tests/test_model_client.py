@@ -12,6 +12,18 @@ from alpha_research.integrations.model import ConfiguredModelClient, DecisionRec
 
 
 class TestConfiguredModelClient(unittest.TestCase):
+    def test_attribution_requests_json_and_retains_invalid_model_text(self):
+        agy = {"event": "result", "result": {"status": "SUCCESS",
+               "response": "The simulations did not support the hypothesis."}}
+        client = ConfiguredModelClient({"provider": "agy_cli"})
+        with patch("shutil.which", return_value=sys.executable), \
+                patch("subprocess.run", return_value=CompletedProcess([], 0, json.dumps(agy), "")) as run:
+            with self.assertRaisesRegex(ModelError, "invalid JSON decision"):
+                client.complete_json("attribute_results", {})
+        prompt = json.loads(json.loads(run.call_args.kwargs["input"])["message"]["content"])
+        self.assertIn("exactly one JSON object", prompt["instruction"])
+        self.assertEqual(client.last_response_text, agy["result"]["response"])
+
     def test_codex_thread_is_resumed_by_research_id_across_recorders(self):
         thread_ids = iter(["11111111-1111-4111-8111-111111111111",
                            "22222222-2222-4222-8222-222222222222"])

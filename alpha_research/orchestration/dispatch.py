@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
 from alpha_research.workflows.regular.scope import discover_regular_scope
-from alpha_research.workflows.regular.campaign import run_regular_campaign
+from alpha_research.workflows.regular.campaign import load_saved_campaign, run_regular_campaign
 from alpha_research.workflows.super_alpha.workflow import prepare_super_run, run_super_research
 from alpha_research.workflows.optimization.workflow import prepare_source, run_optimization
 from alpha_research.orchestration.recovery import RecoveryCoordinator
@@ -68,13 +68,18 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None, execution_cont
                                       delay=delay, execution_context=execution_context)
         return prepare_super_run(gateway, root, region=region,
                                  objective=args.objective, delay=delay)
-    scope = _regular_scope(args, cfg)
     if command == "run-campaign":
         if agent is None:
             raise ValueError("Regular Campaign executor is unavailable")
+        resume_id = getattr(args, "resume_campaign", None)
+        if resume_id:
+            _, saved = load_saved_campaign(root, resume_id)
+            return run_regular_campaign(agent, gateway, resume_campaign_id=resume_id,
+                                        **saved["request"])
         return run_regular_campaign(
             agent, gateway, objective=args.objective, max_batches=args.max_batches,
-            ppa_profile=args.ppa, execution_context=execution_context, **scope)
+            ppa_profile=args.ppa, execution_context=execution_context, **_regular_scope(args, cfg))
+    scope = _regular_scope(args, cfg)
     plan_id = uuid4().hex
     gateway.call("set_case", case_key=plan_id, run_id=uuid4().hex)
     result = discover_regular_scope(gateway, **scope)

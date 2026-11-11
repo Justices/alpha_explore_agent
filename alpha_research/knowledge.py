@@ -192,6 +192,8 @@ class KnowledgeService:
                 "date": _document_date(text, path), "path": str(path.resolve())}
 
     def inject_rules(self, task: str):
+        if task == "construct_field_expressions":
+            task = "construct_batch"
         selectors = RULE_MAP.get(task)
         if selectors is None:
             raise KnowledgeError(f"no deterministic rule mapping for decision task: {task}")
@@ -899,7 +901,7 @@ class KnowledgeService:
     def build_pack(self, task: str, context: dict):
         """Assemble deterministic L1/L2/L3 evidence for one model decision."""
         fragments = self.inject_rules(task)
-        field_ids = set(context.get("core_fields") or [])
+        field_ids = set(context.get("core_fields") or context.get("target_field_ids") or [])
         proposal = context.get("proposal") or {}
         for row in proposal.get("field_report") or []:
             if isinstance(row, dict) and row.get("field_id"):
@@ -966,7 +968,7 @@ class KnowledgeService:
                 tags = {**query_tags, "dataset_id": candidate}
                 evidence.extend(self.search_evidence(tags, k=1, query_text=query_text,
                                                      _documents=indexed_docs))
-        elif task in {"plan_probes", "construct_batch", "attribute_results",
+        elif task in {"plan_probes", "construct_batch",
                       "diagnose_failures", "decide_next"}:
             evidence = self.search_evidence(query_tags, k=5, query_text=query_text)
         unique = {item["id"]: item for item in evidence}

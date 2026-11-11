@@ -154,7 +154,9 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                 "combinations": []})["combinations"].append({
                     "region": region, "delay": current_delay,
                     "universe": current_universe, "detail_scope": evidence,
-                    "scope_evidence_source": source})
+                    "scope_evidence_source": source,
+                    "dataset_description": catalog_row.get("description") or
+                                           (detail or {}).get("description")})
     if not discovered and not unresolved:
         unresolved.append({"reason": "no_eligible_dataset_confirmed"})
     return {"region": region, "requested": {

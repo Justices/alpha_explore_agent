@@ -11,7 +11,8 @@ from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
-from alpha_research.state.store import update_stop_flag
+from alpha_research.state.store import StopSignals, update_stop_flag
+from alpha_research.workflows.regular.campaign import campaign_can_resume
 from alpha_research.state.operation_lock import SubmissionGateError
 from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 from alpha_research.state.records import ResearchRecordStore
@@ -60,13 +61,15 @@ def main(argv=None):
     planning.add_argument("--delay", type=int)
     planning.add_argument("--universe")
     campaign = sub.add_parser("run-campaign", help="execute a bounded Regular Campaign")
-    campaign.add_argument("--objective", required=True)
+    campaign_target = campaign.add_mutually_exclusive_group(required=True)
+    campaign_target.add_argument("--objective")
+    campaign_target.add_argument("--resume-campaign", metavar="ID", help="resume a saved Campaign")
     campaign.add_argument("--region")
     campaign.add_argument("--dataset", action="append")
     campaign.add_argument("--category")
     campaign.add_argument("--delay", type=int)
     campaign.add_argument("--universe")
-    campaign.add_argument("--max-batches", type=int, required=True, help="attempt budget per Dataset")
+    campaign.add_argument("--max-batches", type=int, help="optional legacy attempt limit per Dataset")
     campaign.add_argument("--ppa", action="store_true",
                           help="apply the optional PPA Profile")
     campaign.add_argument("--brain-credentials-stdin", action="store_true",
@@ -284,10 +287,12 @@ def main(argv=None):
         v11_root = root / "state" / "research_v1_1" / "campaign_runs"
         if v11_root.exists():
             for path in sorted(v11_root.glob("*.json")):
-                if path.name.endswith("_scope_plan.json"):
+                if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
                     continue
                 try:
                     saved = json.loads(path.read_text(encoding="utf-8"))
+                    if saved.get("deleted_at"):
+                        continue
                     v11_campaigns.append({
                         "campaign_id": saved.get("campaign_id"),
                         "status": saved.get("status"),
@@ -295,6 +300,8 @@ def main(argv=None):
                         "batches_attempted": saved.get("budget", {}).get("used", {}).get("batches"),
                         "subtasks": saved.get("subtasks", []),
                         "active_item": saved.get("active_item"),
+                        "resumable": campaign_can_resume(saved),
+                        "has_summary": path.with_name(f"{path.stem}_summary.json").is_file(),
                         "path": str(path)})
                 except (OSError, ValueError):
                     v11_campaigns.append({"path": str(path), "status": "unreadable"})
@@ -431,7 +438,8 @@ def main(argv=None):
         except Exception as exc:
             print(f"knowledge operation rejected: {exc}", file=sys.stderr)
             return 1
-    if stop_flag.exists() and args.command not in {
+    stop_signals = StopSignals(root / "state")
+    if stop_signals.exists() and args.command not in {
             "recover", "recover-research", "recover-workflow", "recover-task",
             "sync-backtest-cache", "tag-alpha"}:
         write_progress("研究已暂停，请先解除停止标记")
@@ -473,7 +481,7 @@ def main(argv=None):
     elif args.command not in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
                               "sync-backtest-cache", "tag-alpha"} and not (
             args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular"):
-        agent = ResearchAgent(gateway, model, cfg, root / "runs", stop_flag=stop_flag)
+        agent = ResearchAgent(gateway, model, cfg, root / "runs", stop_flag=stop_signals)
     lock = SingleWriterLock(root / "state" / "agent.lock")
     try:
         lock.__enter__()

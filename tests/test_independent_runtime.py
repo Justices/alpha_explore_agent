@@ -465,8 +465,8 @@ class TestIndependentRuntime(unittest.TestCase):
         self.client.request = request
         result = self.runtime.run_simulation_batch({**self._request(), "label": "probe_1"})
         self.assertEqual(result["results"][0]["research_tags"]["tags"],
-                         ["DS:analyst69", "DIAGNOSTIC_PROBE"])
-        self.assertEqual(platform_tags, ["existing", "DS:analyst69", "DIAGNOSTIC_PROBE"])
+                         ["DS:analyst69", "ORG_ALPHA"])
+        self.assertEqual(platform_tags, ["existing", "DS:analyst69", "ORG_ALPHA"])
         self.assertEqual(len(writes), 1)
         receipt = self.runtime._tag_plan_path("A1").with_suffix(".receipt.json")
         self.assertEqual(json.loads(receipt.read_text(encoding="utf-8"))["status"], "applied")
