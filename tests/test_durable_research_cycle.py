@@ -162,7 +162,70 @@ class TestDurableResearchCycle(unittest.TestCase):
         with self.assertRaises(AgentConfigError):
             model.complete_json("plan_experiments", {"round_index": 5})
 
+    def test_model_routing_profile_is_immutable_on_resume(self):
+        with tempfile.TemporaryDirectory() as root:
+            first = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), simulated_gateway(), root,
+                max_rounds=1)
+            first.run(research_id="R1", objective="pinned", region="CHN")
+            changed = fixture_config()
+            changed["task_roles"]["prepare_execution"] = "research_lead"
+            second = DurableOfflineResearchRunner(
+                build_model_client(changed), simulated_gateway(), root,
+                max_rounds=1)
+            with self.assertRaisesRegex(ResearchContractError, "scope"):
+                second.run(research_id="R1", objective="pinned", region="CHN")
+
+    def test_explicit_invalid_checkpoint_can_be_regenerated(self):
+        from alpha_research.agents.router import RoleRoutedModelClient, MockModelClient
+        cfg = fixture_config()
+        calls = {"prepare": 0}
+        class FlakyExecutor(MockModelClient):
+            def complete_json(self, task, context, *, thread_path=None):
+                if task == "prepare_execution":
+                    calls["prepare"] += 1
+                    if calls["prepare"] == 1:
+                        return {"experiment_ids": ["INVALID"]}
+                return super().complete_json(task, context, thread_path=thread_path)
+        def backend_factory(backend):
+            if backend is not None and backend.get("provider") == "mock" and (
+                "prepare_execution" in backend.get("responses", {})):
+                return FlakyExecutor(backend)
+            return MockModelClient(backend)
+        with tempfile.TemporaryDirectory() as root:
+            model = RoleRoutedModelClient(cfg, backend_factory=backend_factory)
+            runner = DurableOfflineResearchRunner(model, simulated_gateway(), root, max_rounds=1)
+            with self.assertRaises(ResearchContractError):
+                runner.run(research_id="R1", objective="fix", region="CHN")
+            with self.assertRaisesRegex(ResearchContractError, "blocked"):
+                runner.run(research_id="R1", objective="fix", region="CHN")
+            state = runner.invalidate_model_checkpoint(
+                "R1", "prepare_execution", "Executor returned unauthorized ID")
+            self.assertEqual(len(state["checkpoint_invalidations"]), 1)
+            state = runner.run(research_id="R1", objective="fix", region="CHN",
+                               resume_blocked=True)
+            self.assertEqual(calls["prepare"], 2)
+            self.assertEqual(state["status"], "BUDGET_EXHAUSTED")
+            self.assertEqual(state["used_experiments"], 1)
+
+    def test_reconciliation_validates_offline_fixture(self):
+        with tempfile.TemporaryDirectory() as root:
+            gw = simulated_gateway()
+            def interrupted(experiment):
+                raise RuntimeError("unknown execution outcome")
+            gw.execute = interrupted
+            runner = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), gw, root, max_rounds=1)
+            with self.assertRaises(RuntimeError):
+                runner.run(research_id="R1", objective="unknown", region="CHN")
+            gw.fixtures["E1"] = {"source": "offline_fixture", "status": "COMPLETED"}
+            with self.assertRaisesRegex(ResearchContractError, "metrics"):
+                runner.reconcile_offline_fixture("R1", "E1")
+            self.assertEqual(runner.load("R1")["rounds"][0]["simulations"]["E1"]["status"],
+                             "IN_FLIGHT")
+
     def test_reject_non_offline_runner_gateway(self):
+
         class Imposter:
             is_offline_mock = True
             def execute(self, experiment):

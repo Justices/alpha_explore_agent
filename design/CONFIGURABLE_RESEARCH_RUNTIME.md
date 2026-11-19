@@ -106,3 +106,19 @@ run(..., resume_blocked=True). Never use fixture reconciliation to recover a
 live simulation. Real simulations require the existing BRAIN recovery service.
 
 All persisted mock states remain NOT_EVALUATED for Candidate qualification.
+
+
+## State / provider identity hardening
+
+The durable request pins an SHA-256 of the effective role/backend routing.
+Resuming the same research ID with changed routes, timeouts, mock fixtures,
+model definitions or provider config is rejected as an immutable request
+change. Start a new research ID or build a separately audited migration;
+never silently alter a partially executed study.
+
+On a BLOCKED round, invalidate_model_checkpoint(research_id, task, reason)
+explicitly removes only the named erroneous model response checkpoint,
+retaining the old context/response hashes and a reason in the run record.
+It does not clear or replay a simulation intent. Plans cannot be invalidated
+after simulation intents exist. Operator action is required for the subsequent
+resume_blocked=True call. An experimental source remains NOT_EVALUATED.
