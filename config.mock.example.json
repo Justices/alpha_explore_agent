@@ -1,0 +1,65 @@
+{
+  "model": {
+    "provider": "role_router",
+    "default_role": "research_lead",
+    "task_roles": {
+      "attribute_results": "research_executor",
+      "diagnose_failures": "research_executor"
+    },
+    "roles": {
+      "research_lead": {
+        "backend": "codex_mock"
+      },
+      "research_executor": {
+        "backend": "agy_mock"
+      }
+    },
+    "backends": {
+      "codex_mock": {
+        "provider": "mock",
+        "responses": {
+          "plan_experiments": {
+            "experiments": [
+              {
+                "experiment_id": "E1",
+                "expression": "-rank(close)",
+                "region": "CHN",
+                "settings": {
+                  "delay": 1,
+                  "universe": "MOCK_UNIVERSE"
+                },
+                "hypothesis": "Test short-term mean reversion",
+                "failure_criterion": "No out-of-sample persistence"
+              }
+            ]
+          },
+          "research_decide": {
+            "action": "INVESTIGATE",
+            "reason": "Require real research evidence",
+            "evidence_refs": [
+              "offline:R1:E1"
+            ]
+          }
+        }
+      },
+      "agy_mock": {
+        "provider": "mock",
+        "responses": {
+          "attribute_results": {
+            "summary": "Synthetic experiment only",
+            "findings": [
+              {
+                "alpha_id": "E1",
+                "classification": "insufficient_evidence",
+                "reason": "Offline fixture"
+              }
+            ]
+          },
+          "diagnose_failures": {
+            "alphas": {}
+          }
+        }
+      }
+    }
+  }
+}

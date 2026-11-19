@@ -1,0 +1,12 @@
+{
+  "E1": {
+    "source": "offline_fixture",
+    "status": "COMPLETED",
+    "metrics": {
+      "sharpe": 0.4,
+      "fitness": 0.2,
+      "turnover": 0.65
+    },
+    "checks": []
+  }
+}
