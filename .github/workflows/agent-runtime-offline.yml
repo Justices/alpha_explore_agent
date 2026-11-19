@@ -10,8 +10,12 @@ permissions:
 
 jobs:
   offline:
-    runs-on: ubuntu-latest
-    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     env:
       BRAIN_USERNAME: ""
       BRAIN_PASSWORD: ""
@@ -34,4 +38,4 @@ jobs:
         run: python -m unittest discover -s tests -v
       - name: Mock research CLI smoke (no network)
         run: |
-          python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root /tmp/alpha-offline-state --durable --max-rounds 1
+          python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root .alpha-ci-runtime --durable --max-rounds 1
