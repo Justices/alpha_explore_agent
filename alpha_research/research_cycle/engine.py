@@ -69,6 +69,9 @@ class OfflineResearchCycle:
                              ("region", region)):
             if not isinstance(value, str) or not value.strip():
                 raise ResearchContractError(f"{label} is required")
+        begin_session = getattr(self.model, "begin_session", None)
+        if callable(begin_session):
+            begin_session(research_id=research_id)
         plan = self.model.complete_json("plan_experiments", {
             "research_id": research_id, "objective": objective, "region": region,
             "max_experiments": self.max_experiments, "execution": "offline_mock",

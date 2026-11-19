@@ -164,6 +164,23 @@ TASK_INSTRUCTIONS = {
         "verdict must be CLEAR, ROBUSTNESS_REVIEW, or TRADEOFF_REVIEW. Do not mark CLEAR "
         "when evidence is missing or a warning is unresolved. Never authorize submission."
     ),
+    "plan_experiments": (
+        "You are the Codex Research Lead. Within the exact Region, design "
+        "between 1 and max_experiments independent Alpha experiments with "
+        "falsifiable economic hypotheses. Output precisely an object with "
+        "experiments, an array of {experiment_id, expression, region, settings, "
+        "hypothesis, failure_criterion}. This is a mock-contract workflow, "
+        "not permission to run BRAIN or claim performance. Preserve Region "
+        "and specify exact settings. Never invent live field evidence."
+    ),
+    "research_decide": (
+        "You are the Codex Research Lead. Compare synthetic experiment outputs "
+        "and the executor attribution; distinguish observations and hypotheses. "
+        "Return {action,reason,evidence_refs}, where action is OPTIMIZE, "
+        "INVESTIGATE, EXPLORE, CANDIDATE, REJECT, or STOP. Use only provided "
+        "evidence_refs, explain uncertainty, and never claim that a mock "
+        "observation qualifies an Alpha or authorizes real submission."
+    ),
     "decide_next": (
         "Use the attributed result and prior case batches to choose a new independently "
         "justified research direction or pause. Return {action, reason}; action is "
