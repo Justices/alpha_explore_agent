@@ -172,7 +172,8 @@ class OfflineResearchCycle:
             "execution_plan": {"experiment_ids": ordered_ids},
             "simulation_results": results,
             "attribution": attribution,
-            "decision": asdict(decision),
+            "decision": {"action": decision.action, "reason": decision.reason,
+                         "evidence_refs": list(decision.evidence_refs)},
             "candidate_qualification": "NOT_EVALUATED",
             "simulation_submitted": False, "alpha_submitted": False,
         }
