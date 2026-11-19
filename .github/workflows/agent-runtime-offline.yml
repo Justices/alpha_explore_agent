@@ -1,0 +1,35 @@
+name: Configurable research runtime offline verification
+on:
+  push:
+    branches:
+      - refactor/configurable-codex-agy-runtime
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  offline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      BRAIN_USERNAME: ""
+      BRAIN_PASSWORD: ""
+      BRAIN_API_TOKEN: ""
+      GEMINI_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install package (no AGY optional dependency)
+        run: python -m pip install -e .
+      - name: Compile
+        run: python -m compileall -q alpha_research tests
+      - name: Configurable runtime offline tests
+        run: python -m unittest discover -s tests -p 'test_configurable_agents.py' -v
+      - name: Full offline suite
+        run: python -m unittest discover -s tests -v
+      - name: Mock research CLI smoke (no network)
+        run: |
+          python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root /tmp/alpha-offline-state
