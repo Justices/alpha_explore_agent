@@ -120,6 +120,17 @@ class TestConfigurableAgents(unittest.TestCase):
             OfflineResearchCycle(build_model_client(cfg), gateway()).run_once(
                 research_id="R1", objective="test", region="CHN")
 
+    def test_executor_may_not_inject_unapproved_experiments(self):
+        cfg = config()
+        cfg["backends"]["agy_mock"]["responses"]["prepare_execution"]["experiment_ids"] = [
+            "E1", "UNAUTHORIZED"
+        ]
+        gw = gateway()
+        with self.assertRaisesRegex(ResearchContractError, "unauthorized"):
+            OfflineResearchCycle(build_model_client(cfg), gw).run_once(
+                research_id="R1", objective="test", region="CHN")
+        self.assertEqual(gw.invocations, [])
+
     def test_missing_fixture_blocks_experiment(self):
         with self.assertRaises(ResearchContractError):
             OfflineResearchCycle(

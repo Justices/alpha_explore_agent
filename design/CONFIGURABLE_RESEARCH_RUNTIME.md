@@ -15,7 +15,8 @@ configurations remain supported.
 
 - research_lead: Codex CLI, read-only research planning and reflection.
 - research_executor: official Antigravity SDK with a Gemini developer API key,
-  used here for explanation and attribution of provided results only.
+  prepares an authorized experiment execution order and attributes returned
+  results. It has no direct BRAIN credentials or tools in P0.
 - mock: deterministic fixture-backed model for offline cycle tests.
 - OfflineSimulationGateway: synthetic results only; never calls BRAIN.
 - Existing production BRAIN Gateway: remains outside P0.
@@ -31,6 +32,10 @@ An AGY instruction is not a security boundary. The SDK adapter explicitly
 limits capabilities to FINISH, disables subagents, registers no custom tools,
 MCP servers or skills, and denies all other tool calls. That is separate
 from BRAIN's existing simulation-intent, authorization and recovery gates.
+
+The orchestrator validates the execution plan against the complete list of
+Codex-authorized experiment IDs before invoking the offline gateway. Any
+unknown or missing ID blocks all execution.
 
 The old agy_cli provider still exists for legacy, explicitly initiated work,
 but is intentionally rejected inside new unattended role-router definitions.

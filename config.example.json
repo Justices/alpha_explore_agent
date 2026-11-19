@@ -59,7 +59,8 @@
       "decide_next": "research_lead",
       "review_candidate": "research_lead",
       "attribute_results": "research_executor",
-      "diagnose_failures": "research_executor"
+      "diagnose_failures": "research_executor",
+      "prepare_execution": "research_executor"
     },
     "roles": {
       "research_lead": {

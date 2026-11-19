@@ -4,7 +4,8 @@
     "default_role": "research_lead",
     "task_roles": {
       "attribute_results": "research_executor",
-      "diagnose_failures": "research_executor"
+      "diagnose_failures": "research_executor",
+      "prepare_execution": "research_executor"
     },
     "roles": {
       "research_lead": {
@@ -57,6 +58,11 @@
           },
           "diagnose_failures": {
             "alphas": {}
+          },
+          "prepare_execution": {
+            "experiment_ids": [
+              "E1"
+            ]
           }
         }
       }

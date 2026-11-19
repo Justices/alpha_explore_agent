@@ -90,7 +90,26 @@ class OfflineResearchCycle:
         if len(set(signatures)) != len(signatures):
             raise ResearchContractError("duplicate expressions with identical settings")
 
-        results = {x.experiment_id: self.gateway.execute(x) for x in experiments}
+        # AGY prepares the delegated execution order. The orchestrator, not
+        # AGY, authorizes and invokes the experiment gateway. No proposed
+        # extra experiment can be executed.
+        execution = self.model.complete_json("prepare_execution", {
+            "research_id": research_id,
+            "region": region,
+            "experiments": [asdict(item) for item in experiments],
+            "execution_mode": "offline_mock",
+            "authorized_ids": ids,
+            "budget": self.max_experiments,
+        })
+        if not isinstance(execution, dict) or not isinstance(execution.get("experiment_ids"), list):
+            raise ResearchContractError("executor must return ordered experiment_ids")
+        ordered_ids = execution["experiment_ids"]
+        if (len(ordered_ids) != len(ids)
+                or any(not isinstance(x, str) for x in ordered_ids)
+                or set(ordered_ids) != set(ids)):
+            raise ResearchContractError("executor requested missing or unauthorized experiments")
+        experiments_by_id = {x.experiment_id: x for x in experiments}
+        results = {eid: self.gateway.execute(experiments_by_id[eid]) for eid in ordered_ids}
         feedback_context = {
             "research_id": research_id,
             "experiment_contracts": [asdict(item) for item in experiments],
@@ -124,6 +143,7 @@ class OfflineResearchCycle:
             "research_id": research_id, "region": region, "objective": objective,
             "execution_mode": "offline_mock",
             "experiments": [asdict(item) for item in experiments],
+            "execution_plan": {"experiment_ids": ordered_ids},
             "simulation_results": results,
             "attribution": attribution,
             "decision": asdict(decision),

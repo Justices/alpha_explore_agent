@@ -164,6 +164,14 @@ TASK_INSTRUCTIONS = {
         "verdict must be CLEAR, ROBUSTNESS_REVIEW, or TRADEOFF_REVIEW. Do not mark CLEAR "
         "when evidence is missing or a warning is unresolved. Never authorize submission."
     ),
+    "prepare_execution": (
+        "You are the AGY Research Executor. Receive only the authorized "
+        "experiment contracts and return exactly {experiment_ids:[...]}, "
+        "an ordering of every authorized experiment ID exactly once. "
+        "Do not add experiments, alter settings, call BRAIN, invoke tools "
+        "or claim any execution result. The orchestrator will run its own "
+        "authorized offline gateway after validating the proposed order."
+    ),
     "plan_experiments": (
         "You are the Codex Research Lead. Within the exact Region, design "
         "between 1 and max_experiments independent Alpha experiments with "
