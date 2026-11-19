@@ -49,12 +49,26 @@ class AntigravityModelClient:
         except ImportError as exc:
             raise AntigravityAdapterError(
                 "install optional dependency google-antigravity for AGY SDK") from exc
-        kwargs = {"api_key": secret,
-                  "system_instructions": (
-                      "You are a read-only Alpha research analyst. Never call tools, "
-                      "never claim simulation execution, never invent evidence. "
-                      "Return exactly one JSON object based on supplied evidence."
-                  )}
+        # An instruction is NOT a permission boundary. Explicitly disable all
+        # built-in tools except FINISH, disable subagents, and deny all other
+        # tool calls. Real BRAIN mutations belong to the separate gateway.
+        from google.antigravity import types
+        from google.antigravity.hooks import policy
+        kwargs = {
+            "system_instructions": (
+                "You analyze supplied Alpha research evidence. Return one JSON "
+                "object. Never infer that a simulation ran or a candidate qualified."
+            ),
+            "env": {"GEMINI_API_KEY": secret},
+            "tools": [],
+            "mcp_servers": [],
+            "skills_paths": [],
+            "capabilities": types.CapabilitiesConfig(
+                enabled_tools=[types.BuiltinTools.FINISH],
+                enable_subagents=False,
+            ),
+            "policies": [policy.deny("*"), policy.allow("finish")],
+        }
         if self.config.get("model"):
             kwargs["model"] = self.config["model"]
         agent_config = LocalAgentConfig(**kwargs)
