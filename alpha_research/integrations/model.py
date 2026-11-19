@@ -586,7 +586,7 @@ class DecisionRecorder:
                   "response_sha256": None, "response_ref": str(global_response),
                   "token_in": None, "token_out": None, "latency_ms": None,
                   "provider": config.get("provider"), "model": config.get("model"),
-                  "status": "in_flight"}
+                  "agent_role": selected_role, "status": "in_flight"}
         atomic_write_json(global_record, record)
         self._register_batch_call(record, global_context, global_response, global_record)
         self._write_log_record(record)
