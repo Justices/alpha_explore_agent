@@ -34,6 +34,23 @@ def _is_nonempty(value):
     return isinstance(value, str) and bool(value.strip())
 
 
+def _model_profile_hash(model):
+    """Bind each run to its effective backend routing, never to secrets."""
+    client = getattr(model, "model", model)  # DecisionRecorder wrapper
+    routing = getattr(client, "routing", None)
+    if routing is not None:
+        return fingerprint({
+            "default_role": routing.default_role,
+            "task_roles": routing.task_roles,
+            "roles": routing.roles,
+            "backends": routing.backends,
+        })
+    config = getattr(client, "config", None)
+    if isinstance(config, dict):
+        return fingerprint(config)
+    raise ResearchContractError("durable runner requires a configurable model profile")
+
+
 class _RoundModel:
     """Cache every completed model response; never replace a persisted answer."""
 
@@ -120,6 +137,7 @@ class DurableOfflineResearchRunner:
             if type(value) is not int or not 1 <= value <= bound:
                 raise ResearchContractError(f"{name} must be in range 1..{bound}")
         self.model = model
+        self.model_profile_sha256 = _model_profile_hash(model)
         self.gateway = gateway
         self.state_root = Path(state_root).expanduser().resolve()
         self.max_rounds = max_rounds
@@ -177,6 +195,7 @@ class DurableOfflineResearchRunner:
             "max_rounds": self.max_rounds,
             "max_total_experiments": self.max_total_experiments,
             "max_per_round": self.max_per_round,
+            "model_profile_sha256": self.model_profile_sha256,
         }
         with SingleWriterLock(self.lock_path):
             state = self._initialize(request)
@@ -251,6 +270,44 @@ class DurableOfflineResearchRunner:
                     break
             return copy.deepcopy(state)
 
+    def invalidate_model_checkpoint(self, research_id, task, reason):
+        """Explicitly invalidate an erroneous model output, retaining audit hashes.
+
+        A plan/dispatch checkpoint cannot be replaced after any simulation
+        intent has been posted. Attribution/decision may be re-run only once
+        every experiment result is already settled. The original model call
+        remains in DecisionRecorder audit logs.
+        """
+        if task not in {
+            "plan_experiments", "prepare_execution",
+            "attribute_results", "research_decide",
+        }:
+            raise ResearchContractError("invalidatable checkpoint task is unsupported")
+        if not _is_nonempty(reason) or len(reason.strip()) < 5:
+            raise ResearchContractError("checkpoint invalidation requires a meaningful reason")
+        with SingleWriterLock(self.lock_path):
+            state = self.load(research_id)
+            if state["status"] != "BLOCKED" or not state["rounds"]:
+                raise ResearchContractError("checkpoint invalidation requires a blocked round")
+            row = state["rounds"][-1]
+            if row["status"] != "RUNNING" or task not in row["model_calls"]:
+                raise ResearchContractError("checkpoint was not recorded in the blocked round")
+            sims = row["simulations"]
+            if any(x["status"] == "IN_FLIGHT" for x in sims.values()):
+                raise ResearchContractError("cannot replace model output with unresolved simulation intent")
+            if task in {"plan_experiments", "prepare_execution"} and sims:
+                raise ResearchContractError("cannot change experiment plan after simulation started")
+            call = row["model_calls"].pop(task)
+            state.setdefault("checkpoint_invalidations", []).append({
+                "round_index": row["index"],
+                "task": task,
+                "context_sha256": call["context_sha256"],
+                "response_sha256": fingerprint(call["response"]),
+                "reason": reason.strip(),
+            })
+            self._save(state)
+            return copy.deepcopy(state)
+
     def reconcile_offline_fixture(self, research_id, experiment_id):
         """Explicitly reconcile an ambiguous simulated experiment from a fixture.
 
@@ -275,12 +332,17 @@ class DurableOfflineResearchRunner:
             fixture = self.gateway.fixtures.get(experiment_id)
             if not isinstance(fixture, dict) or fixture.get("source") != "offline_fixture":
                 raise ResearchContractError("no authoritative offline fixture to reconcile")
-            fingerprint(fixture)
-            item["result"] = copy.deepcopy(fixture)
+            # Validate the readback with the same deterministic schema as the
+            # original offline executor, without calling the interrupted executor.
+            from alpha_research.research_cycle.contracts import Experiment
+            verified = OfflineSimulationGateway({experiment_id: fixture}).execute(
+                Experiment.from_dict(item["experiment"], region=state["request"]["region"]))
+            fingerprint(verified)
+            item["result"] = copy.deepcopy(verified)
             item["status"] = "COMPLETED"
             state["reconciliation"] = {
                 "mode": "offline_fixture", "experiment_id": experiment_id,
-                "result_sha256": fingerprint(fixture),
+                "result_sha256": fingerprint(verified),
             }
             self._save(state)
             return copy.deepcopy(state)
