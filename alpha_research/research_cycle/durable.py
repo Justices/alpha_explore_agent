@@ -1,0 +1,286 @@
+"""Durable, bounded OFFLINE research orchestration; deliberately no live BRAIN client.
+
+Journaled task model:
+  immutable request -> round model checkpoints -> execution intents -> evidence
+  -> attribution -> decision -> next round or terminal status.
+
+In-flight simulation intents are never automatically replayed, even when the
+fixture gateway is demonstrably idempotent. They need explicit reconciliation.
+This conservative contract matches existing live BRAIN recovery requirements.
+"""
+import copy
+import hashlib
+import json
+from pathlib import Path
+
+from alpha_research.research_cycle.contracts import ResearchContractError
+from alpha_research.research_cycle.engine import (
+    OfflineResearchCycle, OfflineSimulationGateway,
+)
+from alpha_research.state.store import atomic_write_json, read_json
+from alpha_research.state.writer_lock import SingleWriterLock
+
+
+def fingerprint(value):
+    try:
+        raw = json.dumps(value, sort_keys=True, ensure_ascii=False,
+                         separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise ResearchContractError("research state must be finite JSON") from exc
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _is_nonempty(value):
+    return isinstance(value, str) and bool(value.strip())
+
+
+class _RoundModel:
+    """Cache every completed model response; never replace a persisted answer."""
+
+    def __init__(self, runner, state, index):
+        self.runner, self.state, self.index = runner, state, index
+
+    def begin_session(self, *, research_id):
+        begin = getattr(self.runner.model, "begin_session", None)
+        if callable(begin):
+            begin(research_id=research_id)
+
+    def complete_json(self, task, context):
+        if not isinstance(context, dict):
+            raise ResearchContractError("model context must be an object")
+        round_record = self.state["rounds"][self.index]
+        key = task
+        digest = fingerprint(context)
+        cached = round_record["model_calls"].get(key)
+        if cached is not None:
+            if cached["context_sha256"] != digest:
+                raise ResearchContractError("model checkpoint context mismatch")
+            return copy.deepcopy(cached["response"])
+        result = self.runner.model.complete_json(task, context)
+        if not isinstance(result, dict):
+            raise ResearchContractError("model checkpoint requires a JSON object")
+        fingerprint(result)
+        round_record["model_calls"][key] = {
+            "context_sha256": digest, "response": copy.deepcopy(result),
+        }
+        self.runner._save(self.state)
+        return copy.deepcopy(result)
+
+
+class _JournaledSimulationGateway:
+    is_offline_mock = True
+
+    def __init__(self, runner, state, index):
+        self.runner, self.state, self.index = runner, state, index
+
+    def execute(self, experiment):
+        from dataclasses import asdict
+        row = self.state["rounds"][self.index]
+        key = experiment.experiment_id
+        experiment_sha256 = fingerprint(asdict(experiment))
+        old = row["simulations"].get(key)
+        if old is not None:
+            if old["experiment_sha256"] != experiment_sha256:
+                raise ResearchContractError("simulation intent changed after preregistration")
+            if old["status"] != "COMPLETED":
+                raise ResearchContractError(
+                    "simulation outcome unresolved; explicit offline reconciliation required")
+            return copy.deepcopy(old["result"])
+        row["simulations"][key] = {
+            "status": "IN_FLIGHT", "experiment_sha256": experiment_sha256,
+            "experiment": asdict(experiment), "result": None,
+        }
+        self.runner._save(self.state)  # preregister BEFORE potentially external call
+        result = self.runner.gateway.execute(experiment)
+        fingerprint(result)
+        row["simulations"][key]["result"] = copy.deepcopy(result)
+        row["simulations"][key]["status"] = "COMPLETED"
+        self.runner._save(self.state)
+        return result
+
+
+class DurableOfflineResearchRunner:
+    """Exactly-one-writer, persisted multi-round P1 mock workflow.
+
+    This does not prove exactly-once calls to a live BRAIN API. The only
+    permitted simulator is the concrete OfflineSimulationGateway fixture.
+    """
+
+    TERMINAL = frozenset({"STOP", "REJECT", "CANDIDATE"})
+
+    def __init__(self, model, gateway, state_root, *,
+                 max_rounds=3, max_total_experiments=12, max_per_round=4):
+        if type(gateway) is not OfflineSimulationGateway:
+            raise ResearchContractError("durable P1 only accepts the concrete offline fixture gateway")
+        for name, value, bound in (
+            ("max_rounds", max_rounds, 10),
+            ("max_total_experiments", max_total_experiments, 40),
+            ("max_per_round", max_per_round, 8),
+        ):
+            if type(value) is not int or not 1 <= value <= bound:
+                raise ResearchContractError(f"{name} must be in range 1..{bound}")
+        self.model = model
+        self.gateway = gateway
+        self.state_root = Path(state_root).expanduser().resolve()
+        self.max_rounds = max_rounds
+        self.max_total_experiments = max_total_experiments
+        self.max_per_round = max_per_round
+        self.lock_path = self.state_root / "state" / "agent.lock"
+
+    def _path(self, research_id):
+        if not _is_nonempty(research_id):
+            raise ResearchContractError("research_id must be nonempty")
+        key = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
+        return self.state_root / "state" / "research_cycle" / (key + ".json")
+
+    def _save(self, state):
+        fingerprint(state)
+        atomic_write_json(self._path(state["request"]["research_id"]), state)
+
+    def load(self, research_id):
+        path = self._path(research_id)
+        state = read_json(path)
+        if not isinstance(state, dict):
+            raise ResearchContractError("no readable durable research state")
+        if (state.get("schema_version") != 1
+                or state.get("request", {}).get("research_id") != research_id
+                or not isinstance(state.get("rounds"), list)):
+            raise ResearchContractError("durable research state is invalid")
+        return state
+
+    def _initialize(self, request):
+        path = self._path(request["research_id"])
+        if path.exists():
+            state = self.load(request["research_id"])
+            if state.get("request_sha256") != fingerprint(request):
+                raise ResearchContractError("cannot silently change persisted research scope or budget")
+            return state
+        state = {
+            "schema_version": 1, "mode": "offline_mock",
+            "request": copy.deepcopy(request),
+            "request_sha256": fingerprint(request),
+            "status": "CREATED", "rounds": [], "used_experiments": 0,
+            "failure": None, "candidate_qualification": "NOT_EVALUATED",
+            "simulation_submitted": False, "alpha_submitted": False,
+        }
+        self._save(state)
+        return state
+
+    def run(self, *, research_id, objective, region, resume_blocked=False):
+        for label, value in (
+            ("research_id", research_id), ("objective", objective), ("region", region),
+        ):
+            if not _is_nonempty(value):
+                raise ResearchContractError(f"{label} must be nonempty")
+        request = {
+            "research_id": research_id, "objective": objective, "region": region,
+            "max_rounds": self.max_rounds,
+            "max_total_experiments": self.max_total_experiments,
+            "max_per_round": self.max_per_round,
+        }
+        with SingleWriterLock(self.lock_path):
+            state = self._initialize(request)
+            if state["status"] in {"COMPLETED", "BUDGET_EXHAUSTED"}:
+                return copy.deepcopy(state)
+            if state["status"] == "BLOCKED":
+                if resume_blocked is not True:
+                    raise ResearchContractError("blocked task requires explicit resume")
+                for round_record in state["rounds"]:
+                    if any(item["status"] == "IN_FLIGHT"
+                           for item in round_record["simulations"].values()):
+                        raise ResearchContractError(
+                            "unresolved simulation intent requires explicit reconciliation")
+                state["status"] = "RUNNING"
+                state["failure"] = None
+                self._save(state)
+            while len(state["rounds"]) < self.max_rounds or (
+                    state["rounds"] and state["rounds"][-1]["status"] == "RUNNING"):
+                used = sum(len(row["simulations"]) for row in state["rounds"])
+                remaining = self.max_total_experiments - used
+                if remaining <= 0:
+                    state["status"] = "BUDGET_EXHAUSTED"
+                    self._save(state)
+                    break
+                if state["rounds"] and state["rounds"][-1]["status"] == "RUNNING":
+                    index = len(state["rounds"]) - 1
+                else:
+                    index = len(state["rounds"])
+                    state["rounds"].append({
+                        "index": index, "status": "RUNNING",
+                        "model_calls": {}, "simulations": {}, "report": None,
+                    })
+                    state["status"] = "RUNNING"
+                    self._save(state)
+                history = [
+                    copy.deepcopy(row["report"])
+                    for row in state["rounds"][:index] if row["status"] == "COMPLETED"
+                ]
+                cycle = OfflineResearchCycle(
+                    _RoundModel(self, state, index),
+                    _JournaledSimulationGateway(self, state, index),
+                    max_experiments=min(self.max_per_round, remaining),
+                )
+                try:
+                    report = cycle.run_once(
+                        research_id=research_id, objective=objective, region=region,
+                        round_index=index, history=history,
+                    )
+                except Exception as exc:
+                    state["status"] = "BLOCKED"
+                    state["failure"] = {"round_index": index, "type": type(exc).__name__,
+                                        "message": str(exc)[:500]}
+                    self._save(state)
+                    raise
+                row = state["rounds"][index]
+                row["report"] = report
+                row["status"] = "COMPLETED"
+                state["used_experiments"] = sum(
+                    len(r["simulations"]) for r in state["rounds"])
+                state["status"] = "RUNNING"
+                self._save(state)
+                if report["decision"]["action"] in self.TERMINAL:
+                    state["status"] = "COMPLETED"
+                    state["stop_reason"] = report["decision"]["action"]
+                    self._save(state)
+                    break
+                if (len(state["rounds"]) >= self.max_rounds or
+                        state["used_experiments"] >= self.max_total_experiments):
+                    state["status"] = "BUDGET_EXHAUSTED"
+                    state["stop_reason"] = "research_budget_reached"
+                    self._save(state)
+                    break
+            return copy.deepcopy(state)
+
+    def reconcile_offline_fixture(self, research_id, experiment_id):
+        """Explicitly reconcile an ambiguous simulated experiment from a fixture.
+
+        NEVER use this method for the real platform: live recovery must use
+        its own immutable intent and verified remote simulation receipts.
+        """
+        with SingleWriterLock(self.lock_path):
+            state = self.load(research_id)
+            if state["status"] != "BLOCKED":
+                raise ResearchContractError("reconciliation requires BLOCKED research")
+            if not _is_nonempty(experiment_id):
+                raise ResearchContractError("experiment_id required")
+            pending = []
+            for row in state["rounds"]:
+                item = row["simulations"].get(experiment_id)
+                if item and item["status"] == "IN_FLIGHT":
+                    pending.append(item)
+            if len(pending) != 1:
+                raise ResearchContractError("must identify one unresolved offline experiment")
+            item = pending[0]
+            # This reads the declared fixture without calling execute a second time.
+            fixture = self.gateway.fixtures.get(experiment_id)
+            if not isinstance(fixture, dict) or fixture.get("source") != "offline_fixture":
+                raise ResearchContractError("no authoritative offline fixture to reconcile")
+            fingerprint(fixture)
+            item["result"] = copy.deepcopy(fixture)
+            item["status"] = "COMPLETED"
+            state["reconciliation"] = {
+                "mode": "offline_fixture", "experiment_id": experiment_id,
+                "result_sha256": fingerprint(fixture),
+            }
+            self._save(state)
+            return copy.deepcopy(state)
