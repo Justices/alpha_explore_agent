@@ -75,3 +75,34 @@ may determine an actual Candidate after complete authoritative evidence.
 
 P0 does not claim crash-resilient multi-round learning, task queue support,
 production tool execution, RA/PC/SC qualification or live API verification.
+
+
+## P1 durable mock research
+
+The durable loop is a separate, opt-in CLI mode:
+
+    python -m alpha_research.research_cycle \
+      --config config.mock.example.json \
+      --fixtures tests/fixtures/research_cycle_simulations.json \
+      --state-root /tmp/alpha-p1-state \
+      --research-id R1 --objective "test reversal" --region CHN \
+      --durable --max-rounds 1 --max-total-experiments 4 --max-per-round 4
+
+DurableOfflineResearchRunner persists an immutable request, bounded research
+rounds, model response checkpoints, exact experiment intents and results.
+It uses a global SingleWriterLock and only accepts the concrete
+OfflineSimulationGateway; it is not an authorized live execution interface.
+The same completed task returns its persisted report without restarting it.
+
+New model calls may use arrays of mock responses, selected by round_index.
+Future rounds receive previous round reports and reject identical experiment
+expression+settings signatures. This enables deterministic offline
+multi-round optimization tests and prevents resetting the experiment budget.
+
+An interrupted experiment is an unresolved intent. Even a mock experiment is
+not automatically repeated. Explicit offline fixture reconciliation is
+available as reconcile_offline_fixture(research_id, experiment_id), followed by
+run(..., resume_blocked=True). Never use fixture reconciliation to recover a
+live simulation. Real simulations require the existing BRAIN recovery service.
+
+All persisted mock states remain NOT_EVALUATED for Candidate qualification.
