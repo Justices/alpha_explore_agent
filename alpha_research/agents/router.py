@@ -23,6 +23,11 @@ class MockModelClient:
         if task not in responses:
             raise AgentConfigError(f"missing offline mock response for {task}")
         answer = responses[task]
+        if isinstance(answer, list):
+            index = context.get("round_index", 0) if isinstance(context, dict) else 0
+            if type(index) is not int or not 0 <= index < len(answer):
+                raise AgentConfigError(f"mock response exhausted for {task}")
+            answer = answer[index]
         if not isinstance(answer, dict):
             raise AgentConfigError("offline mock response must be a JSON object")
         return copy.deepcopy(answer)

@@ -61,8 +61,14 @@ class RoleRoutingConfig:
                 if spec.get("tools") or spec.get("mcp_servers") or spec.get("allow_write"):
                     raise AgentConfigError("unattended antigravity_sdk tools are disabled in P0")
             if provider == "mock":
-                if not isinstance(spec.get("responses", {}), dict):
-                    raise AgentConfigError("mock responses must be an object")
+                responses = spec.get("responses", {})
+                if not isinstance(responses, dict) or any(
+                    not isinstance(reply, dict) and not (
+                        isinstance(reply, list) and reply
+                        and all(isinstance(entry, dict) for entry in reply))
+                    for reply in responses.values()
+                ):
+                    raise AgentConfigError("mock responses must be JSON objects or nonempty object lists")
         for role, definition in roles.items():
             if not isinstance(role, str) or not role or not isinstance(definition, dict):
                 raise AgentConfigError("every role needs an object definition")
