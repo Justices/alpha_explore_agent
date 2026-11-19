@@ -28,8 +28,10 @@ jobs:
         run: python -m compileall -q alpha_research tests
       - name: Configurable runtime offline tests
         run: python -m unittest discover -s tests -p 'test_configurable_agents.py' -v
+      - name: Durable research offline tests
+        run: python -m unittest discover -s tests -p 'test_durable_research_cycle.py' -v
       - name: Full offline suite
         run: python -m unittest discover -s tests -v
       - name: Mock research CLI smoke (no network)
         run: |
-          python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root /tmp/alpha-offline-state
+          python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root /tmp/alpha-offline-state --durable --max-rounds 1
