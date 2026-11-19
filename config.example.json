@@ -16,10 +16,10 @@
   "gate": {
     "sharpe_min": 1.58,
     "china_sharpe_min": 2.08,
-    "fitness_min": 1.0,
+    "fitness_min": 1,
     "two_year_sharpe_min": 1.6,
     "margin_min": 0.0005,
-    "risk_neutralized_sharpe_min": 1.0,
+    "risk_neutralized_sharpe_min": 1,
     "risk_neutralized_fitness_min": 0.7,
     "turnover_min": 0.05,
     "turnover_max": 0.3,
@@ -29,13 +29,16 @@
   },
   "preferred": {
     "sharpe_min": 1.25,
-    "fitness_min": 1.0,
+    "fitness_min": 1,
     "turnover_min": 0.01,
     "turnover_max": 0.7,
     "weight_max": 0.1,
     "require_sub_universe_pass": true
   },
-  "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
+  "auth": {
+    "mode": "auto",
+    "credential_env": "BRAIN_CREDENTIALS_FILE"
+  },
   "knowledge": {
     "construction_advisory_path": null,
     "prior_knowledge_path": null,
@@ -43,16 +46,44 @@
     "field_root": null
   },
   "model": {
-    "provider": "router",
-    "default": "codex",
-    "routes": {
-      "attribute_results": "agy",
-      "diagnose_failures": "agy"
+    "provider": "role_router",
+    "default_role": "research_lead",
+    "task_roles": {
+      "select_scope": "research_lead",
+      "select_dataset": "research_lead",
+      "plan_probes": "research_lead",
+      "construct_batch": "research_lead",
+      "construct_field_expressions": "research_lead",
+      "construct_super": "research_lead",
+      "optimize_alpha": "research_lead",
+      "decide_next": "research_lead",
+      "review_candidate": "research_lead",
+      "attribute_results": "research_executor",
+      "diagnose_failures": "research_executor"
+    },
+    "roles": {
+      "research_lead": {
+        "backend": "codex",
+        "description": "Research hypothesis, expression construction, reflection"
+      },
+      "research_executor": {
+        "backend": "agy",
+        "description": "Read-only attribution; simulation handled by the BRAIN gateway"
+      }
     },
     "backends": {
-      "codex": {"provider": "codex_cli"},
-      "agy": {"provider": "agy_cli"},
-      "claude": {"provider": "claude_cli"}
+      "codex": {
+        "provider": "codex_cli",
+        "executable": "codex",
+        "timeout_seconds": 240,
+        "session": "research",
+        "sandbox": "read-only"
+      },
+      "agy": {
+        "provider": "antigravity_sdk",
+        "api_key_env": "GEMINI_API_KEY",
+        "timeout_seconds": 180
+      }
     }
   }
 }

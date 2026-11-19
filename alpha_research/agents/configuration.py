@@ -1,0 +1,82 @@
+"""Validate the role -> backend -> transport configuration before any model call."""
+from dataclasses import dataclass
+from math import isfinite
+from typing import Mapping
+
+
+class AgentConfigError(ValueError):
+    pass
+
+
+# The legacy agy_cli backend remains readable in historical configurations,
+# but is intentionally excluded from new unattended role-router configurations.
+SUPPORTED_PROVIDERS = frozenset({
+    "codex_cli", "antigravity_sdk", "mock",
+    "json_http", "openai_compatible", "anthropic_compatible",
+})
+
+
+@dataclass(frozen=True)
+class RoleBinding:
+    role: str
+    backend_name: str
+    backend: dict
+
+
+@dataclass(frozen=True)
+class RoleRoutingConfig:
+    default_role: str
+    task_roles: dict
+    roles: dict
+    backends: dict
+
+    @classmethod
+    def parse(cls, config: Mapping):
+        if not isinstance(config, dict) or config.get("provider") != "role_router":
+            raise AgentConfigError("role router requires provider=role_router")
+        default = config.get("default_role")
+        roles = config.get("roles")
+        backends = config.get("backends")
+        task_roles = config.get("task_roles", {})
+        if not isinstance(default, str) or not isinstance(roles, dict) or default not in roles:
+            raise AgentConfigError("default_role must name a defined role")
+        if not isinstance(backends, dict) or not backends:
+            raise AgentConfigError("backends must be a nonempty object")
+        if not isinstance(task_roles, dict):
+            raise AgentConfigError("task_roles must be an object")
+        for name, spec in backends.items():
+            if not isinstance(name, str) or not name or not isinstance(spec, dict):
+                raise AgentConfigError("backend names and definitions must be objects")
+            provider = spec.get("provider")
+            if provider not in SUPPORTED_PROVIDERS:
+                raise AgentConfigError(f"unsupported unattended backend provider: {provider}")
+            timeout = spec.get("timeout_seconds", 180)
+            if (type(timeout) not in (int, float) or
+                    not isfinite(timeout) or timeout <= 0):
+                raise AgentConfigError(f"invalid timeout for backend {name}")
+            if provider == "antigravity_sdk":
+                key_env = spec.get("api_key_env")
+                if not isinstance(key_env, str) or not key_env:
+                    raise AgentConfigError("antigravity_sdk requires api_key_env")
+                if spec.get("tools") or spec.get("mcp_servers") or spec.get("allow_write"):
+                    raise AgentConfigError("unattended antigravity_sdk tools are disabled in P0")
+            if provider == "mock":
+                if not isinstance(spec.get("responses", {}), dict):
+                    raise AgentConfigError("mock responses must be an object")
+        for role, definition in roles.items():
+            if not isinstance(role, str) or not role or not isinstance(definition, dict):
+                raise AgentConfigError("every role needs an object definition")
+            name = definition.get("backend")
+            if name not in backends:
+                raise AgentConfigError(f"role {role} references undefined backend {name}")
+        for task, role in task_roles.items():
+            if not isinstance(task, str) or not task or role not in roles:
+                raise AgentConfigError("task_roles must map tasks to defined roles")
+        return cls(default, dict(task_roles), dict(roles), dict(backends))
+
+    def resolve(self, task: str) -> RoleBinding:
+        if not isinstance(task, str) or not task:
+            raise AgentConfigError("model task must be a nonempty string")
+        role = self.task_roles.get(task, self.default_role)
+        name = self.roles[role]["backend"]
+        return RoleBinding(role, name, dict(self.backends[name]))

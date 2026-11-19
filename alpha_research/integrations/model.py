@@ -353,6 +353,9 @@ class RoutedModelClient:
 def build_model_client(config):
     if not isinstance(config, dict):
         raise ModelError("model configuration must be an object")
+    if config.get("provider") == "role_router":
+        from alpha_research.agents.router import RoleRoutedModelClient
+        return RoleRoutedModelClient(config)
     if config.get("provider") == "router":
         return RoutedModelClient(config)
     return ConfiguredModelClient(config)
@@ -545,6 +548,8 @@ class DecisionRecorder:
         config_for = getattr(self.model, "config_for", None)
         config = (config_for(task) if callable(config_for)
                   else getattr(self.model, "config", {})) or {}
+        role_for = getattr(self.model, "role_for", None)
+        selected_role = role_for(task) if callable(role_for) else None
         record = {"ts": datetime.now().astimezone().isoformat(),
                   "call_id": call_id, "session_id": self.session_id,
                   "research_id": self.research_id,
