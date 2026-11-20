@@ -319,7 +319,7 @@ For Windows Command Prompt:
 set ALPHA_RESEARCH_HOME=<path to the state directory>
 set BRAIN_CREDENTIALS_FILE=<external credentials JSON path>
 python -m pip install -e .
-python -m alpha_research --state-root %ALPHA_RESEARCH_HOME% run-once --objective "State the economic research question"
+python -m alpha_research --state-root %ALPHA_RESEARCH_HOME% --lead glm --executor kimi run-once --objective "State the economic research question"
 ```
 
 On macOS or Linux:
@@ -328,14 +328,18 @@ On macOS or Linux:
 export ALPHA_RESEARCH_HOME='<path to the state directory>'
 export BRAIN_CREDENTIALS_FILE='<external credentials JSON path>'
 python3 -m pip install -e .
-python3 -m alpha_research --state-root "$ALPHA_RESEARCH_HOME" run-once --objective 'State the economic research question'
+python3 -m alpha_research --state-root "$ALPHA_RESEARCH_HOME" --lead glm --executor kimi run-once --objective 'State the economic research question'
 ```
 
 The examples below use `nq` as shorthand for the corresponding
 `python -m alpha_research --state-root <state-directory>` command.
+**Research commands below are live BRAIN operations** and can incur paid
+model usage or post a Simulation; execute them only with explicit approval.
+`glm` and `kimi` are illustrative registered IDs, not automatically
+selected defaults. Check `preflight` and `models doctor` first.
 
 For autonomous serial batches within a fixed budget, replace the final line
-with `nq run --objective 'State the economic research question' --max-batches 3`.
+with `nq --lead glm --executor kimi run --objective 'State the economic research question' --max-batches 3`.
 The case file retains prior batches and rejects repeat expressions.
 
 Use `--dataset DATASET_ID` only to fix a Dataset for this batch. If config
@@ -438,7 +442,7 @@ After a remedy has been entered as `verified` in
 `state/knowledge/remedies.json`, apply it as one locked batch with:
 
 ```sh
-nq run-once --objective 'the original objective' --diagnosis-id "$DIAGNOSIS_ID" --remedy-id "$REMEDY_ID"
+nq --lead glm --executor kimi run-once --objective 'the original objective' --diagnosis-id "$DIAGNOSIS_ID" --remedy-id "$REMEDY_ID"
 ```
 
 The command verifies the diagnosis and remedy against local evidence, fixes the
