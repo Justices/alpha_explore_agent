@@ -107,6 +107,24 @@ class BudgetConcurrencyTests(unittest.TestCase):
                     ledger.reserve("R1", "C1", task="task")
         self.assertEqual(ledger.status("R1")["attempts"], 0)
 
+    def test_invalid_identity_cannot_poison_durable_ledger(self):
+        ledger = self.ledger()
+        invalid = [
+            {"role": {"unexpected": "object"}},
+            {"role": "  "},
+            {"backend": ["bad"]},
+            {"backend": ""},
+            {"backend_sha256": "z" * 64},
+        ]
+        for fields in invalid:
+            with self.subTest(fields=fields):
+                with self.assertRaisesRegex(ModelBudgetError, "invalid model"):
+                    ledger.reserve("R1", "C1", task="task", **fields)
+        self.assertEqual(ledger.status("R1")["attempts"], 0)
+        ledger.reserve("R1", "C1", task="task", role="lead",
+                       backend="offline", backend_sha256="a" * 64)
+        self.assertEqual(ledger.status("R1")["unresolved"], 1)
+
     def test_hard_interrupt_before_atomic_budget_save_does_not_count_attempt(self):
         ledger = self.ledger()
         ledger.reserve("R1", "C1", task="task")
