@@ -407,47 +407,10 @@ class DecisionRecorder:
 
     def bind_batch(self, batch_dir: Path):
         self.batch_dir = Path(batch_dir).resolve()
-        target = self.batch_dir / "model_calls"
-        target.mkdir(parents=True, exist_ok=True)
-        manifest_path = self.batch_dir / "model_call_manifest.json"
-        try:
-            previous = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            previous = {}
-        except (OSError, ValueError) as exc:
-            raise ModelError("batch model call manifest is unreadable") from exc
-        entries = {row.get("call_id"): row for row in previous.get("calls", [])
-                   if isinstance(row, dict) and row.get("call_id")}
-        for record, context_path, response_path, record_path in self.session_calls:
-            copied_context = target / context_path.name
-            copied_response = target / response_path.name
-            copied_record = target / record_path.name
-            shutil.copy2(context_path, copied_context)
-            if response_path.exists():
-                shutil.copy2(response_path, copied_response)
-            shutil.copy2(record_path, copied_record)
-            entries[record["call_id"]] = {
-                "call_id": record["call_id"], "task": record["task"],
-                "session_id": record.get("session_id"),
-                "context_sha256": record["context_sha256"],
-                "route_sha256": record.get("route_sha256"),
-                "context_ref": str(copied_context),
-                "response_ref": str(copied_response),
-                "global_response_ref": str(response_path),
-                "record_ref": str(copied_record),
-                "global_record_ref": str(record_path)}
-        atomic_write_json(manifest_path, {
-            "session_ids": sorted({row.get("session_id") for row in entries.values()
-                                   if row.get("session_id")}),
-            "calls": sorted(entries.values(), key=lambda row: row["call_id"])})
-        if self.session_id:
-            sessions_root = self.logs_root / "model_sessions"
-            sessions_root.mkdir(parents=True, exist_ok=True)
-            atomic_write_json(sessions_root / f"{self.session_id}.json", {
-                "session_id": self.session_id,
-                "batch_ref": str(self.batch_dir),
-                "call_ids": [row["call_id"] for row in entries.values()
-                             if row.get("session_id") == self.session_id]})
+        # Only historical calls need copying when a batch is first bound.
+        # The active call is synchronized incrementally at its two status
+        # transitions (IN_FLIGHT, then final), not by recopying every call.
+        self._sync_batch_calls(self.session_calls)
 
     def _write_log_record(self, record):
         self.logs_root.mkdir(parents=True, exist_ok=True)
@@ -474,37 +437,76 @@ class DecisionRecorder:
             os.fsync(handle.fileno())
         os.replace(tmp, self.log_path)
 
-    def _register_batch_call(self, record, context_path, response_path, record_path):
+    def _sync_batch_calls(self, calls):
+        """One source of truth for batch model-call manifests.
+
+        Rebinding a completed call is idempotent. It does not recopy its
+        context, response or audit record, even as the session grows.
+        """
         if self.batch_dir is None:
             return
         target = self.batch_dir / "model_calls"
         target.mkdir(parents=True, exist_ok=True)
-        copied_context = target / context_path.name
-        copied_record = target / record_path.name
-        shutil.copy2(context_path, copied_context)
-        shutil.copy2(record_path, copied_record)
-        copied_response = target / response_path.name
         manifest_path = self.batch_dir / "model_call_manifest.json"
         try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            previous = json.loads(manifest_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
-            manifest = {}
+            previous = {}
         except (OSError, ValueError) as exc:
             raise ModelError("batch model call manifest is unreadable") from exc
-        entries = {row.get("call_id"): row for row in manifest.get("calls", [])
+        if not isinstance(previous, dict) or not isinstance(previous.get("calls", []), list):
+            raise ModelError("batch model call manifest has invalid schema")
+        entries = {row.get("call_id"): row for row in previous.get("calls", [])
                    if isinstance(row, dict) and row.get("call_id")}
-        entries[record["call_id"]] = {
-            "call_id": record["call_id"], "task": record["task"],
-            "session_id": record["session_id"],
-            "context_sha256": record["context_sha256"],
+        changed = not manifest_path.exists()
+        for record, context_path, response_path, record_path in calls:
+            copied_context = target / context_path.name
+            copied_response = target / response_path.name
+            copied_record = target / record_path.name
+            entry = {
+                "call_id": record["call_id"], "task": record["task"],
+                "session_id": record.get("session_id"),
+                "context_sha256": record["context_sha256"],
                 "route_sha256": record.get("route_sha256"),
-            "context_ref": str(copied_context), "response_ref": str(copied_response),
-            "global_response_ref": str(response_path),
-            "record_ref": str(copied_record), "global_record_ref": str(record_path)}
-        atomic_write_json(manifest_path, {
-            "session_ids": sorted({row.get("session_id") for row in entries.values()
-                                   if row.get("session_id")}),
-            "calls": sorted(entries.values(), key=lambda row: row["call_id"])})
+                "response_sha256": record.get("response_sha256"),
+                "context_ref": str(copied_context),
+                "response_ref": str(copied_response),
+                "global_response_ref": str(response_path),
+                "record_ref": str(copied_record),
+                "global_record_ref": str(record_path),
+            }
+            old = entries.get(record["call_id"])
+            valid_copy = (old == entry and copied_context.is_file()
+                          and copied_record.is_file()
+                          and (not response_path.exists() or copied_response.is_file()))
+            if valid_copy:
+                continue
+            if not copied_context.exists():
+                shutil.copy2(context_path, copied_context)
+            shutil.copy2(record_path, copied_record)
+            if response_path.exists():
+                shutil.copy2(response_path, copied_response)
+            entries[record["call_id"]] = entry
+            changed = True
+        if changed:
+            atomic_write_json(manifest_path, {
+                "session_ids": sorted({row.get("session_id") for row in entries.values()
+                                       if row.get("session_id")}),
+                "calls": sorted(entries.values(), key=lambda row: row["call_id"]),
+            })
+        if self.session_id:
+            sessions_root = self.logs_root / "model_sessions"
+            sessions_root.mkdir(parents=True, exist_ok=True)
+            index_path = sessions_root / f"{self.session_id}.json"
+            session_index = {
+                "session_id": self.session_id,
+                "batch_ref": str(self.batch_dir),
+                "call_ids": sorted(row["call_id"] for row in entries.values()
+                                   if row.get("session_id") == self.session_id),
+            }
+            if (not index_path.exists() or
+                    json.loads(index_path.read_text(encoding="utf-8")) != session_index):
+                atomic_write_json(index_path, session_index)
 
     def _replay_batch_call(self, task, context_sha, route_sha=None):
         if self.batch_dir is None:
@@ -612,7 +614,7 @@ class DecisionRecorder:
                   "route_sha256": route_sha,
                   "status": "in_flight"}
         atomic_write_json(global_record, record)
-        self._register_batch_call(record, global_context, global_response, global_record)
+        self._sync_batch_calls([(record, global_context, global_response, global_record)])
         self._write_log_record(record)
         started = time.perf_counter()
         response_payload = None
@@ -660,9 +662,9 @@ class DecisionRecorder:
             record["codex_thread_id"] = codex_thread_id
         atomic_write_json(global_record, record)
         self._write_log_record(record)
-        self.session_calls.append((record, global_context, global_response, global_record))
-        if self.batch_dir is not None:
-            self.bind_batch(self.batch_dir)
+        call = (record, global_context, global_response, global_record)
+        self.session_calls.append(call)
+        self._sync_batch_calls([call])
         if self.budget is not None:
             self.budget.settle(
                 self.research_id, call_id, success=(error is None),
