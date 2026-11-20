@@ -189,6 +189,41 @@ class P0PreflightTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["brain_credentials"],
                          "BLOCKED")
 
+    def test_registered_live_cli_requires_budget_even_with_model_keys(self):
+        self.cfg.write_text("{}", encoding="utf-8")
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "offline", "MOONSHOT_API_KEY": "offline",
+        }), patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "run-once", "--objective", "trial",
+            ])
+        self.assertEqual(code, 2)
+        gateway.assert_not_called()
+
+    def test_local_preflight_blocks_missing_budget_policy(self):
+        self.cfg.write_text(json.dumps({"scope": {"region": "CHN"}}),
+                            encoding="utf-8")
+        credential = self.root / "credentials.json"
+        credential.write_text(json.dumps({
+            "email": "offline@example.invalid", "password": "offline-secret",
+        }), encoding="utf-8")
+        output = StringIO()
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "offline", "MOONSHOT_API_KEY": "offline",
+            "BRAIN_CREDENTIALS_FILE": str(credential),
+        }), redirect_stdout(output):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "preflight",
+            ])
+        self.assertEqual(code, 2)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["model_budget"], "BLOCKED")
+        self.assertEqual(report["models"], "READY_LOCAL")
+        self.assertEqual(report["brain_credentials"], "READY_LOCAL")
+        self.assertFalse(report["simulation_authorized"])
+
     def test_model_research_without_role_selection_still_fails_closed(self):
         with patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
             code = entry.main([*self.arguments, "run-once", "--objective", "trial"])
