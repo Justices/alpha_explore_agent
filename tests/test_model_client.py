@@ -268,7 +268,7 @@ class TestConfiguredModelClient(unittest.TestCase):
                 (batch / "model_call_manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(len(first_manifest["calls"]), 1)
             self.assertTrue(first_manifest["calls"][0]["response_sha256"])
-            with patch("alpha_research.integrations.model.shutil.copy2",
+            with patch("alpha_research.integrations.model_journal.shutil.copy2",
                        side_effect=AssertionError("old model audit copied twice")):
                 recorder.bind_batch(batch)
             recorder.complete_json("attribute_results", {"round_index": 0})
