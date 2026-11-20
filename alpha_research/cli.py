@@ -257,7 +257,7 @@ def main(argv=None):
                     path = args.config or root / "config" / "nastu_quant.json"
                     config = (json.loads(path.read_text(encoding="utf-8"))
                               if path.exists() else None)
-                    profile = load_role_profile(config)
+                    profile = load_role_profile(None if registry_assignments else config)
                     effective = select_registered_backends(
                         profile, registered, assignments=registry_assignments)
                     if args.models_action == "inspect":
@@ -609,7 +609,7 @@ def main(argv=None):
         if model_free:
             model = None
         else:
-            cfg["model"] = load_role_profile(cfg)
+            cfg["model"] = load_role_profile(None if registry_assignments else cfg)
             if registry_assignments:
                 # Explicit real backend selection must not silently run with
                 # an absent or malformed model-attempt governance policy.
