@@ -30,7 +30,7 @@ def gateway():
 
 class TestConfigurableAgents(unittest.TestCase):
     def test_role_inspection_is_offline_and_credential_safe(self):
-        from alpha_research.agents.__main__ import inspect_roles
+        from alpha_research.agents.inspect import inspect_roles
         cfg = config()
         cfg["backends"]["agy_mock"] = {
             "provider": "antigravity_sdk",
@@ -48,7 +48,7 @@ class TestConfigurableAgents(unittest.TestCase):
         self.assertNotIn("responses", json.dumps(report))
 
     def test_role_inspection_rejects_unsafe_configuration_without_loading_sdk(self):
-        from alpha_research.agents.__main__ import inspect_roles
+        from alpha_research.agents.inspect import inspect_roles
         cfg = config()
         cfg["backends"]["agy_mock"] = {
             "provider": "antigravity_sdk", "api_key_env": "GEMINI_API_KEY",

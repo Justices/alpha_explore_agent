@@ -14,7 +14,7 @@ from alpha_research.agents.registry import (
     ModelRegistryError, bundled_registry_path, load_registry, describe_registry,
     select_registered_backends,
 )
-from alpha_research.agents.__main__ import inspect_roles
+from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.probe import run_model_probe, ModelProbeError
 from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError

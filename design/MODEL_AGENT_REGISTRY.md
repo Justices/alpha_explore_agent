@@ -5,10 +5,10 @@ The registry is the only backend-definition source; research config defines task
 
 ## Files
 
-- model_registry.example.json: editable presets for codex, claude-code, antigravity, deepseek, glm, kimi
+- alpha_research/agents/model_registry.json: editable presets for codex, claude-code, antigravity, deepseek, glm, kimi
 - alpha_research/agents/model_registry.json: shipped default registry
 - alpha_research/agents/role_profile.json: default research task/role mappings
-- config.example.json: research rules plus role profile, with no duplicate backend definitions
+- config.example.json: research rules only; roles reside solely in the bundled role_profile.json
 
 ## Select and inspect with no external calls
 
@@ -16,7 +16,7 @@ The registry is the only backend-definition source; research config defines task
 python -m alpha_research models list
 python -m alpha_research --lead codex --executor glm models inspect
 python -m alpha_research --lead kimi --executor claude-code models inspect
-python -m alpha_research --registry .\model_registry.example.json --lead deepseek --executor antigravity models inspect
+python -m alpha_research --registry .\alpha_research/agents/model_registry.json --lead deepseek --executor antigravity models inspect
 ```
 
 Registry selection requires a registered ID for every role. Unknown/missing IDs fail
@@ -27,7 +27,7 @@ closed before the workflow calls any Agent runtime, LLM API or BRAIN endpoint.
 ```powershell
 python -m alpha_research `
   --config .\config.example.json `
-  --registry .\model_registry.example.json `
+  --registry .\alpha_research/agents/model_registry.json `
   --lead codex --executor deepseek `
   run-once --objective "Explore a CHN Alpha hypothesis"
 ```

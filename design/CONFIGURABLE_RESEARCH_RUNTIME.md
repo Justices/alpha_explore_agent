@@ -178,8 +178,7 @@ qualification services are not replaced by this offline research-cycle module.
 The role-inspection command parses and validates the configured role/backend/provider
 mapping without instantiating a model client or invoking an external service:
 
-    python -m alpha_research.agents --config config.example.json \
-      --task construct_batch --task attribute_results
+    python -m alpha_research --lead codex --executor glm models inspect
 
 The output shows selected provider, model name, timeout, Codex session mode
 and credential environment-variable *name* only. Secret values are omitted.

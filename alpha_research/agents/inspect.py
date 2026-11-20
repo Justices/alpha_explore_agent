@@ -1,11 +1,4 @@
-"""Validate and inspect model role routing without calling model providers.
-
-Usage: python -m alpha_research.agents --config config.example.json \
-       --task plan_experiments --task prepare_execution
-"""
-import argparse
-import json
-from pathlib import Path
+"""Role-to-model mappings for the canonical alpha_research models inspect CLI."""
 
 from alpha_research.agents.configuration import RoleRoutingConfig, backend_kind
 
@@ -43,24 +36,3 @@ def inspect_roles(model_config, tasks):
         "validated": True,
         "provider_invoked": False,
     }
-
-
-def main(argv=None):
-    parser = argparse.ArgumentParser(
-        description="Inspect configurable Codex/AGY research routes without network access"
-    )
-    parser.add_argument("--config", required=True, type=Path)
-    parser.add_argument("--task", action="append", default=[])
-    args = parser.parse_args(argv)
-    try:
-        content = json.loads(args.config.read_text(encoding="utf-8"))
-        model = content.get("model", content)
-        report = inspect_roles(model, args.task)
-    except (OSError, ValueError, TypeError, KeyError) as exc:
-        parser.error(f"configuration invalid: {exc}")
-    print(json.dumps(report, ensure_ascii=False, indent=2))
-    return 0
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

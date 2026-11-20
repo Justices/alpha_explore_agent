@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 
 def registry():
-    return load_registry(ROOT / "model_registry.example.json")
+    return load_registry(bundled_registry_path())
 
 
 def role_profile():
@@ -28,7 +28,7 @@ def role_profile():
 
 
 class ModelRegistryTests(unittest.TestCase):
-    def test_default_bundled_registry_matches_editable_preset(self):
+    def test_bundled_registry_is_only_source(self):
         self.assertEqual(load_registry(bundled_registry_path()), registry())
         items = describe_registry(registry())
         self.assertFalse(items["provider_invoked"])
@@ -44,11 +44,16 @@ class ModelRegistryTests(unittest.TestCase):
         profile = role_profile()
         original = copy.deepcopy(profile)
         profile["backends"] = {"old": {"provider": "bogus"}}
+        with self.assertRaisesRegex(ModelRegistryError, "backends belong in registry"):
+            select_registered_backends(
+                profile, registry(),
+                assignments={"research_lead": "claude-code",
+                             "research_executor": "glm"})
+        del profile["backends"]
         selected = select_registered_backends(
             profile, registry(),
             assignments={"research_lead": "claude-code",
                          "research_executor": "glm"})
-        self.assertEqual(profile["backends"], {"old": {"provider": "bogus"}})
         self.assertEqual(selected["backends"].keys(),
                          {"registry:claude-code", "registry:glm"})
         route = RoleRoutingConfig.parse(selected)
