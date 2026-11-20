@@ -28,6 +28,7 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
+from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
 from alpha_research.orchestration.execution_identity import (
     persist_execution_identity, inspect_domain_research_handoff,
@@ -364,11 +365,10 @@ def main(argv=None):
             cfg = json.loads(config_path.read_text(encoding="utf-8"))
             if not isinstance(cfg, dict):
                 raise OrchestrationError("research configuration must be an object")
-            policy = validate_policy(cfg.get("model_governance"))
-            effective = select_registered_backends(
-                load_role_profile(), load_registry(registry_path),
-                assignments=registry_assignments)
-            assert_live_model_routes(effective)
+            prepared = prepare_registered_model_runtime(
+                cfg, registry_assignments, registry_path)
+            policy = prepared["model_governance"]
+            effective = prepared["model"]
             with SingleWriterLock(root / "state" / "agent.lock"):
                 runner = MainOrchestrator(root)
                 if args.command == "orchestration-prepare":
@@ -698,18 +698,14 @@ def main(argv=None):
         if model_free:
             model = None
         else:
-            cfg["model"] = load_role_profile(None if registry_assignments else cfg)
             if registry_assignments:
-                # Explicit real backend selection must not silently run with
-                # an absent or malformed model-attempt governance policy.
-                validate_policy(cfg.get("model_governance"))
-                catalog = load_registry(registry_path)
-                cfg["model"] = select_registered_backends(
-                    cfg["model"], catalog, assignments=registry_assignments)
-                assert_live_model_routes(cfg["model"])
-            elif cfg["model"].get("provider") == "role_router":
-                raise ModelRegistryError(
-                    "select registered roles with --lead <id> --executor <id>")
+                cfg = prepare_registered_model_runtime(
+                    cfg, registry_assignments, registry_path)
+            else:
+                cfg["model"] = load_role_profile(cfg)
+                if cfg["model"].get("provider") == "role_router":
+                    raise ModelRegistryError(
+                        "select registered roles with --lead <id> --executor <id>")
             model = build_model_client(cfg["model"])
     except (OSError, ValueError, KeyError, TypeError, ModelError) as exc:
         write_progress("无法加载研究配置或模型配置")
