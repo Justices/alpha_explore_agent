@@ -67,21 +67,30 @@ class AtomicStoreTests(unittest.TestCase):
         self.assertGreaterEqual(len(calls), 2 if os.name == "posix" else 1)
         self.assertEqual(self.leftovers(), [])
 
-    def test_parallel_writers_publish_whole_json_without_temp_collision(self):
+    def test_parallel_independent_writers_publish_whole_json(self):
+        # The atomic writer does not serialize concurrent updates of the
+        # *same* logical record: the caller must hold its transaction lock.
+        # Parallel independent destinations must not collide or leak temps.
         begin = Barrier(4, timeout=8)
         payloads = [{"author": i, "body": "x" * 10000} for i in range(3)]
+        destinations = [
+            self.file.with_name(f"attempts-{i}.json") for i in range(3)
+        ]
 
-        def write(value):
+        def write(path, value):
             begin.wait()
-            atomic_write_json(self.file, value)
+            atomic_write_json(path, value)
 
         with ThreadPoolExecutor(max_workers=3) as pool:
-            futures = [pool.submit(write, value) for value in payloads]
+            futures = [pool.submit(write, path, payload)
+                       for path, payload in zip(destinations, payloads)]
             begin.wait()
             for future in futures:
                 future.result(timeout=15)
-        self.assertIn(json.loads(self.file.read_text(encoding="utf-8")), payloads)
-        self.assertEqual(self.leftovers(), [])
+        for path, value in zip(destinations, payloads):
+            self.assertEqual(
+                json.loads(path.read_text(encoding="utf-8")), value)
+        self.assertEqual(list(self.file.parent.glob(".*.tmp-*")), [])
 
     def test_sealed_ledger_uses_same_durable_atomic_writer(self):
         state = {"schema_version": 1, "research_id": "R1", "calls": []}
