@@ -62,6 +62,35 @@ def trusted_replay_paths(batch_dir, calls_root, row):
     return paths
 
 @contextmanager
+def open_trusted_directory(path, *, label="evidence directory"):
+    """Pin the destination directory against symlink replacement on POSIX."""
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts:
+        raise ModelError(f"model {label} is not the trusted evidence path")
+    if os.name != "posix":
+        check_trusted_path(path, label=label)
+        yield None
+        return
+    fd = None
+    try:
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        fd = os.open(path.anchor, flags)
+        for part in path.parts[1:]:
+            next_fd = os.open(part, flags, dir_fd=fd)
+            os.close(fd)
+            fd = next_fd
+        yield fd
+    except OSError as exc:
+        if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+            raise ModelError(
+                f"model {label} is not the trusted evidence path") from exc
+        raise
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+@contextmanager
 def open_trusted_evidence(path, *, label="evidence"):
     """Open one checked regular file without a symlink-swap read on POSIX.
 
@@ -75,31 +104,24 @@ def open_trusted_evidence(path, *, label="evidence"):
     if not path.is_absolute() or ".." in path.parts:
         raise ModelError(f"model {label} is not the trusted evidence path")
     if os.name == "posix":
-        flags = os.O_RDONLY | os.O_NOFOLLOW
-        directory_flags = flags | os.O_DIRECTORY
-        fd = None
-        try:
-            fd = os.open(path.anchor, directory_flags)
-            for part in path.parts[1:-1]:
-                next_fd = os.open(part, directory_flags, dir_fd=fd)
-                os.close(fd)
-                fd = next_fd
-            opened = os.open(path.name, flags, dir_fd=fd)
-            os.close(fd)
-            fd = opened
-            if not stat.S_ISREG(os.fstat(fd).st_mode):
-                raise ModelError(f"model {label} is not a regular evidence file")
-            with os.fdopen(fd, "rb") as handle:
-                fd = None
-                yield handle
-        except OSError as exc:
-            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
-                raise ModelError(
-                    f"model {label} is not the trusted evidence path") from exc
-            raise
-        finally:
-            if fd is not None:
-                os.close(fd)
+        with open_trusted_directory(path.parent, label=label) as directory_fd:
+            try:
+                fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW,
+                             dir_fd=directory_fd)
+            except OSError as exc:
+                if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                    raise ModelError(
+                        f"model {label} is not the trusted evidence path") from exc
+                raise
+            try:
+                if not stat.S_ISREG(os.fstat(fd).st_mode):
+                    raise ModelError(f"model {label} is not a regular evidence file")
+                with os.fdopen(fd, "rb") as handle:
+                    fd = None
+                    yield handle
+            finally:
+                if fd is not None:
+                    os.close(fd)
     else:
         # Detect reparse points swapped into any path component immediately
         # before or after opening. This is *not* equivalent to POSIX openat.
