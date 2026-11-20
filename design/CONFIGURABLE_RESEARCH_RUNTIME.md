@@ -28,7 +28,9 @@ configurations remain supported.
 - DecisionRecorder: records selected backend and agent_role in persisted logs.
 
 Role selection is configurable via model.default_role, model.task_roles,
-model.roles and model.backends. See config.example.json. No model SDK key is
+model.roles and model.backends at runtime. The canonical roles are from
+alpha_research/agents/role_profile.json, and backends are selected from the
+bundled registry. No model SDK key is
 written to repository config. Configure GEMINI_API_KEY in your environment.
 
 ## SDK security
@@ -42,7 +44,7 @@ The orchestrator validates the execution plan against the complete list of
 Codex-authorized experiment IDs before invoking the offline gateway. Any
 unknown or missing ID blocks all execution.
 
-The old agy_cli provider still exists for legacy, explicitly initiated work,
+The former agy_cli integration has been removed,
 but is intentionally rejected inside new unattended role-router definitions.
 No consumer Google account is silently scripted as a model backend.
 

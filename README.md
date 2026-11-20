@@ -193,16 +193,20 @@ this repository's root `AGENTS.md`; only advisory knowledge paths are
 configurable. Relative
 knowledge paths are resolved from the state root. Fill the explicit
 scope values using live supported settings. A missing Region blocks research.
-The model URL is HTTPS; `json_http` accepts a JSON request
-with `task`, `context`, and `instruction`, and must return
-`{"result": { ... decision ... }}`. `openai_compatible` uses a chat completion
-wire format and a configured model name. `anthropic_compatible` accepts an
-Anthropic Messages base URL (the client appends `/v1/messages`), sends the key
-through `x-api-key`, and reads JSON from response text blocks. A response may
-contain a single fenced JSON block with surrounding explanation; ambiguous or
-invalid decisions are rejected and their text is saved in the local model call
-error record for diagnosis. Implementing `complete_json(task,
-context)` is the extension point for other services.
+Model/Agent selection uses the single bundled registry at
+[`alpha_research/agents/model_registry.json`](alpha_research/agents/model_registry.json).
+The business config no longer embeds model backend definitions; research roles
+and task bindings are defined only by the bundled
+[`role_profile.json`](alpha_research/agents/role_profile.json).
+Start with `python -m alpha_research models list`; use
+`--lead <registry-id> --executor <registry-id>` to select model providers.
+Set the appropriate API key environment variable for HTTP/SDK providers.
+The CLI provider family supports Codex and Claude Code; AGY uses its SDK;
+DeepSeek, GLM, Kimi and other LLM services use the appropriate HTTP adapter.
+The orchestrator, not the model provider, owns all BRAIN tool permissions and
+Simulation Intent recovery. See
+[Model/Agent Registry](design/MODEL_AGENT_REGISTRY.md) and
+[Model Runtime Governance](design/MODEL_RUNTIME_GOVERNANCE.md).
 
 Set `BRAIN_CREDENTIALS_FILE` to an external JSON file containing the BRAIN
 email and password, either at the top level or inside a `credentials` object.
@@ -210,21 +214,27 @@ Set the configured model API key environment variable when the service requires
 one. The agent uses its own in-memory BRAIN session; it does not print or store
 credential values.
 
-The example model router uses the locally installed Codex CLI by default.
-`attribute_results` and `diagnose_failures` use AGY CLI. Set an entry in
-`model.routes` to a name from `model.backends` to change that decision node.
-The example includes Claude CLI as another selectable backend. CLI backends
-use the tool's existing local login and accept optional `executable`,
-`model`, and `timeout_seconds` settings. HTTP backends can be added under
-`model.backends` using the same provider settings documented above.
-An existing single-provider `model` configuration continues to work.
+The canonical runtime is the role-based model router; the old
+`provider=router`, single-provider startup configuration, and AGY CLI
+compatibility have been retired. Use these local-only commands to check a
+selected combination without running a model or BRAIN Simulation:
 
-Codex CLI research decisions share a saved Codex thread within a Regular
-Campaign, bounded Regular run, Super run, or Optimization run. Regular
-recovery uses the research identity saved with the batch and resumes the
-recorded thread by ID. Thread bindings are stored under
-`<state-root>/state/codex_threads`. The Codex CLI retains the conversation
-history in its own session storage.
+```powershell
+python -m alpha_research models list
+python -m alpha_research --lead codex --executor glm models inspect
+python -m alpha_research --lead kimi --executor claude-code models doctor
+```
+
+Model decisions are indexed under `state/logs/model_calls/`. The JSONL audit
+log is append-only (one event for each state transition), and the per-call
+`.record.json` is the current-state record; `model_call_manifest.json`
+contains references to the verified batch evidence. Research-role model
+identity and budget are pinned for recovery. Codex CLI threads use the
+research ID and role to isolate retained contexts; ephemeral CLI sessions
+do not persist threads.
+
+A real model smoke test requires an explicit `--allow-model-call` flag.
+It never authorizes BRAIN Simulation or Alpha submission.
 
 The Workbench is a standalone Python service. For a single operator on a
 Linux host, run the following from the checkout under a dedicated service
@@ -241,8 +251,8 @@ in `config/nastu_quant.json` under that directory. Set model key environment
 variables for the service account. If you keep a CLI backend, install and
 authenticate it as that account. Preserve Codex CLI session storage as well as
 the research state if you need to resume Codex threads. For a service that
-does not depend on desktop logins, set the router's default and every route
-to configured HTTPS backends.
+does not depend on desktop logins, register the intended HTTPS LLM API
+backends and select their IDs through the `--lead` and `--executor` flags.
 
 The current Workbench is for one operator. It binds to loopback, checks the
 local Host and Origin, and keeps browser BRAIN credentials in memory for up to
