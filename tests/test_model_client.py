@@ -200,7 +200,7 @@ class TestConfiguredModelClient(unittest.TestCase):
              "model": "research-model", "api_key_env": "TEST_MODEL_KEY",
              "response_format": "none"},
             sdk_factory=offline_sdk(
-                'Scope selection\\n```json\\n{"universe":"TOPDIV3000"}\\n```\\nValidated.',
+                'Scope selection\n```json\n{"universe":"TOPDIV3000"}\n```\nValidated.',
                 requests), environ={"TEST_MODEL_KEY": "secret"})
         self.assertEqual(client.complete_json("select_scope", {}),
                          {"universe": "TOPDIV3000"})
