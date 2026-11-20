@@ -222,7 +222,11 @@ class CrossInstanceModelTests(unittest.TestCase):
         original = shutil.copyfileobj
 
         def interrupt(source, destination, *args, **kwargs):
-            if ".response.json.tmp-" in Path(destination.name).name:
+            # POSIX dir_fd streams expose a numeric .name, not a path.
+            # Only the sealed response copy contains this marker.
+            evidence = source.read()
+            source.seek(0)
+            if b'"state_sha256"' in evidence:
                 destination.write(b'{"status":')
                 destination.flush()
                 raise RuntimeError("synthetic crash halfway through batch copy")
