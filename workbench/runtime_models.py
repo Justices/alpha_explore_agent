@@ -3,17 +3,14 @@
 A browser selects registry IDs, never transport definitions, provider payloads,
 or credentials. No function here invokes a model or BRAIN endpoint.
 """
-import hashlib
 import json
 from pathlib import Path
 
-from alpha_research.agents.doctor import check_registered_roles
+from alpha_research.agents.readiness import inspect_live_model_roles
 from alpha_research.agents.governance import validate_policy
 from alpha_research.agents.registry import (
     bundled_registry_path, describe_registry, load_registry,
-    load_role_profile, select_registered_backends, assert_live_model_routes,
 )
-from alpha_research.state.fingerprint import canonical_json_bytes
 
 
 def _argument(agent_args, name):
@@ -68,13 +65,9 @@ def checked_selection(payload, agent_args, root):
     # Do not let a browser launch a paid research campaign without a
     # configured per-research attempt/token budget.
     validate_policy(config.get("model_governance"))
-    registry = load_registry(registry_path(agent_args, root))
-    mapping = {"research_lead": payload["lead"],
-               "research_executor": payload["executor"]}
-    effective = select_registered_backends(load_role_profile(config), registry,
-                                           assignments=mapping)
-    assert_live_model_routes(effective)
-    ready = check_registered_roles(effective)
+    ready = inspect_live_model_roles(
+        config, registry_path(agent_args, root),
+        lead=payload["lead"], executor=payload["executor"])
     if ready["status"] != "READY_LOCAL":
         missing = ", ".join(
             role for role, detail in ready["roles"].items()
@@ -84,5 +77,5 @@ def checked_selection(payload, agent_args, root):
             "）；检查 CLI、SDK 或 API Key 环境变量后重试")
     return {
         "lead": payload["lead"], "executor": payload["executor"],
-        "profile_sha256": hashlib.sha256(canonical_json_bytes(effective)).hexdigest(),
+        "profile_sha256": ready["profile_sha256"],
     }
