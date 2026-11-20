@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 
 from alpha_research.agents.configuration import (
-    AgentConfigError, RoleRoutingConfig, backend_kind,
+    AgentConfigError, RoleRoutingConfig, backend_kind, validate_backend,
 )
 
 
@@ -32,14 +32,10 @@ def _validate_entries(entries):
             raise ModelRegistryError(f"registry entry {name}: {exc}") from exc
         if spec.get("kind") != expected_kind:
             raise ModelRegistryError(f"registry entry {name} has invalid kind for {provider}")
-        # Reuse the authoritative provider validation, including tool privilege
-        # restrictions and credential environment variable checks.
+        # Validate the individual backend directly. No synthetic role-router
+        # configuration is needed when loading registry entries.
         try:
-            RoleRoutingConfig.parse({
-                "provider": "role_router", "default_role": "registered",
-                "roles": {"registered": {"backend": name}},
-                "backends": {name: spec},
-            })
+            validate_backend(name, spec)
         except AgentConfigError as exc:
             raise ModelRegistryError(
                 f"invalid registry backend {name}: {exc}") from exc
