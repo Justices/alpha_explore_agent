@@ -5,6 +5,7 @@ Windows checks pre/post-open identity and rejects observable reparse swaps.
 """
 import json
 import os
+from contextlib import contextmanager
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,7 +15,7 @@ from alpha_research.integrations.model import DecisionRecorder, ModelError
 from alpha_research.integrations.model_evidence import (
     open_trusted_evidence, read_trusted_json,
 )
-from alpha_research.integrations import model_replay
+from alpha_research.integrations import model_journal, model_replay
 
 
 class OfflineBackend:
@@ -113,6 +114,69 @@ class EvidenceSwapTests(unittest.TestCase):
         self.assertEqual(
             read_trusted_json(evidence, label="fixture"),
             {"source": "forged"})
+
+    def test_batch_copy_refuses_global_source_swapped_after_validation(self):
+        original = model_journal.open_trusted_evidence
+        changed = []
+
+        def swap_at_copy(path, *, label):
+            path = Path(path)
+            if path.name.endswith(".context.json") and not changed:
+                self.swap_to_link(path, {"value": "outside"})
+                changed.append(True)
+            return original(path, label=label)
+
+        backend = OfflineBackend()
+        recorder = DecisionRecorder(backend, self.root)
+        recorder.begin_session(research_id="R1")
+        recorder.batch_dir = self.batch
+        with patch.object(model_journal, "open_trusted_evidence",
+                          side_effect=swap_at_copy):
+            with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+                recorder.complete_json("other_task", {"value": 9})
+        self.assertEqual(backend.calls, 0)
+
+    @unittest.skipUnless(os.name == "posix", "POSIX pinned destination dir_fd")
+    def test_batch_copy_cannot_follow_swapped_destination_directory(self):
+        original = model_journal.open_trusted_directory
+        changed = []
+        destination = self.batch / "model_calls"
+        backed_up = self.root / "previous-batch-evidence"
+        outside = self.root / "outside-destination"
+        outside.mkdir()
+
+        @contextmanager
+        def swap_after_open(path, *, label):
+            with original(path, label=label) as fd:
+                if Path(path) == destination and not changed:
+                    destination.rename(backed_up)
+                    os.symlink(outside, destination, target_is_directory=True)
+                    changed.append(True)
+                yield fd
+
+        backend = OfflineBackend()
+        recorder = DecisionRecorder(backend, self.root)
+        recorder.begin_session(research_id="R1")
+        recorder.batch_dir = self.batch
+        with patch.object(model_journal, "open_trusted_directory",
+                          side_effect=swap_after_open):
+            with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+                recorder.complete_json("another_task", {"value": 4})
+        self.assertEqual(backend.calls, 0)
+        self.assertEqual(list(outside.iterdir()), [])
+        self.assertTrue(backed_up.is_dir())
+
+    def test_unchanged_batch_rebinding_avoids_evidence_copy_and_sync_writes(self):
+        backend = OfflineBackend()
+        recorder = DecisionRecorder(backend, self.root)
+        recorder.begin_session(research_id="R1")
+        recorder.bind_batch(self.batch)
+        with patch.object(recorder.journal, "_copy_batch_evidence",
+                          side_effect=AssertionError("redundant copy")), patch.object(
+                              model_journal, "atomic_write_json",
+                              side_effect=AssertionError("redundant persisted write")):
+            recorder.bind_batch(self.batch)
+        self.assertEqual(backend.calls, 0)
 
     def test_no_race_keeps_verified_replay_provider_free(self):
         backend = OfflineBackend()
