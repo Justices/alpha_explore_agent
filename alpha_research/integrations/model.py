@@ -98,6 +98,11 @@ class DecisionRecorder:
             return self._bind_batch_locked(batch_dir)
 
     def _bind_batch_locked(self, batch_dir: Path):
+        # Binding is a session operation even for callers that never
+        # explicitly invoked begin_session(). Without this, complete_json()
+        # starts a new session later and silently drops the batch binding.
+        if self.session_id is None:
+            self._begin_session_locked()
         target = Path(batch_dir).resolve()
         # Never attach to a batch with an active invocation. This prevents
         # another instance from changing its manifest while a model is live.
