@@ -12,7 +12,7 @@ from pathlib import Path
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
-from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 
 class ModelCallJournal:
@@ -85,13 +85,22 @@ class ModelCallJournal:
                 os.fsync(handle.fileno())
 
     def sync_batch_calls(self, calls, *, batch_dir, session_id):
-        """One source of truth for batch model-call manifests.
-
-        Rebinding a completed call is idempotent. It does not recopy its
-        context, response or audit record, even as the session grows.
-        """
+        """Atomically merge session entries into the shared batch manifest."""
         if batch_dir is None:
             return
+        batch_dir = Path(batch_dir).resolve()
+        # The lock spans read -> merge -> copies -> manifest/index write.
+        # Provider calls never hold this *manifest* lock.
+        try:
+            with SingleWriterLock(batch_dir / "model_call_manifest.lock"):
+                return self._sync_batch_calls_locked(
+                    calls, batch_dir=batch_dir, session_id=session_id)
+        except WriterLockError as exc:
+            raise ModelError(
+                "another writer is updating this batch model manifest") from exc
+
+    def _sync_batch_calls_locked(self, calls, *, batch_dir, session_id):
+        """Rebinding completed calls is idempotent; never re-copy unchanged rows."""
         target = batch_dir / "model_calls"
         target.mkdir(parents=True, exist_ok=True)
         manifest_path = batch_dir / "model_call_manifest.json"
