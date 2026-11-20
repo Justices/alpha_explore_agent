@@ -27,6 +27,28 @@
 | 模型双角色 Smoke Test | `agents/probe.py` 和操作者报告 | **用户环境已验证** | 2026-11-20 DeepSeek 两次 `model_probe_v1` 均 PASS；分别报告 345 / 349 Tokens；`brain_invoked=false` |
 | 真实 BRAIN Simulation 与 Alpha 提交 | 受限生产领域流程 | 未验证 / 不在范围 | 本轮未执行；Alpha 自动提交不受当前系统授权 |
 
+## P1 统一编排接入进展（离线控制平面）
+
+已确认现有 `MockWorkflowAdapter` 是复用领域工作流的正确边界：它把统一任务控制平面的 `validate / execute / qualify / collect` 映射到既有 `dispatch`，不复制 Regular、Super 或 Optimization 研究逻辑。
+
+- `validate`：只校验最小任务输入。
+- `execute`：每个统一任务只调用一次既有领域命令（Regular `run-campaign`、Super `run-super`、Optimization `run-optimization`），并传递执行上下文，使领域流程能够绑定恢复目标。
+- `qualify`：提取领域工作流已经生成的资格证据，**不重复执行 CandidateQualificationService**。
+- `collect`：采集资格摘要和只读 Candidate Pool 快照。
+
+已新增 `test_mock_workflow_adapter_wraps_existing_domain_dispatch_once`，验证三类工作流的命令映射、单次 dispatch、资格证据检查点和预算结算。该测试使用 fake dispatcher 与 fake gateway，证明的是控制平面适配合同，不证明真实领域代码或 BRAIN Gateway 已通过端到端验证。
+
+### 生产 Adapter 的边界（尚未实现）
+
+不应把 `MockWorkflowAdapter` 直接改造成可切换 Live/Mock 的通用适配器。生产 Adapter 需要单独的显式实现和审批，至少包括：
+1. 复用 CLI 当前的配置装配、模型角色注册、调用预算、Gateway 身份和进程级锁，不允许自行构造第二套凭证或预算账本。
+2. 对每个 workflow/step 定义领域状态与统一状态的映射，不能将“领域流程内部已完成 Simulation”错误地解释成可重复执行的 execute 阶段。
+3. 领域流程在任何外部副作用之前，必须持久化并绑定准确的 Simulation Intent/批次引用；结果未知时交给现有 RecoveryCoordinator，不重新 dispatch。
+4. Candidate Qualification 只允许一个权威执行方；统一控制层只消费证据，不能二次跑 RA、相关性或平台检查。
+5. 对生产执行引入单独的命令授权开关、可审计预算和明确的人工确认。禁止通过 CLI 参数或配置默认值悄悄开放真实 Simulation。
+
+在以上契约完成设计审查之前，生产 Adapter 保持未实现；本轮不开放真实执行。
+
 ## 已处理缺陷
 
 **AUD-001（P0，修复已提交，回归待运行）**
