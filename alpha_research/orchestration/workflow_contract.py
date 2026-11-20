@@ -32,7 +32,7 @@ def validate_workflow_request(workflow, request):
 
 def command_and_args(workflow, request):
     validate_workflow_request(workflow, request)
-    if request.get("max_batches", 1) != 1:
+    if type(request.get("max_batches", 1)) is not int or request.get("max_batches", 1) != 1:
         raise OrchestrationError(
             "unified orchestration currently supports a one-batch task only")
     return WORKFLOW_COMMANDS[workflow], SimpleNamespace(
