@@ -4,6 +4,8 @@ import hashlib
 import hmac
 import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
@@ -105,18 +107,60 @@ class ApprovalReviewTests(unittest.TestCase):
                 with self.assertRaisesRegex(OrchestrationError, reason):
                     self.verify(self.signed(**changes))
 
-    def test_different_ids_and_reviewer_do_not_create_live_authorization(self):
+    def test_new_approval_id_cannot_reconsume_same_task(self):
         one = self.signed()
         reserve_review_receipt(
             self.runner, one, model_profile_sha256=self.model_hash,
             environ=self.env, now=self.now)
         two = self.signed(approval_id="2" * 32)
-        other = reserve_review_receipt(
-            self.runner, two, model_profile_sha256=self.model_hash,
+        with self.assertRaisesRegex(OrchestrationError, "task approval review already reserved"):
+            reserve_review_receipt(
+                self.runner, two, model_profile_sha256=self.model_hash,
+                environ=self.env, now=self.now)
+
+    def test_secondary_record_failure_does_not_reopen_task_review(self):
+        receipt = self.signed()
+        from alpha_research.orchestration.approval_review import atomic_write_json as original_write
+
+        writes = []
+        def injected_write(path, record):
+            writes.append(str(path))
+            if len(writes) == 2:
+                raise OSError("injected crash after durable task reservation")
+            original_write(path, record)
+
+        with patch("alpha_research.orchestration.approval_review.atomic_write_json",
+                   side_effect=injected_write):
+            with self.assertRaisesRegex(OSError, "injected crash"):
+                reserve_review_receipt(
+                    self.runner, receipt, model_profile_sha256=self.model_hash,
+                    environ=self.env, now=self.now)
+
+        root = (Path(self.temp.name) / "state" / "research_v1_1" / "approval_reviews")
+        self.assertTrue((root / "tasks" / (self.task["task_id"] + ".json")).is_file())
+        self.assertFalse((root / ("1" * 32 + ".json")).exists())
+        for next_receipt in (receipt, self.signed(approval_id="2" * 32)):
+            with self.assertRaisesRegex(OrchestrationError, "task approval review already reserved"):
+                reserve_review_receipt(
+                    self.runner, next_receipt, model_profile_sha256=self.model_hash,
+                    environ=self.env, now=self.now)
+
+    def test_independent_tasks_have_separate_review_reservations(self):
+        other_task = self.runner.create(
+            "regular", {"objective": "different offline task", "region": "CHN"})
+        other_proposal = persist_execution_proposal(self.runner, other_task["task_id"])
+        first = reserve_review_receipt(
+            self.runner, self.signed(), model_profile_sha256=self.model_hash,
             environ=self.env, now=self.now)
-        self.assertEqual(other["status"], "RESERVED_REVIEW_ONLY")
-        self.assertFalse(other["simulation_authorized"])
-        self.assertFalse(other["model_call_authorized"])
+        second = reserve_review_receipt(
+            self.runner,
+            self.signed(approval_id="2" * 32, task_id=other_task["task_id"],
+                        request_sha256=other_task["request_sha256"],
+                        proposal_sha256=other_proposal["proposal_sha256"]),
+            model_profile_sha256=self.model_hash, environ=self.env, now=self.now)
+        self.assertEqual(first["status"], second["status"])
+        self.assertFalse(second["simulation_authorized"])
+        self.assertFalse(second["model_call_authorized"])
 
 
 if __name__ == "__main__":
