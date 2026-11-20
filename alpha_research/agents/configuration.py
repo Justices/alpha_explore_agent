@@ -86,6 +86,33 @@ class RoleRoutingConfig:
                 }
                 if set(spec) - allowed:
                     raise AgentConfigError("unsupported Antigravity SDK backend option")
+            if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
+                url = spec.get("url")
+                if not isinstance(url, str) or not url.startswith("https://"):
+                    raise AgentConfigError(
+                        "model API backends require an explicit HTTPS URL")
+                key_env = spec.get("api_key_env")
+                if provider != "json_http" and (
+                        not isinstance(key_env, str) or not key_env):
+                    raise AgentConfigError(
+                        f"{provider} requires an API credential environment variable")
+                if key_env is not None and (
+                        not isinstance(key_env, str) or not key_env.strip()):
+                    raise AgentConfigError("api_key_env must be a nonempty string")
+                if provider != "json_http" and (
+                        not isinstance(spec.get("model"), str)
+                        or not spec["model"].strip()):
+                    raise AgentConfigError(f"{provider} requires a model identifier")
+                allowed = {"provider", "model", "url", "api_key_env", "timeout_seconds"}
+                if provider == "openai_compatible":
+                    allowed.add("response_format")
+                    if spec.get("response_format", "json_object") not in {
+                            "json_object", "none"}:
+                        raise AgentConfigError(
+                            "OpenAI-compatible response_format must be json_object or none")
+                if set(spec) - allowed:
+                    raise AgentConfigError(
+                        f"unsupported model API configuration keys for {provider}")
             if provider == "mock":
                 responses = spec.get("responses", {})
                 if not isinstance(responses, dict) or any(

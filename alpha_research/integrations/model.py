@@ -210,11 +210,11 @@ KNOWLEDGE_POLICY = (
 )
 
 
-def _post_json(url: str, headers: dict, payload: dict) -> dict:
+def _post_json(url: str, headers: dict, payload: dict, *, timeout_seconds=120) -> dict:
     request = Request(url, data=json.dumps(payload).encode("utf-8"),
                       headers={"Content-Type": "application/json", **headers},
                       method="POST")
-    with urlopen(request, timeout=120) as response:
+    with urlopen(request, timeout=timeout_seconds) as response:
         return json.load(response)
 
 
@@ -295,7 +295,8 @@ class ConfiguredModelClient:
                     ensure_ascii=False)}],
             }
             if provider == "openai_compatible":
-                payload["response_format"] = {"type": "json_object"}
+                if self.config.get("response_format", "json_object") == "json_object":
+                    payload["response_format"] = {"type": "json_object"}
             else:
                 payload["max_tokens"] = 8192
                 if not url.rstrip("/").endswith("/v1/messages"):
@@ -308,7 +309,14 @@ class ConfiguredModelClient:
             raise ModelError(f"unsupported model provider: {provider}")
 
         try:
-            response = self.transport(url, headers, payload)
+            if self.transport is _post_json:
+                response = self.transport(
+                    url, headers, payload,
+                    timeout_seconds=self.config.get("timeout_seconds", 120))
+            else:
+                # Injected fake/custom transport follows the established
+                # three-argument API; never call the actual provider in tests.
+                response = self.transport(url, headers, payload)
             self.last_usage = (response.get("usage") if isinstance(response, dict) else None)
             if provider == "openai_compatible":
                 result = json.loads(response["choices"][0]["message"]["content"])
