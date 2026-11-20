@@ -136,6 +136,24 @@ GitHub Actions [44751916696](https://github.com/Justices/alpha_explore_agent/act
 
 此验收仅覆盖离线审查/编排前置状态，非真实 BRAIN 调用权限。生产 Adapter 仍在 `validate` 拒绝执行，实际 CLI 运行入口、可信人工授权发行、模型/Brain 身份与费用预算复用以及 Simulation Intent 全链路尚未验收。
 
+### P1.8 生产执行身份与预算交接（只读、不可执行）
+
+新增 `orchestration/execution_identity.py`，针对尚未启动并已保存 Execution Proposal 的任务，使用现有 `RoleRoutingConfig` 和 `validate_policy` 固定以下信息：
+
+| 身份与预算 | 固定或明确未绑定的字段 | 不变量 |
+| --- | --- | --- |
+| 编排任务 | Task ID、Workflow、Request SHA-256、Proposal SHA-256 | 必须与只读检查的原 Task 一致 |
+| 模型路由 | Lead/Executor 注册后端 ID、后端 SHA-256、有效 Model Profile SHA-256 | 禁止 mock、未注册后端和明文密钥；不复制后端配置或凭证 |
+| 模型预算 | **现有** `ModelCallLedger` 的治理策略 SHA-256 | 只是绑定策略，**不重新预留调用额度、不创建第二套账本** |
+| 模型 Research ID | `UNBOUND_DOMAIN_RESEARCH_ID` | Task ID 不是领域 Research ID，不能假装统一 |
+| 编排预算 | 单批次限额及初始 0 used / 0 reserved | 独立于模型调用预算 |
+| BRAIN Gateway | `existing_CLI`、Session `null`、`NOT_STARTED` | 不读取凭证、不启动会话 |
+| CLI 执行锁 | `state/agent.lock` | 仅记录既有锁归属；身份文件自身的写锁**不替代**全局执行锁 |
+
+该身份记录在每任务文件锁内持久化；相同配置幂等，模型路由、角色任务映射或预算策略变化时阻断复用。新增 `verify_identity_bound_review`：只能从已保存身份取得 Model Profile SHA-256 校验 P1.5 的审查收据，调用方不能自行声明任意“模型匹配”哈希；消费仍为 `RESERVED_REVIEW_ONLY`。
+
+**未完成的生产步骤**：在现有 CLI 的授权命令路径中取得 Gateway/模型身份、真实 Research ID 和既有调用账本的关联，明确 Simulation Intent 与成本上限，并完成跨流程恢复；当前 `ProductionWorkflowAdapter` 仍在 `validate` 阶段拒绝运行。身份准备不是执行许可，也不是生产端到端测试。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
