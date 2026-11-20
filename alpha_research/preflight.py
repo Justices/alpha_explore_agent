@@ -3,18 +3,12 @@
 Never authenticates, invokes a model, requests a BRAIN catalog or submits a
 simulation. Detects only what can be established from local configuration.
 """
-import hashlib
 import json
 import os
 from pathlib import Path
 
-from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.governance import validate_policy
-from alpha_research.agents.registry import (
-    load_registry, load_role_profile, select_registered_backends,
-    assert_live_model_routes,
-)
-from alpha_research.state.fingerprint import canonical_json_bytes
+from alpha_research.agents.readiness import inspect_live_model_roles
 from alpha_research.state.paths import expand_path
 
 
@@ -89,16 +83,12 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
     if (isinstance(lead, str) and lead.strip()
             and isinstance(executor, str) and executor.strip()):
         try:
-            effective = select_registered_backends(
-                load_role_profile(cfg), load_registry(registry_path),
-                assignments={"research_lead": lead,
-                             "research_executor": executor})
-            assert_live_model_routes(effective)
-            ready = check_registered_roles(effective, environ=env)
-            result["models"] = ready["status"]
-            result["roles"] = ready["roles"]
-            result["profile_sha256"] = hashlib.sha256(
-                canonical_json_bytes(effective)).hexdigest()
+            readiness = inspect_live_model_roles(
+                cfg, registry_path, lead=lead, executor=executor,
+                environment=env)
+            result["models"] = readiness["status"]
+            result["roles"] = readiness["roles"]
+            result["profile_sha256"] = readiness["profile_sha256"]
         except (OSError, ValueError, TypeError):
             pass
     if all(result[field] == "READY_LOCAL" for field in (
