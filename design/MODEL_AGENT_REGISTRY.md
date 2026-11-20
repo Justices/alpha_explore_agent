@@ -38,7 +38,18 @@ and may execute a real platform simulation. It is not a safe mock command.
 ## Registry format
 
 Each entry has kind=agent_runtime or llm_api, an exact provider adapter,
-API URL or executable, model identifier, timeout, and api_key_env as applicable.
+API base_url or executable, model identifier, timeout, and api_key_env as applicable.
+The llm_api provider is exclusively openai_sdk, powered by the official
+Python `openai` package. Requests use `OpenAI(base_url=..., api_key=...,
+max_retries=0).chat.completions.create()` and never invoke a raw urllib model
+transport. A base_url is the API *root*, not /chat/completions.
+
+The bundled GLM registration uses the mainland BigModel endpoint
+`https://open.bigmodel.cn/api/paas/v4` with the `ZAI_API_KEY` environment
+variable. A credential from the Z.ai international service instead requires
+an explicitly configured `https://api.z.ai/api/paas/v4` registration.
+Do not mix credentials across the two services or silently replace an
+existing research model configuration.
 Credentials themselves belong only in environment variables, never JSON.
 Agent runtimes are read-only in the current adapter and are not BRAIN tool owners.
 LLM APIs provide reasoning and structured responses; the orchestrator owns tools.
