@@ -178,6 +178,15 @@ implementations in `workflows/` through the CLI.
 - Validation is offline. No real BRAIN simulation or model service call has
   been performed as part of repository verification.
 
+## Research component boundaries
+
+The Regular workflow's catalog admission, model decisions, field plans,
+Candidate audit and local Case evidence are independent modules. The existing
+workflow coordinator still owns Simulation intents and recovery, and the
+MainOrchestrator remains separate from the fixture-only research-round runner.
+See [Research Refactor Boundaries](design/RESEARCH_REFACTOR_BOUNDARIES.md)
+for the code ownership map, safety boundaries and regression coverage.
+
 ## Configure
 
 Use Python 3.11+ and install this project with its declared dependencies. Copy
