@@ -132,6 +132,59 @@ class JournalReplayTests(unittest.TestCase):
                 self.replay(root, batch, model)
             self.assertEqual(model.calls, 0)
 
+    def test_non_object_decision_is_persisted_as_an_error(self):
+        class InvalidModel(CountingModel):
+            def complete_json(self, task, context, *, thread_path=None):
+                self.calls += 1
+                return ["not a JSON object"]
+
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            model = InvalidModel()
+            recorder = DecisionRecorder(model, root)
+            recorder.begin_session(research_id="offline-research")
+            recorder.bind_batch(root / "batch")
+            with self.assertRaisesRegex(ModelError, "must be a JSON object"):
+                recorder.complete_json("sample_task", {"round": 1})
+            self.assertEqual(model.calls, 1)
+            record, = list((root / "logs" / "model_calls").glob("*.record.json"))
+            payload = json.loads(record.read_text(encoding="utf-8"))
+            self.assertEqual(payload["status"], "error")
+            self.assertIsNotNone(payload["response_sha256"])
+
+    def test_inconsistent_terminal_status_rejects_replay(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            batch, _, _ = self.create_call(root)
+            manifest = json.loads((batch / "model_call_manifest.json")
+                                  .read_text(encoding="utf-8"))
+            record_path = Path(manifest["calls"][0]["global_record_ref"])
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["status"] = "error"
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            model = CountingModel()
+            with self.assertRaisesRegex(ModelError, "status mismatch"):
+                self.replay(root, batch, model)
+            self.assertEqual(model.calls, 0)
+
+    def test_in_flight_audit_can_reconcile_persisted_response_without_retry(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            batch, expected, _ = self.create_call(root)
+            manifest = json.loads((batch / "model_call_manifest.json")
+                                  .read_text(encoding="utf-8"))
+            record_path = Path(manifest["calls"][0]["global_record_ref"])
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["status"] = "in_flight"
+            record["response_sha256"] = None
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            model = CountingModel()
+            self.assertEqual(self.replay(root, batch, model), expected)
+            self.assertEqual(model.calls, 0)
+            recovered = json.loads(record_path.read_text(encoding="utf-8"))
+            self.assertEqual(recovered["status"], "ok")
+            self.assertTrue(recovered["response_sha256"])
+
     def test_batch_manifest_and_session_index_remain_stable(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
