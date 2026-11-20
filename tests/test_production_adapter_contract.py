@@ -37,6 +37,9 @@ class ProductionAdapterContractTests(unittest.TestCase):
         with self.assertRaisesRegex(OrchestrationError, "one-batch"):
             command_and_args(
                 "regular", {"objective": "example", "max_batches": 2})
+        with self.assertRaisesRegex(OrchestrationError, "one-batch"):
+            command_and_args(
+                "regular", {"objective": "example", "max_batches": True})
         for workflow, expected in (
                 ("regular", "run-campaign"),
                 ("super", "run-super"),
