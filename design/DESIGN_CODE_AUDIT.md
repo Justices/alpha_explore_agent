@@ -188,7 +188,7 @@ GitHub Actions [44757236393](https://github.com/Justices/alpha_explore_agent/act
 
 - 新增 `orchestration/runtime_config.py::prepare_registered_model_runtime`，将注册中心、默认 Role Profile、显式 Lead/Executor、禁止 mock 后端与 `model_governance` 的严格校验收敛为同一入口。
 - 现有真实研究 CLI 的模型选择分支和 `orchestration-prepare` 均使用此入口，不另建模型后端解析策略。没有在此模块创建模型客户端、Gateway、凭证或调用预留。
-- 保留原 CLI 对未显式选择角色的拒绝规则，以及原有 `state/agent.lock`。此阶段重用的是**模型运行配置装配**，尚未将 Gateway/Agent 的实体初始化迁至统一生产入口。
+- 新增 `orchestration/runtime_context.py::CliRuntimeContext`：原 CLI 在已经获取 `state/agent.lock`、初始化并启动 Gateway 后，创建一次非授权的运行上下文，封装同一个 Gateway、Model、Agent、配置和执行锁；领域 Dispatch 通过该上下文传递原有对象，不重新建 Session、不重复预留模型调用。保留历史未传 `execution_context` 时的六参数 Dispatch 合同。
 
 ### P2.2：ProductionWorkflowAdapter 的受控 Mock 执行
 
@@ -208,6 +208,7 @@ GitHub Actions [44757236393](https://github.com/Justices/alpha_explore_agent/act
 
 新增/扩展：
 - `tests/test_runtime_config.py`：共享角色/预算校验与旧模型配置隔离；
+- `tests/test_runtime_context.py`：验证必须已经获取当前 State Root 的全局执行锁、传递原 Gateway/Agent/模型对象、不自行启动外部连接；
 - `tests/test_production_adapter_contract.py`：Mock 生产四阶段、未授权阻断、单次 dispatch、结果未知保留预算；
 - `tests/test_p2_recovery_preflight.py`：`PREPARED` 不得重放、`POSTING` 待人工协调、模型调用未结算、无 Intent 严格阻断；
 - `tests/test_orchestration_prepare_cli.py`：恢复预检 CLI 不启动模型或 Gateway、未启动任务只读；
