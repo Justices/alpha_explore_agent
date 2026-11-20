@@ -8,7 +8,10 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from alpha_research.agents.router import RoleRoutedModelClient
-from alpha_research.integrations.model import DecisionRecorder
+from alpha_research.agents.antigravity import (
+    AntigravityAdapterError, AntigravityModelClient,
+)
+from alpha_research.integrations.model import ConfiguredModelClient, DecisionRecorder
 
 
 def role_config(*, shared=False):
@@ -210,6 +213,83 @@ class AgentRuntimeConcurrencyTests(unittest.TestCase):
         usage = router.last_usage
         usage["input_tokens"] = 999
         self.assertEqual(router.last_usage["input_tokens"], 3)
+
+    def test_direct_http_client_metadata_is_invocation_local(self):
+        def transport(url, headers, payload):
+            marker = payload["context"]["marker"]
+            return {
+                "result": {"marker": marker},
+                "usage": {"input_tokens": marker, "output_tokens": marker + 1},
+            }
+
+        client = ConfiguredModelClient(
+            {"provider": "json_http", "url": "https://api.example.invalid"},
+            transport=transport, environ={})
+        first_finished = threading.Event()
+        second_finished = threading.Event()
+
+        def first():
+            response = client.complete_json("task", {"marker": 9})
+            first_finished.set()
+            self.assertTrue(second_finished.wait(5))
+            return response, client.last_usage
+
+        def second():
+            self.assertTrue(first_finished.wait(5))
+            response = client.complete_json("task", {"marker": 5})
+            second_finished.set()
+            return response, client.last_usage
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(first)
+            b = pool.submit(second)
+            old, new = a.result(timeout=10), b.result(timeout=10)
+        self.assertEqual(old, (
+            {"marker": 9}, {"input_tokens": 9, "output_tokens": 10}))
+        self.assertEqual(new, (
+            {"marker": 5}, {"input_tokens": 5, "output_tokens": 6}))
+        self.assertIsNone(client.last_usage)  # owner thread did not invoke
+
+    def test_direct_antigravity_client_isolates_metadata_and_invalid_call(self):
+        class OfflineAntigravity(AntigravityModelClient):
+            async def _run(self, prompt, timeout, secret):
+                marker = json.loads(prompt)["context"]["marker"]
+                return json.dumps({"marker": marker})
+
+        client = OfflineAntigravity(
+            {"provider": "antigravity_sdk", "api_key_env": "MOCK_SDK_KEY"},
+            environ={"MOCK_SDK_KEY": "fixture-secret"})
+        first_finished = threading.Event()
+        second_finished = threading.Event()
+
+        def first():
+            response = client.complete_json("task", {"marker": 17})
+            first_finished.set()
+            self.assertTrue(second_finished.wait(5))
+            return response, client.last_response_text
+
+        def second():
+            self.assertTrue(first_finished.wait(5))
+            response = client.complete_json("task", {"marker": 23})
+            second_finished.set()
+            return response, client.last_response_text
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(first)
+            b = pool.submit(second)
+            old, new = a.result(timeout=10), b.result(timeout=10)
+        self.assertEqual(old, ({"marker": 17}, '{"marker": 17}'))
+        self.assertEqual(new, ({"marker": 23}, '{"marker": 23}'))
+
+        # The same context must clear successful raw text when a subsequent
+        # call is rejected before contacting the provider.
+        client.complete_json("task", {"marker": 1})
+        self.assertEqual(client.last_response_text, '{"marker": 1}')
+        client.environ.clear()
+        with self.assertRaises(AntigravityAdapterError):
+            client.complete_json("task", {"marker": 2})
+        self.assertIsNone(client.last_response_text)
+        self.assertIsNone(client.last_model)
 
     def test_one_recorder_serializes_its_own_session_and_manifest(self):
         entered = threading.Event()
