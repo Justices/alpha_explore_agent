@@ -456,6 +456,41 @@ Nested remedy preconditions can match exact live catalog facts under
 do not satisfy a condition. Remedy outcome writes happen after `READ_BACK` and
 are idempotently retried by recovery.
 
+## Unified orchestration: offline preparation and domain handoff (P1)
+
+Before an explicitly reviewed production integration, a task and its selected
+model identities can be prepared without opening a BRAIN session or calling a
+model. Both roles must be selected from the model registry, and the effective
+config must include a `model_governance` object (`max_calls`,
+`max_reported_tokens`, `failover: manual`).
+
+```sh
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-prepare --workflow regular --objective "offline preparation only"
+
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-handoff <TASK_ID>
+```
+
+For Optimization, add `--workflow optimization --alpha-id <SOURCE_ALPHA_ID>`.
+These commands only write a `CREATED` task, an
+`execution_proposals/` record and an `execution_identities/` record, or
+read existing records. No model client/Gateway is constructed and no
+Simulation, tag mutation or Alpha submission occurs.
+
+The domain execution functions now report their true `research_id` into the
+orchestrator's durable execution context, before external requests. The
+read-only handoff inspection reports the **existing**
+`ModelCallLedger` state for that Research ID and preserves unresolved
+in-flight attempts. A Regular Campaign may reuse a deterministic Research ID
+across tasks; that budget is governed per Research ID, not per task.
+
+**This is not a live execution command.** `ProductionWorkflowAdapter`
+continues to reject unapproved research at validation. CLI-owned Gateway
+authentication, the `state/agent.lock` process lock, domain Simulation
+Intent and verified RecoveryCoordinator receipt remain mandatory for any
+future separately authorized live integration.
+
 ## Offline checks
 
 ```sh
