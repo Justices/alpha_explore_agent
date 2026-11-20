@@ -24,7 +24,12 @@ class P0PreflightTests(unittest.TestCase):
         self.root = Path(tmp.name)
         self.cfg = self.root / "config" / "nastu_quant.json"
         self.cfg.parent.mkdir(parents=True)
-        self.cfg.write_text("{}", encoding="utf-8")
+        self.cfg.write_text(json.dumps({
+            "model_governance": {
+                "max_calls": 5, "max_reported_tokens": 1000,
+                "failover": "manual",
+            },
+        }), encoding="utf-8")
         self.arguments = ["--state-root", str(self.root)]
 
     def test_registered_choices_are_public_metadata_without_secrets(self):
