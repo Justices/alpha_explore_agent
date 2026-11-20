@@ -249,8 +249,8 @@ class DecisionRecorder:
         try:
             if (config.get("provider") == "codex_cli"
                     and config.get("session", "research") == "research"):
-                # Keep legacy per-research Codex sessions unchanged. Routed
-                # roles use independent sessions to prevent context leakage.
+                # Stable research thread namespace; routed roles use independent
+                # sessions to prevent context leakage.
                 namespace = (self.research_id if selected_role is None else
                              f"{self.research_id}:role:{selected_role}")
                 thread_key = hashlib.sha256(namespace.encode("utf-8")).hexdigest()
