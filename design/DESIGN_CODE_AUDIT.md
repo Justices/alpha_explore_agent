@@ -97,6 +97,20 @@ GitHub Actions [44748199366](https://github.com/Justices/alpha_explore_agent/act
 
 **授权信任边界：** 仅凭共享环境密钥持有和签名校验不能证明真人批准；本实现只验证技术审查凭据，不赋予 BRAIN 调用权限。若未来开放真实执行，必须通过独立可信的人工审批/操作授权发行器，绑定费用限额、实际可调用操作及单次执行收据，复用既有 CLI 全局锁、模型调用账本和 Simulation Intent 恢复，并完成故障注入验证。当前 `ProductionWorkflowAdapter` 的 `validate` 拒绝行为和 CLI 的生产入口禁用状态不变。
 
+### P1.6 任务级审查消费和故障注入
+
+审计发现此前仅按 `approval_id` 去重，同一 `task_id` 可以使用新的 `approval_id` 再次记录审查消费（仍不能授权真实执行）。已在 `approval_review.py` 的全局 `reviews.lock` 下增加任务级消费索引 `approval_reviews/tasks/<task_id>.json`。
+
+提交顺序：**先持久化任务级消费栅栏，再写审批 ID 索引**。如果进程在两次写入之间中断，保留任务栅栏并拒绝重复审查，不能自动删除或重新消费。这是保守阻断策略，需要人工审计修复不完整的索引；它不是一个具备跨文件原子性的事务。不同任务仍可使用不同审批 ID 正常完成审查登记。
+
+新增离线用例覆盖：
+- 同任务换新的审批 ID 仍拒绝；
+- 第二个记录写入失败时不允许再次审查同一任务；
+- 不同任务独立登记；
+- 已有签名、过期、身份指纹、模型指纹、越权操作与预算测试继续生效。
+
+**剩余工作**：跨进程杀进程/锁竞争实测、独立的人工审批发行与费用预算边界、模型/Brain 身份注入，以及真实副作用前的 Simulation Intent 绑定。真实执行入口仍关闭。
+
 ### P1.5 离线验收结果（2026-11-20）
 
 GitHub Actions [44749354566](https://github.com/Justices/alpha_explore_agent/actions/runs/44749354566) 对应代码提交 `c04c5c0e6327e4e8f0d58223da081ee0d825d2f1`。已读取原始日志：**Linux 626 tests, OK（18.013 秒）**、**Windows 626 tests, OK（115.647 秒）**，AGY SDK 契约 Job 通过。此项仅验证审查收据的离线安全合同，**不代表**已经签发受信任的人类授权、实现真实生产执行或取得 BRAIN 端到端许可。
