@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from alpha_research.cli import main
+from alpha_research.integrations.model import ConfiguredModelClient
 
 
 class ModelSmokePairTests(unittest.TestCase):
@@ -95,6 +96,32 @@ class ModelSmokePairTests(unittest.TestCase):
             rc = main(self.args + ["--allow-model-call"])
         self.assertEqual(rc, 2)
         self.assertIn("ModelProbeError", error.getvalue())
+
+    def test_model_probe_caps_output_tokens_without_affecting_research_tasks(self):
+        envelopes = []
+
+        def no_network(url, headers, payload):
+            envelopes.append(payload)
+            return {"choices": [{"message": {"content":
+                '{"ready":true,"contract":"model_probe_v1"}'}}],
+                "usage": {"prompt_tokens": 20, "completion_tokens": 11}}
+
+        config = {
+            "provider": "openai_compatible",
+            "url": "https://example.invalid/chat/completions",
+            "api_key_env": "FIXTURE_MODEL_KEY",
+            "model": "fixture",
+            "response_format": "none",
+        }
+        client = ConfiguredModelClient(
+            config, transport=no_network, environ={"FIXTURE_MODEL_KEY": "secret"})
+        response = client.complete_json("model_probe", {"no_tools": True})
+        self.assertEqual(response,
+                         {"ready": True, "contract": "model_probe_v1"})
+        self.assertEqual(envelopes[0]["max_tokens"], 512)
+        self.assertNotIn("tools", envelopes[0])
+        client.complete_json("attribute_results", {})
+        self.assertNotIn("max_tokens", envelopes[1])
 
     def test_single_role_requires_explicit_permission_for_real_provider(self):
         output = StringIO()
