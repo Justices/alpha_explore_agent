@@ -222,16 +222,31 @@ class DecisionRecorder:
                 "knowledge_policy": KNOWLEDGE_POLICY,
             }
             route_sha = hashlib.sha256(_json_bytes(identity)).hexdigest()
+        backend_digest = hashlib.sha256(_json_bytes(config)).hexdigest()
+
+        def reconcile_verified(recovered_call_id, payload):
+            if self.budget is not None:
+                self.budget.reconcile_verified_response(
+                    self.research_id, recovered_call_id, task=task,
+                    role=selected_role, backend=selected_backend,
+                    backend_sha256=backend_digest,
+                    success=(payload["status"] == "ok"),
+                    token_in=payload.get("token_in"),
+                    token_out=payload.get("token_out"),
+                )
+
         replay = replay_batch_call(
             self.batch_dir, task, context_sha, route_sha,
-            append_event=self.journal.append_event)
+            append_event=self.journal.append_event,
+            on_verified=reconcile_verified if self.budget is not None else None,
+            expected_research_id=self.research_id if self.budget is not None else None)
         if replay is not None:
             return replay
         if self.budget is not None:
             self.budget.reserve(
                 self.research_id, call_id, task=task,
                 role=selected_role, backend=selected_backend,
-                backend_sha256=hashlib.sha256(_json_bytes(config)).hexdigest(),
+                backend_sha256=backend_digest,
             )
         global_context = self.global_calls_root / f"{call_id}.context.json"
         global_response = self.global_calls_root / f"{call_id}.response.json"
