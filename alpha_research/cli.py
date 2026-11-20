@@ -29,6 +29,7 @@ from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
+from alpha_research.orchestration.runtime_context import CliRuntimeContext
 from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
 from alpha_research.orchestration.execution_identity import (
@@ -756,6 +757,8 @@ def main(argv=None):
     try:
         write_progress("正在启动 BRAIN 连接")
         gateway.start()
+        runtime = CliRuntimeContext.from_active_cli(
+            root, cfg, gateway, model, agent, lock)
         if args.command == "sync-backtest-cache":
             print(json.dumps(gateway.call("sync_backtest_cache"), ensure_ascii=False))
             return 0
@@ -777,7 +780,7 @@ def main(argv=None):
             print(json.dumps(result, ensure_ascii=False))
             return 0
         if args.command in RESEARCH_COMMANDS:
-            result = dispatch_research(args.command, args, cfg, root, gateway, agent)
+            result = runtime.dispatch(args.command, args, dispatcher=dispatch_research)
             print(json.dumps(result, ensure_ascii=False))
             return 0
         if args.command == "run-once":
