@@ -69,7 +69,7 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             raise ModelError("recorded model audit identity mismatch; replay blocked")
         if not is_sealed_state(payload):
             raise ModelError(
-                "previous model response integrity seal is missing or invalid; "
+                "previous model response integrity seal checksum mismatch or missing; "
                 "budget reconciliation and retry blocked")
         response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
         if row.get("response_sha256") is not None and row["response_sha256"] != response_sha:
