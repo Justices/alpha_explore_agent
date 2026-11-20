@@ -221,9 +221,6 @@ class ModelCallJournal:
                 previous_index, session_id, str(batch_dir),
                 [row["call_id"] for row in entries.values()
                  if row.get("session_id") == session_id])
-            if merged_index != previous_index:
-                atomic_write_json(session_path, merged_index)
-
         if changed:
             atomic_write_json(manifest_path, {
                 "session_ids": sorted({row.get("session_id") for row in entries.values()
