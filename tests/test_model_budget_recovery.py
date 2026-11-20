@@ -155,6 +155,23 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual(next_model.calls, 0)
             self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
 
+    def test_recorded_usage_conflict_does_not_settle_budget(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.create_gap(root)
+            row = json.loads((root / "batch" / "model_call_manifest.json")
+                             .read_text(encoding="utf-8"))["calls"][0]
+            record_path = Path(row["global_record_ref"])
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record["token_in"] = 999
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            model = CountingModel()
+            replay = self.make_recorder(root, model)
+            with self.assertRaisesRegex(ModelError, "usage mismatch"):
+                replay.complete_json("task", {"step": 1})
+            self.assertEqual(model.calls, 0)
+            self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
+
     def test_unknown_operator_acknowledgement_is_terminal(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
