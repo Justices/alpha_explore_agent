@@ -182,6 +182,50 @@ GitHub Actions [44757236393](https://github.com/Justices/alpha_explore_agent/act
 
 **P1 离线控制平面验收已满足。** 当前 `ProductionWorkflowAdapter` 仍在 `validate` 明确禁止生产执行。尚未验收的剩余高风险集成包括：独立可信的人类实时执行授权发行与费用上限、CLI 复用已持锁的 Gateway/Model 实例进行生产 Dispatch、真实 Simulation Intent 跨进程故障恢复，以及实际 BRAIN 只读/受控 Simulation 验收。这些属于后续**生产启用门槛**，不能以 P1 离线测试 PASS 替代。
 
+## P2 生产统一控制平面开发与验收门槛
+
+### P2.1：复用现有 CLI 模型路由和预算策略
+
+- 新增 `orchestration/runtime_config.py::prepare_registered_model_runtime`，将注册中心、默认 Role Profile、显式 Lead/Executor、禁止 mock 后端与 `model_governance` 的严格校验收敛为同一入口。
+- 现有真实研究 CLI 的模型选择分支和 `orchestration-prepare` 均使用此入口，不另建模型后端解析策略。没有在此模块创建模型客户端、Gateway、凭证或调用预留。
+- 保留原 CLI 对未显式选择角色的拒绝规则，以及原有 `state/agent.lock`。此阶段重用的是**模型运行配置装配**，尚未将 Gateway/Agent 的实体初始化迁至统一生产入口。
+
+### P2.2：ProductionWorkflowAdapter 的受控 Mock 执行
+
+- 默认 `ProductionWorkflowAdapter(root, config)` 保持在 `validate` 拒绝真实研究且预算为零预留。
+- 显式传入项目原生 `MockWorkflowAdapter`、Mock Gateway、Mock Model、原始 `dispatch` 且同一 `state_root` 时才允许通过统一四阶段任务控制平面执行，继承领域既有 Candidate/Preferred 结果，不能二次评估。
+- 新增 `tests/test_production_adapter_contract.py` 中三工作流 Mock Dispatch 集成、假 runtime/自定义 Dispatcher 拒绝、Simulation Intent 绑定后结果未知仍阻断且不释放预算的测试。**这不代表已实现可信生产授权或启用真实 BRAIN Dispatch。**
+
+### P2.3：只读任务/模型/Intent 联合恢复预检
+
+- 新增 `orchestration/recovery_preflight.py`，在不触发模型或 BRAIN 的情况下，联合判定 Task 的 `BLOCKED execute`、领域 Research ID、已有 `ModelCallLedger`、持久 Simulation Intent 状态。
+- 对 `PREPARED`、缺失 Intent、不完整模型调用、`POSTING` 等情况分别归类；所有状态均标明 `automatic_replay_allowed=false`，不可通过预检释放预算或重发 POST。
+- 新增 CLI `orchestration-recovery-check TASK_ID`，使用同一角色配置、治理策略和 CLI 全局文件锁，仅输出只读分类结果。
+- 修复此前模型预算读回路径偏差：正确的模型调用账本位于 **`<state-root>/state/logs/model_budget/`**，不是 `<state-root>/logs/model_budget/`；同时更新集成与故障测试，确保测试对齐真实 CLI 路径。
+- `RecoveryCoordinator.recover_task` 仍为权威恢复操作；只读预检不等价于恢复结算。
+
+### P2.4：离线回归与故障注入
+
+新增/扩展：
+- `tests/test_runtime_config.py`：共享角色/预算校验与旧模型配置隔离；
+- `tests/test_production_adapter_contract.py`：Mock 生产四阶段、未授权阻断、单次 dispatch、结果未知保留预算；
+- `tests/test_p2_recovery_preflight.py`：`PREPARED` 不得重放、`POSTING` 待人工协调、模型调用未结算、无 Intent 严格阻断；
+- `tests/test_orchestration_prepare_cli.py`：恢复预检 CLI 不启动模型或 Gateway、未启动任务只读；
+- 原有跨进程审批锁、Intent 恢复与三类研究入口测试全部包含在同一 `unittest discover` 离线套件中。
+
+**验收依据必须以对应代码提交的双平台 GitHub Actions 日志为准。** 不得把此前 P1 的 650 tests PASS 转用为新 P2 代码的验收结论。
+
+### P2.5：真实平台验证——独立授权阻断
+
+当前阶段**尚未执行**真实 BRAIN 只读预检、Simulation、Alpha 属性更新或提交。未建立可信真人签发的*真实执行*授权收据（现有 `approval_review.py` 仅签名审查，不能授权外部调用），也未将已持锁且已认证的真实 Gateway/Model 注入可执行生产 Adapter。
+
+生产验收的必要条件：
+1. 操作人独立确认受控执行的精确 Workflow、Region、Dataset/Alpha、最大模型调用和 Simulation 次数，明确真实 API 费用边界。
+2. 审核真实执行授权发行/消费方案与 CLI 全局锁、各 Research ID 的模型调用账本、Simulation Intent 持久收据及外部结果未知的人工恢复。
+3. 先在真实账号只读验证权限/范围与 BRAIN 证据；未经另行批准不执行 Simulation。
+4. 逐次记录外部 Intent、平台读回、候选资格结果和验收日志；绝不自动提交 Alpha。
+5. 整体 P2 不能因离线测试 PASS 而被描述为生产端到端完全验收。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
