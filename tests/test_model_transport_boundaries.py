@@ -103,12 +103,14 @@ class ModelTransportBoundaryTests(unittest.TestCase):
                     client.complete_json("sample", {})
 
     def test_shared_decoder_rejects_multiple_json_blocks(self):
-        text = "first ```json\\n{\\"a\\":1}\\n``` second ```json\\n{\\"b\\":2}\\n```".replace("\\n", "\n")
+        fence = chr(96) * 3
+        text = ("first " + fence + 'json\\n{"a":1}\\n' + fence +
+                " second " + fence + 'json\\n{"b":2}\\n' + fence)
         with self.assertRaises(ValueError):
             decode_decision(text)
-        self.assertEqual(decode_decision(
-            "analysis ```json\\n{\\"ok\\":true}\\n```".replace("\\n", "\n")),
-            {"ok": True})
+        self.assertEqual(decode_decision("analysis " + fence +
+                                         'json\\n{"ok":true}\\n' + fence),
+                         {"ok": True})
 
     def test_sdk_adapter_resets_prior_usage_between_calls(self):
         client, sdk, _ = self.sdk([
