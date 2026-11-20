@@ -16,7 +16,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `workflows/regular/field_plan.py` | Per-field construction/repair and child-batch sequencing; delegates calls and recovery to the coordinator |
 | `workflows/regular/candidate_audit.py` | Canonical platform audit, RA/correlation checks and retained-Candidate revalidation |
 | `workflows/regular/case_evidence.py` | Case pool and Alpha state persistence, immutable remedy lineage validation |
-| `orchestration/engine.py` | Main workflow task state machine, budget reservations, verified reconciliation |
+| `orchestration/engine.py` | Main workflow task state machine, budget reservations and receipt/path-verified reconciliation |
 | `orchestration/offline_adapter.py` | Both explicitly offline adapters; never the live BRAIN gateway |
 | `state/fingerprint.py` | Canonical JSON digest |
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
@@ -24,12 +24,12 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model.py` | `ConfiguredModelClient` transport dispatcher plus `DecisionRecorder` call/budget coordinator; no inline HTTP or CLI execution |
 | `integrations/model_cli.py` | Isolated CLI Agent invocation, sandbox/thread controls and CLI response admission |
 | `integrations/model_http.py` | HTTPS model API requests, headers, timeout and provider-specific response envelopes |
-| `integrations/model_json.py` | Shared strict JSON decision decoder for CLI and HTTPS providers |
+| `integrations/model_json.py` | Shared JSON decision decoder for CLI, HTTPS and Antigravity SDK; adapters retain their own error contracts |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
 | `integrations/model_journal.py` | Single owner of session call history, durable call paths, intent/terminal writes, append-only events, batch manifests and session indices |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
-| `agents/configuration.py` | Strict role/task binding and immutable snapshot routing; delegates backend policy |
+| `agents/configuration.py` | Strict role/task binding and defensively copied route snapshots; delegates backend policy |
 
 ## Execution authority
 
@@ -79,6 +79,10 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   post-response/pre-budget-settlement crash gaps, locked idempotent settlement, unknown-outcome blockers and audit usage conflicts
 - `tests/test_model_transport_boundaries.py`:
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
+- `tests/test_agent_runtime_boundaries.py`:
+  deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
+- `tests/test_orchestrator.py`:
+  includes receipt-path containment and nonstring journal-path rejection before any external file read
 
 Run `python -m unittest discover -s tests -v` without BRAIN credentials.
 Never enable real Simulation or Alpha submission merely to validate a refactor.
@@ -96,3 +100,24 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - A successfully verified response may be returned without a second provider request. A persisted real-provider error is accounted for but still blocks automatic retry. Missing/malformed audit or response evidence, or a call without a durable bound batch, cannot trigger automatic reconciliation and remains operator-blocked.
 - The model-call file schema, ledger schema version and recorded route digest structure remain unchanged; changes to these require a dedicated migration and crash-gap fixtures.
 
+
+## Routing and recovery trust boundaries
+
+- The model registry validates each backend directly through the same
+  `validate_backend` policy used by the live router; registry inspection must
+  never construct a synthetic role or invoke a provider.
+- `RoleRoutingConfig.resolve` returns a **deep copy** of the effective
+  backend definition. Mutating a selected route cannot alter later dispatch.
+  `DecisionRecorder` requests one route snapshot for audit identity rather
+  than independently looking up role, backend name and provider configuration.
+- `RoleRoutedModelClient` clears previously active backend metadata before
+  resolving each new invocation. An invalid task cannot leak another role's
+  model name or token usage into the current error context.
+- Domain recovery and read-only model evidence retain their distinct
+  authorization boundaries but use `state/fingerprint.py` for identical
+  finite-JSON checksums; no persisted receipt schema or digest changes.
+- `MainOrchestrator.reconcile` checks a recovery receipt's digest and rejects
+  a journal path outside the configured recovery root **before reading** the
+  referenced journal. Invalid reference types also fail closed. The
+  `RecoveryCoordinator` remains the only producer of valid reconciliation
+  receipts; no recovery code may repost an unknown Simulation.
