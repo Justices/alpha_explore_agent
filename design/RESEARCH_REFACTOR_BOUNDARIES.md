@@ -323,6 +323,9 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - The batch manifest itself, the Session index and the global-call and
   batch evidence directories are checked before Journal reads/copies/writes.
   Canonical paths are enforced for each internal Journal evidence copy.
+  Every existing manifest row is also validated during batch rebinding,
+  including rows for tasks other than the current call, so a forged old row
+  cannot enter the Session membership index.
 - The global audit's `session_id`, `research_id`, `batch_ref`,
   `context_ref`, `response_ref`, task and route digest must match the
   manifest and trusted roots. The global original input JSON is also
