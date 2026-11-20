@@ -187,6 +187,23 @@ class JournalReplayTests(unittest.TestCase):
             self.assertEqual(recovered["status"], "ok")
             self.assertTrue(recovered["response_sha256"])
 
+    def test_journal_is_only_session_history_owner(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            model = CountingModel()
+            recorder = DecisionRecorder(model, root)
+            recorder.begin_session(research_id="R1")
+            recorder.bind_batch(root / "batch")
+            recorder.complete_json("sample_task", {"round": 1})
+            self.assertFalse(hasattr(recorder, "session_calls"))
+            self.assertFalse(hasattr(recorder, "global_calls_root"))
+            self.assertEqual(len(recorder.journal.session_calls), 1)
+            persisted = list(recorder.journal.calls_root.glob("*.record.json"))
+            self.assertEqual(len(persisted), 1)
+            recorder.begin_session(research_id="R2")
+            self.assertEqual(recorder.journal.session_calls, [])
+            self.assertEqual(len(list(recorder.journal.calls_root.glob("*.record.json"))), 1)
+
     def test_batch_manifest_and_session_index_remain_stable(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
