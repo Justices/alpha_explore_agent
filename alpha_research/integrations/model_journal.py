@@ -16,6 +16,7 @@ from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.sealed import seal_state
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 
@@ -58,9 +59,13 @@ class ModelCallJournal:
         unresolved and never authorizes a second provider request.
         """
         context_path, response_path, record_path = paths
-        atomic_write_json(response_path, response)
+        # The checksum and response must land in the *same* atomic JSON file.
+        # A crash after writing this file but before terminal audit/manifest
+        # writes still leaves verifiable evidence for provider-free replay.
+        sealed_response = seal_state(dict(response))
+        atomic_write_json(response_path, sealed_response)
         record.update({
-            "response_sha256": hashlib.sha256(_json_bytes(response)).hexdigest(),
+            "response_sha256": hashlib.sha256(_json_bytes(sealed_response)).hexdigest(),
             "token_in": token_in, "token_out": token_out,
             "latency_ms": latency_ms, "status": response["status"],
         })
