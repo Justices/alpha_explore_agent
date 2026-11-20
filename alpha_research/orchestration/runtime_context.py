@@ -37,6 +37,10 @@ class CliRuntimeContext:
         if dispatcher is None:
             from alpha_research.orchestration.dispatch import dispatch as dispatcher
 
+        if execution_context is None:
+            return dispatcher(
+                command, args, self.config, self.state_root,
+                self.gateway, self.agent)
         return dispatcher(
             command, args, self.config, self.state_root,
             self.gateway, self.agent, execution_context=execution_context)
