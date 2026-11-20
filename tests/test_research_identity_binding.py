@@ -1,7 +1,6 @@
 """Offline durable domain Research ID handoff and failure containment tests."""
 import tempfile
 import unittest
-from pathlib import Path
 
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 
@@ -67,17 +66,6 @@ class ResearchIdentityBindingTests(unittest.TestCase):
 
     def test_binding_conflict_rejects_research_identity_substitution(self):
         with tempfile.TemporaryDirectory() as td:
-            class ConflictAdapter(BindingAdapter):
-                def run(self, workflow, step, request, checkpoints, context=None):
-                    if step == "execute":
-                        context["bind_research_identity"]("regular:campaign:" + "a" * 32)
-                        with self.assertRaisesRegex(OrchestrationError, "different domain"):
-                            context["bind_research_identity"]("regular:campaign:" + "b" * 32)
-                        with self.assertRaisesRegex(OrchestrationError, "does not match"):
-                            context["bind_research_identity"]("super:" + "a" * 32)
-                        raise RuntimeError("conflicting identity rejected")
-                    return super().run(workflow, step, request, checkpoints, context)
-            # Unit assertions belong to the enclosing test, not the adapter.
             first = "regular:campaign:" + "a" * 32
             class DenyChange:
                 def run(self, workflow, step, request, checkpoints, context=None):
