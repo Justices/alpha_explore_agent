@@ -16,6 +16,7 @@ from alpha_research.agents.registry import (
 )
 from alpha_research.agents.__main__ import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
+from alpha_research.agents.probe import run_model_probe, ModelProbeError
 from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
@@ -48,12 +49,17 @@ def main(argv=None):
     parser.add_argument("--executor", metavar="ID",
                         help="registered backend ID for research_executor")
     sub = parser.add_subparsers(dest="command", required=True)
-    models = sub.add_parser("models", help="list or inspect model/agent registrations offline")
+    models = sub.add_parser(
+        "models", help="inspect registered models or explicitly probe one model")
     models.add_argument("models_action", choices=(
-        "list", "inspect", "doctor", "budget", "acknowledge-unknown"))
+        "list", "inspect", "doctor", "budget", "acknowledge-unknown", "smoke"))
     models.add_argument("--research-id", help="research ID for budget/acknowledgement")
     models.add_argument("--call-id", help="unresolved model call ID to acknowledge")
     models.add_argument("--reason", help="human explanation for unknown outcome")
+    models.add_argument("--role", choices=("research_lead", "research_executor"),
+                        help="role to test with models smoke")
+    models.add_argument("--allow-model-call", action="store_true",
+                        help="explicit authorization for one paid model/API invocation")
     orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
     orchestrate.add_argument("--workflow", choices=("regular", "super", "optimization"))
     orchestrate.add_argument("--objective")
@@ -254,14 +260,35 @@ def main(argv=None):
                         result = inspect_roles(effective, [])
                         result["selected_registrations"] = registry_assignments
                         result["registry_path"] = str(registry_path)
+                    elif args.models_action == "smoke":
+                        if args.role is None:
+                            raise ModelProbeError(
+                                "models smoke requires --role research_lead or research_executor")
+                        if args.allow_model_call:
+                            ready = check_registered_roles(effective)
+                            if not ready["roles"][args.role]["ready_local"]:
+                                raise ModelProbeError(
+                                    "selected model has missing local prerequisites")
+                        result = run_model_probe(
+                            effective, root, role=args.role,
+                            allow_model_call=args.allow_model_call)
+                        result["selected_registrations"] = registry_assignments
                     else:
                         result = check_registered_roles(effective)
                         result["selected_registrations"] = registry_assignments
-        except (OSError, KeyError, ValueError, TypeError) as exc:
-            print(f"model runtime unavailable: {exc}", file=sys.stderr)
-            return 2
+        except Exception as exc:
+            # The models CLI is an operational boundary: don't leak provider
+            # credential-bearing exceptions, network payloads, or raw prompts.
+            from alpha_research.integrations.model import ModelError
+            if isinstance(exc, (OSError, KeyError, ValueError, TypeError, ModelError,
+                                TimeoutError)):
+                print(f"model runtime failed: {type(exc).__name__}", file=sys.stderr)
+                return 2
+            raise
         print(json.dumps(result, ensure_ascii=False, indent=2))
         if args.models_action == "doctor" and result["status"] != "READY_LOCAL":
+            return 2
+        if args.models_action == "smoke" and result["status"] == "CONTRACT_MISMATCH":
             return 2
         return 0
     if args.command in {"stop", "resume"}:
