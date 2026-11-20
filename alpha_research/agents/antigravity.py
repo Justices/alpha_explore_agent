@@ -9,6 +9,7 @@ import json
 import os
 
 from alpha_research.integrations.model_prompts import instruction_for
+from alpha_research.integrations.model_metadata import InvocationMetadata
 from alpha_research.integrations.model_json import decode_decision
 
 
@@ -28,15 +29,12 @@ def decode_json_object(message: str) -> dict:
         raise AntigravityAdapterError("AGY response must be a JSON object")
     return result
 
-class AntigravityModelClient:
+class AntigravityModelClient(InvocationMetadata):
     def __init__(self, config, environ=None, agent_factory=None):
         self.config = dict(config)
         self.environ = os.environ if environ is None else environ
         self.agent_factory = agent_factory
-        self.last_usage = None
-        self.last_model = None
-        self.last_response_text = None
-        self.last_thread_id = None
+        self._init_invocation_metadata()
 
     def build_local_config(self, secret):
         """Construct read-only SDK configuration without starting an Agent."""
@@ -83,6 +81,8 @@ class AntigravityModelClient:
         return await asyncio.wait_for(interact(), timeout=timeout)
 
     def complete_json(self, task, context, *, thread_path=None):
+        # Credential and option failures must not retain an older response.
+        self._reset_invocation_metadata()
         if thread_path is not None:
             raise AntigravityAdapterError("AGY SDK does not accept Codex thread bindings")
         key_name = self.config.get("api_key_env")
@@ -98,10 +98,7 @@ class AntigravityModelClient:
             "task": task, "context": context,
             "instruction": instruction_for(task, forbid_tools=True),
         }, ensure_ascii=False, allow_nan=False)
-        self.last_usage = None
-        self.last_thread_id = None
         self.last_model = self.config.get("model")
-        self.last_response_text = None
         try:
             message = asyncio.run(self._run(prompt, timeout, secret))
             self.last_response_text = message
