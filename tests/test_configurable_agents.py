@@ -11,7 +11,8 @@ from alpha_research.agents.antigravity import (
     AntigravityAdapterError, AntigravityModelClient, decode_json_object
 )
 from alpha_research.agents.configuration import AgentConfigError
-from alpha_research.integrations.model import build_model_client, DecisionRecorder, ModelError
+from alpha_research.integrations.model import build_model_client, DecisionRecorder, ModelError, ConfiguredModelClient
+from alpha_research.agents.router import RoleRoutedModelClient
 from alpha_research.research_cycle import OfflineResearchCycle, OfflineSimulationGateway
 from alpha_research.research_cycle.contracts import ResearchContractError
 
@@ -55,6 +56,104 @@ class TestConfigurableAgents(unittest.TestCase):
         }
         with self.assertRaises(AgentConfigError):
             inspect_roles(cfg, ["attribute_results"])
+
+    def test_roles_can_use_different_http_model_families_without_code_change(self):
+        alt_path = ROOT / "config.provider-swaps.example.json"
+        cfg = json.loads(alt_path.read_text(encoding="utf-8"))["model"]
+        traces = []
+        credentials = {
+            "RESEARCH_LEAD_API_KEY": "offline-lead-key",
+            "RESEARCH_EXECUTOR_API_KEY": "offline-executor-key",
+        }
+
+        def fake_transport(url, headers, payload):
+            traces.append((url, dict(headers), dict(payload)))
+            if "lead-provider" in url:
+                self.assertEqual(payload["model"], "<YOUR_LEAD_MODEL_ID>")
+                self.assertEqual(headers["Authorization"], "Bearer offline-lead-key")
+                self.assertNotIn("response_format", payload)
+                return {"choices": [{"message": {"content": '{"plan":true}'}}]}
+            self.assertEqual(payload["model"], "<YOUR_EXECUTOR_MODEL_ID>")
+            self.assertEqual(headers["x-api-key"], "offline-executor-key")
+            self.assertEqual(headers["anthropic-version"], "2023-06-01")
+            return {"content": [{"type": "text", "text": '{"attributed":true}'}]}
+
+        router = RoleRoutedModelClient(
+            cfg,
+            backend_factory=lambda backend: ConfiguredModelClient(
+                backend, transport=fake_transport, environ=credentials),
+        )
+        self.assertEqual(router.role_for("plan_experiments"), "research_lead")
+        self.assertEqual(router.backend_name_for("plan_experiments"), "research_lead_api")
+        self.assertEqual(router.complete_json("plan_experiments", {"a": 1}),
+                         {"plan": True})
+        self.assertEqual(router.role_for("attribute_results"), "research_executor")
+        self.assertEqual(router.backend_name_for("attribute_results"),
+                         "research_executor_api")
+        self.assertEqual(router.complete_json("attribute_results", {"a": 2}),
+                         {"attributed": True})
+        self.assertEqual(len(traces), 2)
+
+        # Exchange models purely through configuration; no task/business code changes.
+        swapped = json.loads(alt_path.read_text(encoding="utf-8"))["model"]
+        swapped["roles"]["research_lead"]["backend"] = "research_executor_api"
+        swapped["roles"]["research_executor"]["backend"] = "research_lead_api"
+        reversed_router = RoleRoutedModelClient(
+            swapped,
+            backend_factory=lambda backend: ConfiguredModelClient(
+                backend, transport=fake_transport, environ=credentials),
+        )
+        self.assertEqual(reversed_router.complete_json("plan_experiments", {}),
+                         {"attributed": True})
+        self.assertEqual(reversed_router.complete_json("attribute_results", {}),
+                         {"plan": True})
+        self.assertEqual(len(traces), 4)
+
+    def test_http_model_configurations_fail_closed(self):
+        cfg = json.loads((ROOT / "config.provider-swaps.example.json").read_text(
+            encoding="utf-8"))["model"]
+        cfg["backends"]["research_lead_api"]["url"] = "http://public-server/"
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg["backends"]["research_lead_api"]["url"] = "https://example.invalid/v1/chat/completions"
+        cfg["backends"]["research_lead_api"]["api_key_env"] = ""
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg["backends"]["research_lead_api"]["api_key_env"] = "RESEARCH_LEAD_API_KEY"
+        cfg["backends"]["research_lead_api"]["response_format"] = "unsupported"
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg["backends"]["research_lead_api"]["response_format"] = "none"
+        cfg["backends"]["research_lead_api"]["additional_permissions"] = ["file_write"]
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+
+    def test_http_timeout_setting_reaches_default_transport(self):
+        from alpha_research.integrations import model as model_module
+        cfg = {
+            "provider": "openai_compatible",
+            "url": "https://api.example.invalid/v1/chat/completions",
+            "model": "test-model",
+            "api_key_env": "TEST_API_KEY",
+            "timeout_seconds": 19,
+        }
+        class FakeResponse:
+            def __enter__(self):
+                return self
+            def __exit__(self, exc_type, exc, tb):
+                return False
+            def read(self, *args):
+                return b'{"choices":[{"message":{"content":"{\\"ok\\": true}"}}]}'
+        seen = []
+        def fake_urlopen(request, *, timeout):
+            seen.append(timeout)
+            return FakeResponse()
+        # json.load works with a file-like .read() response.
+        with patch.object(model_module, "urlopen", side_effect=fake_urlopen):
+            result = ConfiguredModelClient(cfg, environ={"TEST_API_KEY": "fixture"}).complete_json(
+                "plan_experiments", {"fixture": 1})
+        self.assertEqual(result, {"ok": True})
+        self.assertEqual(seen, [19])
 
     def test_routes_lead_and_executor_by_role(self):
         m = build_model_client(config())

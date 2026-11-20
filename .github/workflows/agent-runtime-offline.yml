@@ -41,6 +41,7 @@ jobs:
         run: |
           python -m alpha_research.agents --config config.mock.example.json --task plan_experiments --task prepare_execution
           python -m alpha_research.agents --config config.example.json --task construct_batch --task attribute_results
+          python -m alpha_research.agents --config config.provider-swaps.example.json --task plan_experiments --task attribute_results
       - name: Configurable runtime offline tests
         run: python -m unittest discover -s tests -p 'test_configurable_agents.py' -v
       - name: Durable research offline tests
