@@ -82,6 +82,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   durable pre-call intents, unchanged manifests, crash/missing evidence and replay identity
 - `tests/test_model_budget_recovery.py`:
   post-response/pre-budget-settlement crash gaps, locked idempotent settlement, unknown-outcome blockers and audit usage conflicts
+- `tests/test_model_transaction_boundary.py`:
+  cross-file reservation/intent/manifest/response crash gaps, sealed response
+  corruption rejection and operator-visible orphan reservation IDs
 - `tests/test_model_transport_boundaries.py`:
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 - `tests/test_agent_runtime_boundaries.py`:
@@ -111,13 +114,17 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - Before contacting any configured Provider, DecisionRecorder reserves the attempt (when governance is enabled), persists the input and an in-flight audit record, then creates the batch manifest.
 - `ModelCallJournal` owns only local durable metadata and never receives provider credentials or permission to use BRAIN.
 - `model_replay` accepts only previously recorded successful JSON decisions bound to the task, context digest and exact role/backend route digest. Invalid manifests and missing or tampered responses must block rather than trigger automatic real-provider retries.
-- Model-call and budget-ledger durable protocols retain their current schema. Session indices use only the canonical v2 schema; older session-index layouts are rejected, not migrated.
+- Model-call audit and budget-ledger protocols retain their current schema.
+  **Response evidence now requires a canonical `state_sha256` seal in the same
+  atomic JSON file.** Previously unsealed responses fail closed rather than
+  being accepted by a compatibility fallback. Session indices remain strict
+  v2; older index layouts are rejected, not migrated.
 - The model budget ledger remains the authority for call reservations and settlements; a crash during a real provider call is not classified as a safely retriable failure.
 - `DecisionRecorder` owns the execution order, task route and call budget coordination. `ModelCallJournal` exclusively owns its per-session call history and persistence paths; starting a new session clears only the in-memory history, never audit files.
 - When a batch contains a persisted response, `model_replay` first checks the task/context digest, exact route, research identity, audit identity, response checksum, status, and reported usage. If governance is enabled, it additionally reconciles the original budget attempt by call ID without creating a new reservation.
 - `ModelCallLedger.reconcile_verified_response` is a locked, idempotent transition: `IN_FLIGHT -> OK/ERROR`; an already matching terminal state stays unchanged, while `UNKNOWN`, a changed backend or mismatched token usage blocks. The UNKNOWN operator acknowledgement cannot be undone by replay.
 - A successfully verified response may be returned without a second provider request. A persisted real-provider error is accounted for but still blocks automatic retry. Missing/malformed audit or response evidence, or a call without a durable bound batch, cannot trigger automatic reconciliation and remains operator-blocked.
-- The model-call audit, ledger and route digest contracts retain their strict integrity checks. No automatic conversion or legacy fallback is provided.
+- The model-call audit, ledger and route digest contracts retain their strict integrity checks. Provider response evidence is validated with `is_sealed_state` before any budget reconciliation, including when an audit or batch manifest still shows `in_flight`. No automatic conversion or legacy fallback is provided.
 
 
 ## Routing and recovery trust boundaries
@@ -268,3 +275,27 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   is rejected. Different research IDs use distinct lock files.
 - All guarantees are for processes using the same local filesystem lock
   semantics, not multi-host distributed locking.
+
+## Model-call cross-file transaction and crash-gap contract
+
+- Ordering is fixed: **ledger reserve → global context/in-flight audit →
+  batch manifest and intent event → provider call → atomically sealed
+  response → terminal audit/event/manifest → ledger settlement**.
+- The ledger and journal live in separate files and cannot be updated by
+  one atomic filesystem replacement. Every intermediate crash point must
+  therefore leave a fail-closed state instead of permitting automatic retry.
+- The response and its `state_sha256` share **one atomic JSON write**.
+  A terminal response persisted before the terminal audit can be accepted
+  only after validating that seal, its task/context/route/research identity,
+  response shape, and the original reserved budget attempt. Invalid or
+  missing seals block both budget settlement and another provider request.
+- A ledger reservation with no durable journal intent is an **orphaned
+  reservation**, not evidence that the model call failed. `models budget`
+  exposes `unresolved_call_ids` and `unknown_call_ids` for operator
+  investigation without exposing prompts, credentials or response bodies.
+  `acknowledge-unknown` is explicit and terminal for that research ID;
+  it never refunds a call or unlocks an unverified retry.
+- Checksums detect accidental corruption and incomplete copies; they are not
+  cryptographic signatures against an actor able to rewrite and reseal
+  local files. No BRAIN execution privilege or live model invocation is
+  granted to the recovery code.
