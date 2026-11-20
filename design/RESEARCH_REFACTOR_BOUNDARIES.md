@@ -83,6 +83,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
 - `tests/test_orchestrator.py`:
   includes receipt-path containment and nonstring journal-path rejection before any external file read
+- `tests/test_orchestration_concurrency.py`:
+  task write-CAS and execution locks, actual child-process OS locking,
+  competing recovery handlers, stale lock files and hard-interrupt crash gaps
 
 Run `python -m unittest discover -s tests -v` without BRAIN credentials.
 Never enable real Simulation or Alpha submission merely to validate a refactor.
@@ -121,3 +124,32 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   referenced journal. Invalid reference types also fail closed. The
   `RecoveryCoordinator` remains the only producer of valid reconciliation
   receipts; no recovery code may repost an unknown Simulation.
+
+## Cross-process control-plane invariants
+
+- The CLI still owns `state/agent.lock` as the coarse-grained operator lock.
+  Direct `MainOrchestrator` callers additionally acquire a separate
+  **task-scoped execution lock** spanning the entire injected Adapter call.
+  A competing executor or reconciliation request fails before it may
+  misclassify the active step as an unknown outcome.
+- Every orchestration create/update uses a short-lived **task write lock**:
+  version comparison and atomic JSON replacement occur in the same critical
+  section. Recovery-target callbacks may use the write lock while their
+  owning execution still holds the task execution lock; these are different
+  locks intentionally, and they are not nested recursively.
+- `RecoveryCoordinator.recover` holds a **target-scoped recovery lock**
+  through its journal check, intent write and handler invocation. This
+  prevents two processes from both observing an absent journal and running
+  the same external recovery handler. The target is re-inspected under lock.
+- `recover_task` also holds a separate **task-scoped recovery lock** across
+  domain recovery, regular campaign reconciliation and the verified task
+  receipt write. This lock must be different from the execution lock because
+  task `reconcile()` acquires that execution lock itself.
+- Lock contention is **fail-fast**: it cannot be reclassified as a provider
+  failure, cause an automatic Simulation repost or consume extra task budget.
+  OS lockfiles may remain after crashes but do not represent ownership:
+  the OS lock is authoritative. A crash during execute or recovery leaves
+  the saved RUNNING intent for explicit reconciliation, not automatic retry.
+- This guarantee is scoped to processes observing the **same local filesystem
+  locks**. No network-filesystem/distributed lock semantics are assumed.
+  Task checkpoint and model budget ledgers remain distinct state machines.
