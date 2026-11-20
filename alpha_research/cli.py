@@ -60,8 +60,8 @@ def main(argv=None):
     models.add_argument("--research-id", help="research ID for budget/acknowledgement")
     models.add_argument("--call-id", help="unresolved model call ID to acknowledge")
     models.add_argument("--reason", help="human explanation for unknown outcome")
-    models.add_argument("--role", choices=("research_lead", "research_executor"),
-                        help="role to test with models smoke")
+    models.add_argument("--role", choices=("research_lead", "research_executor", "both"),
+                        help="one role or both sequentially with models smoke")
     models.add_argument("--allow-model-call", action="store_true",
                         help="explicit authorization for one paid model/API invocation")
     orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
@@ -267,15 +267,44 @@ def main(argv=None):
                     elif args.models_action == "smoke":
                         if args.role is None:
                             raise ModelProbeError(
-                                "models smoke requires --role research_lead or research_executor")
+                                "models smoke requires --role research_lead, research_executor or both")
+                        roles = (("research_lead", "research_executor")
+                                 if args.role == "both" else (args.role,))
                         if args.allow_model_call:
+                            # An authorized remote smoke must never be a mock
+                            # fixture disguised as a successful real call.
+                            assert_live_model_routes(effective)
                             ready = check_registered_roles(effective)
-                            if not ready["roles"][args.role]["ready_local"]:
+                            if any(not ready["roles"][role]["ready_local"]
+                                   for role in roles):
                                 raise ModelProbeError(
                                     "selected model has missing local prerequisites")
-                        result = run_model_probe(
-                            effective, root, role=args.role,
-                            allow_model_call=args.allow_model_call)
+                        if args.role == "both":
+                            reports = []
+                            for role in roles:
+                                observed = run_model_probe(
+                                    effective, root, role=role,
+                                    allow_model_call=args.allow_model_call)
+                                reports.append(observed)
+                                # A real contract failure must stop the sequence,
+                                # not spend more tokens on the next backend.
+                                if args.allow_model_call and observed["status"] != "PASS":
+                                    break
+                            result = {
+                                "status": (
+                                    "PASS" if len(reports) == 2 and
+                                    all(row["status"] == "PASS" for row in reports)
+                                    else "NOT_EXECUTED" if not args.allow_model_call
+                                    else reports[-1]["status"]
+                                ),
+                                "probes": reports,
+                                "provider_invoked": args.allow_model_call,
+                                "brain_invoked": False,
+                            }
+                        else:
+                            result = run_model_probe(
+                                effective, root, role=args.role,
+                                allow_model_call=args.allow_model_call)
                         result["selected_registrations"] = registry_assignments
                     else:
                         result = check_registered_roles(effective)
