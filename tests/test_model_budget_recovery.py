@@ -189,6 +189,42 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual(next_model.calls, 0)
             self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
 
+    def test_crash_before_terminal_manifest_sync_uses_global_response_once(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            initial_model = CountingModel()
+            first = self.make_recorder(root, initial_model)
+            original_sync = first.journal.sync_batch_calls
+
+            def interrupt_final_sync(calls, *, batch_dir, session_id):
+                # The global response and terminal audit have been persisted,
+                # but the batch manifest still contains the initial intent.
+                if calls and calls[0][0]["status"] == "ok":
+                    raise RuntimeError("crash before terminal batch sync")
+                return original_sync(calls, batch_dir=batch_dir,
+                                     session_id=session_id)
+
+            with patch.object(first.journal, "sync_batch_calls",
+                              side_effect=interrupt_final_sync):
+                with self.assertRaisesRegex(RuntimeError,
+                                            "crash before terminal batch sync"):
+                    first.complete_json("task", {"step": 1})
+            manifest = json.loads((root / "batch" / "model_call_manifest.json")
+                                  .read_text(encoding="utf-8"))["calls"][0]
+            self.assertIsNone(manifest["response_sha256"])
+            self.assertFalse(Path(manifest["response_ref"]).exists())
+            self.assertTrue(Path(manifest["global_response_ref"]).exists())
+            self.assertEqual(first.budget.status("R1")["unresolved"], 1)
+
+            recovered_model = CountingModel()
+            recovered = self.make_recorder(root, recovered_model)
+            self.assertEqual(recovered.complete_json("task", {"step": 1}),
+                             {"task": "task", "step": 1})
+            self.assertEqual((initial_model.calls, recovered_model.calls), (1, 0))
+            report = recovered.budget.status("R1")
+            self.assertEqual((report["attempts"], report["successful"],
+                              report["unresolved"]), (1, 1, 0))
+
     def test_missing_response_never_settles_ledger_or_reissues_model_call(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
