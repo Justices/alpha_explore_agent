@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 
 from alpha_research.agents.doctor import check_registered_roles
+from alpha_research.agents.governance import validate_policy
 from alpha_research.agents.registry import (
     bundled_registry_path, describe_registry, load_registry,
     load_role_profile, select_registered_backends,
@@ -64,6 +65,9 @@ def checked_selection(payload, agent_args, root):
         raise ValueError("研究配置文件缺失或无效，请先配置 state-root/config") from exc
     if not isinstance(config, dict):
         raise ValueError("研究配置必须是 JSON 对象")
+    # Do not let a browser launch a paid research campaign without a
+    # configured per-research attempt/token budget.
+    validate_policy(config.get("model_governance"))
     registry = load_registry(registry_path(agent_args, root))
     mapping = {"research_lead": payload["lead"],
                "research_executor": payload["executor"]}
