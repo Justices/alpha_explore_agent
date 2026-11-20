@@ -140,6 +140,18 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual(repaired["status"], "ok")
             self.assertTrue(repaired["response_sha256"])
 
+    def test_backend_change_is_rejected_during_budget_recovery(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.create_gap(root)
+            changed_model = CountingModel()
+            changed_model.config = {"provider": "mock", "model": "changed-backend"}
+            replay = self.make_recorder(root, changed_model)
+            with self.assertRaisesRegex(ModelBudgetError, "reserved model identity"):
+                replay.complete_json("task", {"step": 1})
+            self.assertEqual(changed_model.calls, 0)
+            self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
+
     def test_missing_response_never_settles_ledger_or_reissues_model_call(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
