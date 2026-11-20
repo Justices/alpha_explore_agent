@@ -216,6 +216,10 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     if not isinstance(objective, str) or not objective.strip():
         raise OptimizationError("optimization objective is required")
     run_id = run_id or uuid4().hex
+    if execution_context is not None:
+        bind_identity = execution_context.get("bind_research_identity")
+        if callable(bind_identity):
+            bind_identity(f"optimization:{run_id}")
     root = Path(state_root).resolve()
     work_dir = root / "state" / "research_v1_1" / "optimization"
     intent_path = work_dir / f"{run_id}_simulation_intent.json"
