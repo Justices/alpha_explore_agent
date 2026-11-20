@@ -10,7 +10,7 @@ from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.agents.registry import (
     ModelRegistryError, bundled_registry_path, load_registry, describe_registry,
-    select_registered_backends, load_role_profile,
+    select_registered_backends, load_role_profile, assert_live_model_routes,
 )
 from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
@@ -588,6 +588,7 @@ def main(argv=None):
                 catalog = load_registry(registry_path)
                 cfg["model"] = select_registered_backends(
                     cfg["model"], catalog, assignments=registry_assignments)
+                assert_live_model_routes(cfg["model"])
             elif cfg["model"].get("provider") == "role_router":
                 raise ModelRegistryError(
                     "select registered roles with --lead <id> --executor <id>")
