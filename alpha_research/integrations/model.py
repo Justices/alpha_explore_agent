@@ -543,6 +543,14 @@ class DecisionRecorder:
                 self._write_log_record(record)
             if payload.get("status") == "ok" and isinstance(payload.get("result"), dict):
                 return payload["result"]
+            # Offline mock decisions have no network/API side effects. An
+            # explicitly logged, terminal model error can be retried during
+            # fixture recovery. A real provider's failure is not proof that
+            # the request was not processed and must stay blocked.
+            if (payload.get("status") == "error"
+                    and record.get("status") == "error"
+                    and record.get("provider") in {None, "mock"}):
+                continue
             raise ModelError(
                 "previous model decision is not a verified successful result; "
                 "an explicit state reconciliation is required")
