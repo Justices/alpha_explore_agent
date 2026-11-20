@@ -142,23 +142,21 @@ class ModelCallJournal:
         finally:
             guard.__exit__(None, None, None)
 
-    def sync_batch_calls(self, calls, *, batch_dir, session_id, research_id=None):
-        """Atomically merge session entries into the shared batch manifest."""
+    def sync_batch_calls(self, calls, *, batch_dir, session_id, research_id):
+        """Atomically merge batch records and the strictly versioned session index."""
         if batch_dir is None:
             return
+        if session_id is None or not isinstance(research_id, str) or not research_id.strip():
+            raise ModelError("model session and research IDs are required for batch sync")
         batch_dir = Path(batch_dir).resolve()
         # The lock spans read -> merge -> copies -> manifest/index write.
         # Provider calls never hold this *manifest* lock.
         try:
             with SingleWriterLock(batch_dir / "model_call_manifest.lock"):
-                if session_id is not None:
-                    with self._session_index_guard(session_id) as session_path:
-                        return self._sync_batch_calls_locked(
-                            calls, batch_dir=batch_dir, session_id=session_id,
-                            session_path=session_path, research_id=research_id)
-                return self._sync_batch_calls_locked(
-                    calls, batch_dir=batch_dir, session_id=None,
-                    session_path=None, research_id=research_id)
+                with self._session_index_guard(session_id) as session_path:
+                    return self._sync_batch_calls_locked(
+                        calls, batch_dir=batch_dir, session_id=session_id,
+                        session_path=session_path, research_id=research_id)
         except WriterLockError as exc:
             raise ModelError(
                 "another writer is updating this batch model manifest") from exc
@@ -222,33 +220,14 @@ class ModelCallJournal:
             except (OSError, ValueError) as exc:
                 raise ModelError("model session index is unreadable") from exc
             merged_index = merge_index(
-                previous_index, session_id, str(batch_dir),
+                previous_index, session_id, research_id, str(batch_dir),
                 [row["call_id"] for row in entries.values()
-                 if row.get("session_id") == session_id],
-                research_id=research_id)
-            if (previous_index is not None
-                    and previous_index.get("research_id") is None
-                    and research_id is not None):
-                # Old indices had no research ownership field. Verify every
-                # prior call's saved audit identity before assigning one.
-                for call_id in previous_index["call_ids"]:
-                    prior_path = self.calls_root / (call_id + ".record.json")
-                    try:
-                        prior = json.loads(prior_path.read_text(encoding="utf-8"))
-                    except (OSError, ValueError) as exc:
-                        raise ModelError(
-                            "legacy model session lacks verifiable call ownership") from exc
-                    if (not isinstance(prior, dict)
-                            or prior.get("call_id") != call_id
-                            or prior.get("session_id") != session_id
-                            or prior.get("research_id") != research_id):
-                        raise ModelError(
-                            "legacy model session audit research identity mismatch")
+                 if row.get("session_id") == session_id])
         if changed:
             atomic_write_json(manifest_path, {
                 "session_ids": sorted({row.get("session_id") for row in entries.values()
                                        if row.get("session_id")}),
                 "calls": sorted(entries.values(), key=lambda row: row["call_id"]),
             })
-        if session_path is not None and merged_index != previous_index:
+        if merged_index != previous_index:
             atomic_write_json(session_path, merged_index)
