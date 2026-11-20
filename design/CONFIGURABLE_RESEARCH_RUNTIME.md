@@ -1,3 +1,8 @@
+> **Current model selection:** see [MODEL_AGENT_REGISTRY.md](MODEL_AGENT_REGISTRY.md).
+> This page documents the lower-level offline research runtime. The official
+> start-time model selection is now registry-backed: --lead and --executor.
+> Old embedded model backend examples are no longer the supported user workflow.
+
 # Codex Research Lead / AGY Executor — Configurable Runtime P0
 
 Status: feature-branch implementation; not live BRAIN research authorization.

@@ -58,7 +58,7 @@ class TestConfigurableAgents(unittest.TestCase):
             inspect_roles(cfg, ["attribute_results"])
 
     def test_roles_can_use_different_http_model_families_without_code_change(self):
-        alt_path = ROOT / "config.provider-swaps.example.json"
+        alt_path = ROOT / "tests" / "fixtures" / "provider_swaps.json"
         cfg = json.loads(alt_path.read_text(encoding="utf-8"))["model"]
         traces = []
         credentials = {
@@ -110,7 +110,7 @@ class TestConfigurableAgents(unittest.TestCase):
         self.assertEqual(len(traces), 4)
 
     def test_http_model_configurations_fail_closed(self):
-        cfg = json.loads((ROOT / "config.provider-swaps.example.json").read_text(
+        cfg = json.loads((ROOT / "tests" / "fixtures" / "provider_swaps.json").read_text(
             encoding="utf-8"))["model"]
         cfg["backends"]["research_lead_api"]["url"] = "http://public-server/"
         with self.assertRaises(AgentConfigError):
