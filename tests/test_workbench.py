@@ -2,6 +2,7 @@ import http.client
 from contextlib import closing
 from http.server import ThreadingHTTPServer
 import json
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -32,8 +33,13 @@ class WorkbenchLaunchTests(unittest.TestCase):
             return CompletedProcess(command, 0, '{"campaign_id":"case","status":"budget_complete"}')
 
         with TemporaryDirectory() as root, \
+                patch.dict(os.environ, {"ZAI_API_KEY": "offline-fixture",
+                                         "MOONSHOT_API_KEY": "offline-fixture"}), \
                 patch.object(serve.subprocess, "run", side_effect=run), \
                 patch.object(serve, "monotonic", create=True, return_value=100) as clock:
+            cfg = Path(root) / "config" / "nastu_quant.json"
+            cfg.parent.mkdir(parents=True)
+            cfg.write_text("{}", encoding="utf-8")
             server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
             port = server.server_address[1]
             server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
@@ -41,7 +47,8 @@ class WorkbenchLaunchTests(unittest.TestCase):
             thread.start()
             self.addCleanup(server.server_close)
             self.addCleanup(server.shutdown)
-            request = {"region": "EUR", "objective": "--example",
+            request = {"lead": "glm", "executor": "kimi",
+                       "region": "EUR", "objective": "--example",
                        "dataset_ids": ["risk60", "model110"], "delay": 1,
                        "universe": "TOPCS1600", "ppa": True}
             body = json.dumps(request)
@@ -95,7 +102,10 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertIn("正在规划字段诊断", [event["message"] for event in running["events"]])
                 self.assertEqual(post(origin, cookie=cookie)[0], 409)
                 def action(name, target, session=cookie):
-                    return post(origin, json.dumps({"action": name, "id": target}),
+                    payload = {"action": name, "id": target}
+                    if name == "resume":
+                        payload.update(lead="glm", executor="kimi")
+                    return post(origin, json.dumps(payload),
                                 path="/api/research", cookie=session)[0]
 
                 self.assertEqual(action("stop", "stale-launch"), 409)
@@ -110,10 +120,14 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 metadata = Path(root) / "state/logs/workbench" / f"{running['launch_id']}.launch.json"
                 recorded = json.loads(metadata.read_text(encoding="utf-8"))
                 self.assertEqual(recorded["args"][0], "run-campaign")
+                self.assertEqual(recorded["models"]["lead"], "glm")
+                self.assertEqual(recorded["models"]["executor"], "kimi")
+                self.assertEqual(len(recorded["models"]["profile_sha256"]), 64)
                 self.assertIn("--region=EUR", recorded["args"])
                 self.assertNotIn(credentials["password"], metadata.read_text(encoding="utf-8"))
                 self.assertEqual(commands[0][4:], [
-                    "--state-root", root, "run-campaign", "--region=EUR",
+                    "--state-root", root, "--lead", "glm", "--executor", "kimi",
+                    "run-campaign", "--region=EUR",
                     "--objective=--example",
                     "--delay=1", "--universe=TOPCS1600",
                     "--dataset=risk60", "--dataset=model110", "--ppa",
@@ -135,7 +149,7 @@ class WorkbenchLaunchTests(unittest.TestCase):
             self.assertEqual(action("resume", saved_id, ""), 401)
             self.assertEqual(action("resume", saved_id), 202)
             self.assertTrue(entered.wait(3))
-            self.assertEqual(commands[-1][6:], [
+            self.assertEqual(commands[-1][10:], [
                 "run-campaign", f"--resume-campaign={saved_id}", "--brain-credentials-stdin"])
             deadline = time.monotonic() + 3
             while status()["status"] == "running" and time.monotonic() < deadline:
