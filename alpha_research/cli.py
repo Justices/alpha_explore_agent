@@ -30,6 +30,7 @@ from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationE
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.preflight import local_preflight
 from alpha_research.progress import write_progress
 
 
@@ -48,6 +49,10 @@ def main(argv=None):
     parser.add_argument("--executor", metavar="ID",
                         help="registered backend ID for research_executor")
     sub = parser.add_subparsers(dest="command", required=True)
+    readiness = sub.add_parser(
+        "preflight", help="check local research/model/BRAIN prerequisites without external calls")
+    readiness.add_argument("--region",
+                           help="planned research Region; conflicts with fixed scope are blocked")
     models = sub.add_parser(
         "models", help="inspect registered models or explicitly probe one model")
     models.add_argument("models_action", choices=(
@@ -218,6 +223,13 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "preflight":
+        config_path = args.config or root / "config" / "nastu_quant.json"
+        report = local_preflight(
+            config_path, registry_path, lead=args.lead, executor=args.executor,
+            region=args.region)
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["status"] == "READY_LOCAL" else 2
     if args.command == "models":
         try:
             if args.models_action in {"budget", "acknowledge-unknown"}:
