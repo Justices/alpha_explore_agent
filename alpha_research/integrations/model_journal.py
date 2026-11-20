@@ -14,7 +14,8 @@ from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_evidence import (
-    check_trusted_path, read_trusted_json, trusted_replay_paths,
+    check_trusted_path, open_trusted_evidence, read_trusted_json,
+    trusted_replay_paths,
 )
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
@@ -95,9 +96,16 @@ class ModelCallJournal:
         temporary = destination.with_name(
             destination.name + ".tmp-" + uuid4().hex)
         try:
-            shutil.copy2(source, temporary)
-            with temporary.open("r+b") as handle:
-                os.fsync(handle.fileno())
+            check_trusted_path(destination.parent, label="batch evidence directory")
+            # Copy from a pinned no-follow descriptor, not from the path
+            # checked earlier (which could have been swapped to a symlink).
+            # File metadata from the global artifact is not part of the
+            # evidence contract; copying it adds unnecessary filesystem I/O.
+            with open_trusted_evidence(source, label="global model evidence") as src:
+                with temporary.open("xb") as target:
+                    shutil.copyfileobj(src, target)
+                    target.flush()
+                    os.fsync(target.fileno())
             os.replace(temporary, destination)
         finally:
             temporary.unlink(missing_ok=True)
