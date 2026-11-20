@@ -11,6 +11,10 @@ from uuid import UUID
 
 from alpha_research.state.store import atomic_write_json
 
+from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_json import decode_decision
+from alpha_research.integrations.model_prompts import instruction_for
+
 
 CLI_COMMANDS = {
     "codex_cli": "codex",
@@ -163,3 +167,25 @@ class LocalCliModelTool:
             return message, usage, reported_model, thread_id
         except (AttributeError, KeyError, IndexError, ValueError, TypeError) as exc:
             raise CliModelError(f"{provider} returned an invalid decision envelope") from exc
+
+
+def complete_cli(client, task, context, *, thread_path=None):
+    """Invoke exactly one isolated CLI Agent decision using existing guards."""
+    prompt = json.dumps({
+        "task": task, "context": context,
+        "instruction": instruction_for(task, forbid_tools=True),
+    }, ensure_ascii=False)
+    try:
+        message, client.last_usage, client.last_model, client.last_thread_id = (
+            LocalCliModelTool(client.config, client.environ).invoke(
+                prompt, thread_path=thread_path))
+        if isinstance(message, str):
+            client.last_response_text = message
+        result = decode_decision(message)
+    except CliModelError as exc:
+        raise ModelError(str(exc)) from exc
+    except (TypeError, ValueError) as exc:
+        raise ModelError("local CLI returned an invalid JSON decision") from exc
+    if not isinstance(result, dict):
+        raise ModelError("model decision must be a JSON object")
+    return result
