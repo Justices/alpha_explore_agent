@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 
 from alpha_research.agents.doctor import check_registered_roles
+from alpha_research.agents.governance import validate_policy
 from alpha_research.agents.registry import (
     load_registry, load_role_profile, select_registered_backends,
 )
@@ -50,6 +51,7 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
         "config": "BLOCKED",
         "scope": "BLOCKED",
         "models": "BLOCKED",
+        "model_budget": "BLOCKED",
         "brain_credentials": "BLOCKED",
         "model_invoked": False,
         "brain_invoked": False,
@@ -63,6 +65,14 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
     except (OSError, ValueError):
         return result
     result["config"] = "READY_LOCAL"
+    try:
+        policy = validate_policy(cfg.get("model_governance"))
+    except ValueError:
+        pass
+    else:
+        result["model_budget"] = "READY_LOCAL"
+        result["max_model_calls"] = policy["max_calls"]
+        result["max_reported_tokens"] = policy["max_reported_tokens"]
     configured_scope = cfg.get("scope") or {}
     if isinstance(configured_scope, dict):
         selected_region = configured_scope.get("region")
@@ -90,6 +100,7 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
         except (OSError, ValueError, TypeError):
             pass
     if all(result[field] == "READY_LOCAL" for field in (
-            "config", "scope", "models", "brain_credentials")):
+            "config", "scope", "models", "model_budget",
+            "brain_credentials")):
         result["status"] = "READY_LOCAL"
     return result
