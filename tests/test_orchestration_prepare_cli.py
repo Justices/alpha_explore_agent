@@ -67,6 +67,23 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
                 self.assertFalse(inspected["inspection_provider_invoked"])
                 self.assertFalse(inspected["inspection_brain_invoked"])
 
+    def test_recovery_check_is_read_only_for_unstarted_task(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "regular",
+                           "--objective", "offline"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        status, output, error = self._call(
+            self.prefix + ["orchestration-recovery-check", task_id])
+        self.assertEqual(status, 0, error)
+        inspected = json.loads(output)
+        self.assertEqual(inspected["status"], "NOT_BLOCKED_EXECUTE")
+        self.assertFalse(inspected["automatic_replay_allowed"])
+        self.assertFalse(inspected["brain_invoked"])
+        task = MainOrchestrator(self.root).load(task_id)
+        self.assertEqual(task["status"], "CREATED")
+        self.assertEqual(task["budget"]["reserved"], 0)
+
     def test_prepare_requires_both_registered_roles_and_policy(self):
         missing_role = [
             "--state-root", str(self.root), "--config", str(self.config),
