@@ -95,6 +95,35 @@ class OrchestrationConcurrencyTests(unittest.TestCase):
                               task_id=task["task_id"])
         self.assertEqual(path.read_bytes(), before)
 
+    def test_hard_interrupt_releases_lock_but_unknown_step_never_replays(self):
+        calls = []
+
+        class InterruptedAdapter(OfflineResearchAdapter):
+            def run(self, workflow, step, request, checkpoints, context=None):
+                if step == "execute":
+                    calls.append("provider-intent")
+                    raise KeyboardInterrupt("synthetic process crash")
+                return super().run(workflow, step, request, checkpoints,
+                                   context=context)
+
+        runner = MainOrchestrator(
+            self.root, adapter=InterruptedAdapter(fixtures("super")))
+        task_id = runner.create("super", {"objective": "crash fixture"})["task_id"]
+        with self.assertRaisesRegex(KeyboardInterrupt, "synthetic process crash"):
+            runner.execute(task_id)
+        state = runner.load(task_id)
+        self.assertEqual(state["steps"]["execute"], "RUNNING")
+        self.assertEqual(state["budget"]["reserved"], 1)
+
+        restarted = MainOrchestrator(
+            self.root, adapter=InterruptedAdapter(fixtures("super")))
+        blocked = restarted.execute(task_id)
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["failure"]["reason"],
+                         "outcome_unknown_manual_reconciliation_required")
+        self.assertEqual(blocked["budget"]["reserved"], 1)
+        self.assertEqual(calls, ["provider-intent"])
+
     def test_existing_lock_file_without_live_owner_does_not_block(self):
         runner = MainOrchestrator(
             self.root, adapter=OfflineResearchAdapter(fixtures("super")))
