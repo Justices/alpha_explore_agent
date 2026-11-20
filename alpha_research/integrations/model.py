@@ -165,7 +165,7 @@ TASK_INSTRUCTIONS = {
         "when evidence is missing or a warning is unresolved. Never authorize submission."
     ),
     "prepare_execution": (
-        "You are the AGY Research Executor. Receive only the authorized "
+        "You are the Research Executor role. Receive only the authorized "
         "experiment contracts and return exactly {experiment_ids:[...]}, "
         "an ordering of every authorized experiment ID exactly once. "
         "Do not add experiments, alter settings, call BRAIN, invoke tools "
@@ -173,7 +173,7 @@ TASK_INSTRUCTIONS = {
         "authorized offline gateway after validating the proposed order."
     ),
     "plan_experiments": (
-        "You are the Codex Research Lead. Within the exact Region, design "
+        "You are the Research Lead role. Within the exact Region, design "
         "between 1 and max_experiments independent Alpha experiments with "
         "falsifiable economic hypotheses. Output precisely an object with "
         "experiments, an array of {experiment_id, expression, region, settings, "
@@ -182,7 +182,7 @@ TASK_INSTRUCTIONS = {
         "and specify exact settings. Never invent live field evidence."
     ),
     "research_decide": (
-        "You are the Codex Research Lead. Compare synthetic experiment outputs "
+        "You are the Research Lead role. Compare synthetic experiment outputs "
         "and the executor attribution; distinguish observations and hypotheses. "
         "Return {action,reason,evidence_refs}, where action is OPTIMIZE, "
         "INVESTIGATE, EXPLORE, CANDIDATE, REJECT, or STOP. Use only provided "
@@ -580,10 +580,13 @@ class DecisionRecorder:
                   else getattr(self.model, "config", {})) or {}
         role_for = getattr(self.model, "role_for", None)
         selected_role = role_for(task) if callable(role_for) else None
+        backend_name_for = getattr(self.model, "backend_name_for", None)
+        selected_backend = backend_name_for(task) if callable(backend_name_for) else None
         route_sha = None
         if selected_role is not None:
             identity = {
-                "task": task, "role": selected_role, "backend": config,
+                "task": task, "role": selected_role,
+                "backend_name": selected_backend, "backend": config,
                 "instruction": TASK_INSTRUCTIONS.get(task, "Return one JSON object only."),
                 "knowledge_policy": KNOWLEDGE_POLICY,
             }
@@ -606,7 +609,8 @@ class DecisionRecorder:
                   "response_sha256": None, "response_ref": str(global_response),
                   "token_in": None, "token_out": None, "latency_ms": None,
                   "provider": config.get("provider"), "model": config.get("model"),
-                  "agent_role": selected_role, "route_sha256": route_sha,
+                  "agent_role": selected_role, "agent_backend": selected_backend,
+                  "route_sha256": route_sha,
                   "status": "in_flight"}
         atomic_write_json(global_record, record)
         self._register_batch_call(record, global_context, global_response, global_record)

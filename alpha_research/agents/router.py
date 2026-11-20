@@ -72,6 +72,9 @@ class RoleRoutedModelClient:
     def role_for(self, task):
         return self.routing.resolve(task).role
 
+    def backend_name_for(self, task):
+        return self.routing.resolve(task).backend_name
+
     @property
     def last_usage(self):
         return getattr(self.active, "last_usage", None)
