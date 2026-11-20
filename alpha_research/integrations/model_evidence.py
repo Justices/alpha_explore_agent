@@ -26,10 +26,13 @@ def check_trusted_path(path, *, label):
     return path
 
 
-def check_manifest_reference(reference, expected, *, label):
-    """Permit precisely the canonical generated filename, not a caller URL."""
-    expected = check_trusted_path(expected, label=label)
+def _check_manifest_leaf(reference, expected, *, label):
+    """Check one filename after its parent was checked exactly once."""
     if not isinstance(reference, str) or reference != str(expected):
+        raise ModelError(f"model {label} is not the trusted evidence path")
+    # Leaf symlinks are rejected even when this evidence is not opened,
+    # e.g. an unrelated response in a shared batch manifest.
+    if expected.is_symlink():
         raise ModelError(f"model {label} is not the trusted evidence path")
     return expected
 
@@ -43,7 +46,8 @@ def trusted_replay_paths(batch_dir, calls_root, row):
         raise ModelError("existing batch model manifest has invalid call entries")
     batch = check_trusted_path(batch_dir, label="batch directory")
     calls = check_trusted_path(calls_root, label="global calls directory")
-    copied = batch / "model_calls"
+    copied = check_trusted_path(
+        batch / "model_calls", label="batch evidence directory")
     if not isinstance(row.get("session_id"), str) or _CALL_ID.fullmatch(row["session_id"]) is None:
         raise ModelError("existing batch model manifest has invalid session identity")
     paths = {
@@ -53,12 +57,16 @@ def trusted_replay_paths(batch_dir, calls_root, row):
         "global_record_ref": calls / f"{call_id}.record.json",
         "global_response_ref": calls / f"{call_id}.response.json",
     }
+    # Directory ancestry was checked above; do not run Path.resolve()
+    # again for each of the five generated child files. Safe descriptor
+    # opens independently pin their parents at read/copy time.
     for key, expected in paths.items():
-        check_manifest_reference(row.get(key), expected, label=key)
-    # The global context path is authoritative but intentionally not stored
-    # in the batch manifest; it is reconstructed from the call ID.
-    paths["global_context_ref"] = check_trusted_path(
-        calls / f"{call_id}.context.json", label="global_context_ref")
+        _check_manifest_leaf(row.get(key), expected, label=key)
+    # The global context path is authoritative, reconstructed from call ID.
+    context = calls / f"{call_id}.context.json"
+    if context.is_symlink():
+        raise ModelError("model global_context_ref is not the trusted evidence path")
+    paths["global_context_ref"] = context
     return paths
 
 @contextmanager
