@@ -49,6 +49,11 @@ def complete_http(client, task, context):
         if provider == "openai_compatible":
             if config.get("response_format", "json_object") == "json_object":
                 payload["response_format"] = {"type": "json_object"}
+            if task == "model_probe":
+                # Cap the *request's* generated tokens during an authorized
+                # connectivity check; the ledger's reported-token budget only
+                # blocks later calls and is not a single-call output limit.
+                payload["max_tokens"] = 512
         else:
             payload["max_tokens"] = 8192
             if not url.rstrip("/").endswith("/v1/messages"):
