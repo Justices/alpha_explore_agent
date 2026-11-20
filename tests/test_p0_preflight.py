@@ -105,6 +105,85 @@ class P0PreflightTests(unittest.TestCase):
                 dispatch.assert_called_once()
                 self.assertIsNone(dispatch.call_args.args[-1])
 
+    def test_combined_preflight_checks_config_models_and_brain_file_offline(self):
+        config = {
+            "scope": {"region": None},
+            "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
+            "model_governance": {
+                "max_calls": 5, "max_reported_tokens": 1000,
+                "failover": "manual",
+            },
+        }
+        self.cfg.write_text(json.dumps(config), encoding="utf-8")
+        credentials = self.root / "credentials.json"
+        credentials.write_text(json.dumps({
+            "email": "offline@example.invalid", "password": "offline-secret",
+        }), encoding="utf-8")
+        output = StringIO()
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "offline-model-secret",
+            "MOONSHOT_API_KEY": "offline-model-secret",
+            "BRAIN_CREDENTIALS_FILE": str(credentials),
+        }), patch.object(entry, "Gateway") as gateway, patch.object(
+            entry, "build_model_client",
+            side_effect=AssertionError("no provider invocation allowed"),
+        ), redirect_stdout(output):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "preflight", "--region", "CHN",
+            ])
+        self.assertEqual(code, 0)
+        gateway.assert_not_called()
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["status"], "READY_LOCAL")
+        self.assertEqual(report["scope"], "READY_LOCAL")
+        self.assertEqual(report["brain_credentials"], "READY_LOCAL")
+        self.assertEqual(report["models"], "READY_LOCAL")
+        self.assertFalse(report["model_invoked"])
+        self.assertFalse(report["brain_invoked"])
+        self.assertFalse(report["simulation_authorized"])
+        self.assertNotIn("offline-secret", output.getvalue())
+        self.assertNotIn("offline@example.invalid", output.getvalue())
+
+    def test_combined_preflight_blocks_missing_or_conflicting_prerequisites(self):
+        self.cfg.write_text(json.dumps({"scope": {"region": "CHN"}}),
+                            encoding="utf-8")
+        output = StringIO()
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "", "MOONSHOT_API_KEY": "",
+            "BRAIN_CREDENTIALS_FILE": "",
+        }), patch.object(entry, "Gateway") as gateway, redirect_stdout(output):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "preflight", "--region", "EUR",
+            ])
+        self.assertEqual(code, 2)
+        gateway.assert_not_called()
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["status"], "BLOCKED_LOCAL")
+        self.assertEqual(report["scope"], "BLOCKED")
+        self.assertEqual(report["brain_credentials"], "BLOCKED")
+        self.assertEqual(report["models"], "BLOCKED_LOCAL")
+
+    def test_combined_preflight_does_not_accept_malformed_brain_credentials(self):
+        self.cfg.write_text(json.dumps({"scope": {"region": "CHN"}}),
+                            encoding="utf-8")
+        credentials = self.root / "credentials.json"
+        credentials.write_text('{"email":"offline@example.invalid"}',
+                               encoding="utf-8")
+        output = StringIO()
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "offline", "MOONSHOT_API_KEY": "offline",
+            "BRAIN_CREDENTIALS_FILE": str(credentials),
+        }), redirect_stdout(output):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "preflight",
+            ])
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(output.getvalue())["brain_credentials"],
+                         "BLOCKED")
+
     def test_model_research_without_role_selection_still_fails_closed(self):
         with patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
             code = entry.main([*self.arguments, "run-once", "--objective", "trial"])
