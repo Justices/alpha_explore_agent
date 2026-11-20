@@ -15,19 +15,11 @@ from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.state.fingerprint import fingerprint_json as _sha
 
 
 class ModelBudgetError(ValueError):
     pass
-
-
-def _json_bytes(value):
-    return json.dumps(value, sort_keys=True, ensure_ascii=False,
-                      separators=(",", ":"), allow_nan=False).encode("utf-8")
-
-
-def _sha(value):
-    return hashlib.sha256(_json_bytes(value)).hexdigest()
 
 
 def validate_policy(policy):

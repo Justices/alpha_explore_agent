@@ -5,18 +5,12 @@ submissions remain the responsibility of existing project services. This
 module never calls them, so it is safe to use for mock contract testing.
 """
 import copy
-import hashlib
 import json
 from dataclasses import asdict
+from alpha_research.state.fingerprint import fingerprint_json as _digest
 from alpha_research.research_cycle.contracts import (
     Experiment, ResearchContractError, ResearchDecision,
 )
-
-
-def _digest(value: dict) -> str:
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True,
-                     separators=(",", ":"), allow_nan=False)
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class OfflineSimulationGateway:

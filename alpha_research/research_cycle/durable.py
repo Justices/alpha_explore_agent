@@ -19,15 +19,14 @@ from alpha_research.research_cycle.engine import (
 )
 from alpha_research.state.store import atomic_write_json, read_json
 from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.state.fingerprint import fingerprint_json
 
 
 def fingerprint(value):
     try:
-        raw = json.dumps(value, sort_keys=True, ensure_ascii=False,
-                         separators=(",", ":"), allow_nan=False)
+        return fingerprint_json(value)
     except (TypeError, ValueError) as exc:
         raise ResearchContractError("research state must be finite JSON") from exc
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _is_nonempty(value):

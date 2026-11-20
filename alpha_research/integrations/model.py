@@ -17,6 +17,7 @@ from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, L
 from alpha_research.progress import write_progress
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 
 
 class ModelError(RuntimeError):
@@ -374,11 +375,6 @@ def build_model_client(config):
         raise ModelError("model runtime requires provider=role_router and registered roles")
     from alpha_research.agents.router import RoleRoutedModelClient
     return RoleRoutedModelClient(config)
-
-
-def _json_bytes(value):
-    return json.dumps(value, ensure_ascii=False, sort_keys=True,
-                      separators=(",", ":")).encode("utf-8")
 
 
 class DecisionRecorder:

@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.fingerprint import fingerprint_json as _hash
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.state.records import ResearchRecordStore
 
@@ -29,11 +30,6 @@ def _now(previous=None):
         if now <= prior:
             now = prior + timedelta(microseconds=1)
     return now.isoformat()
-
-
-def _hash(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
-                                     separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
 class OrchestrationError(ValueError):
