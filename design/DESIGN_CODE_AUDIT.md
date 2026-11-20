@@ -97,6 +97,10 @@ GitHub Actions [44748199366](https://github.com/Justices/alpha_explore_agent/act
 
 **授权信任边界：** 仅凭共享环境密钥持有和签名校验不能证明真人批准；本实现只验证技术审查凭据，不赋予 BRAIN 调用权限。若未来开放真实执行，必须通过独立可信的人工审批/操作授权发行器，绑定费用限额、实际可调用操作及单次执行收据，复用既有 CLI 全局锁、模型调用账本和 Simulation Intent 恢复，并完成故障注入验证。当前 `ProductionWorkflowAdapter` 的 `validate` 拒绝行为和 CLI 的生产入口禁用状态不变。
 
+### P1.5 离线验收结果（2026-11-20）
+
+GitHub Actions [44749354566](https://github.com/Justices/alpha_explore_agent/actions/runs/44749354566) 对应代码提交 `c04c5c0e6327e4e8f0d58223da081ee0d825d2f1`。已读取原始日志：**Linux 626 tests, OK（18.013 秒）**、**Windows 626 tests, OK（115.647 秒）**，AGY SDK 契约 Job 通过。此项仅验证审查收据的离线安全合同，**不代表**已经签发受信任的人类授权、实现真实生产执行或取得 BRAIN 端到端许可。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
