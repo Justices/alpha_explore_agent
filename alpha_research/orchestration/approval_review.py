@@ -49,7 +49,7 @@ def _claims(orchestrator, receipt, *, now, expected_model_profile_sha256):
             "operation", "max_execution_attempts", "issued_at", "expires_at"}
     if not isinstance(claims, dict) or set(claims) != keys:
         raise OrchestrationError("approval claims have invalid schema")
-    if claims["schema_version"] != SCHEMA_VERSION:
+    if type(claims["schema_version"]) is not int or claims["schema_version"] != SCHEMA_VERSION:
         raise OrchestrationError("approval schema version not supported")
     if not isinstance(claims["approval_id"], str) or not _HEX32.fullmatch(claims["approval_id"]):
         raise OrchestrationError("approval ID is invalid")
