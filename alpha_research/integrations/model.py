@@ -3,6 +3,7 @@
 The agent depends only on ``complete_json(task, context)``.
 """
 import hashlib
+from contextlib import ExitStack
 import os
 from threading import RLock
 import time
@@ -16,6 +17,7 @@ from alpha_research.progress import write_progress
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_metadata import InvocationMetadata
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.integrations.model_journal import ModelCallJournal
 from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
@@ -91,12 +93,25 @@ class DecisionRecorder:
             return self._bind_batch_locked(batch_dir)
 
     def _bind_batch_locked(self, batch_dir: Path):
-        self.batch_dir = Path(batch_dir).resolve()
-        # Only historical calls need copying when a batch is first bound.
-        # The active call is synchronized incrementally at its two status
-        # transitions (IN_FLIGHT, then final), not by recopying every call.
-        self.journal.sync_batch_calls(
-            self.journal.session_calls, batch_dir=self.batch_dir, session_id=self.session_id)
+        target = Path(batch_dir).resolve()
+        # Never attach to a batch with an active invocation. This prevents
+        # another instance from changing its manifest while a model is live.
+        try:
+            with SingleWriterLock(self._batch_call_lock_path(target)):
+                self.journal.sync_batch_calls(
+                    self.journal.session_calls, batch_dir=target,
+                    session_id=self.session_id)
+        except WriterLockError as exc:
+            raise ModelError("another model call is active for this batch") from exc
+        self.batch_dir = target
+
+    @staticmethod
+    def _batch_call_lock_path(batch_dir):
+        return Path(batch_dir) / "model_call.invoke.lock"
+
+    def _research_call_lock_path(self):
+        digest = hashlib.sha256(self.research_id.encode("utf-8")).hexdigest()
+        return self.state_root / "logs" / "model_research" / (digest + ".invoke.lock")
 
     @staticmethod
     def _usage(model):
@@ -115,7 +130,23 @@ class DecisionRecorder:
     def _complete_json_locked(self, task: str, context: dict,
                               knowledge_pack_ref=None) -> dict:
         if self.session_id is None:
-            self.begin_session()
+            self._begin_session_locked()
+        # Fixed lock order across all instances: research -> batch ->
+        # short-lived manifest. Hold invocation locks over provider execution,
+        # response persistence and budget settlement.
+        try:
+            with ExitStack() as locks:
+                locks.enter_context(SingleWriterLock(self._research_call_lock_path()))
+                if self.batch_dir is not None:
+                    locks.enter_context(SingleWriterLock(
+                        self._batch_call_lock_path(self.batch_dir)))
+                return self._execute_model_call(task, context, knowledge_pack_ref)
+        except WriterLockError as exc:
+            raise ModelError(
+                "another model call is active for this research or batch") from exc
+
+    def _execute_model_call(self, task: str, context: dict,
+                            knowledge_pack_ref=None) -> dict:
         call_id = uuid4().hex
         context_bytes = _json_bytes(context)
         context_sha = hashlib.sha256(context_bytes).hexdigest()
