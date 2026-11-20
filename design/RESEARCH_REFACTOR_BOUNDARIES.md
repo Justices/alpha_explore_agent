@@ -21,7 +21,10 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `state/fingerprint.py` | Canonical JSON digest |
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
 | `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
-| `integrations/model.py` | Model transport and DecisionRecorder call coordinator; routes model calls without owning audit storage or replay |
+| `integrations/model.py` | `ConfiguredModelClient` transport dispatcher plus `DecisionRecorder` call/budget coordinator; no inline HTTP or CLI execution |
+| `integrations/model_cli.py` | Isolated CLI Agent invocation, sandbox/thread controls and CLI response admission |
+| `integrations/model_http.py` | HTTPS model API requests, headers, timeout and provider-specific response envelopes |
+| `integrations/model_json.py` | Shared strict JSON decision decoder for CLI and HTTPS providers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
 | `integrations/model_journal.py` | Durable append-only model-call events, incremental batch copies, manifest/session indices |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
@@ -72,6 +75,10 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   prompt consistency, SDK mock-only parity and malformed routing inputs
 - `tests/test_model_journal_replay.py`:
   durable pre-call intents, unchanged manifests, crash/missing evidence and replay identity
+- `tests/test_model_budget_recovery.py`:
+  post-response/pre-budget-settlement crash gaps, locked idempotent settlement, unknown-outcome blockers and audit usage conflicts
+- `tests/test_model_transport_boundaries.py`:
+  CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 
 Run `python -m unittest discover -s tests -v` without BRAIN credentials.
 Never enable real Simulation or Alpha submission merely to validate a refactor.
@@ -83,3 +90,8 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - `model_replay` accepts only previously recorded successful JSON decisions bound to the task, context digest and exact role/backend route digest. Invalid manifests and missing or tampered responses must block rather than trigger automatic real-provider retries.
 - The persisted file names, manifest structure and event status vocabulary remain unchanged by this refactor; a separate versioned migration would be necessary to modify persisted semantics.
 - The model budget ledger remains the authority for call reservations and settlements; a crash during a real provider call is not classified as a safely retriable failure.
+- When a batch contains a persisted response, `model_replay` first checks the task/context digest, exact route, audit identity, response checksum, status, and reported usage. If governance is enabled, it additionally pins the research ID. Only then does it reconcile the original budget attempt by call ID without creating a new reservation.
+- `ModelCallLedger.reconcile_verified_response` is a locked, idempotent transition: `IN_FLIGHT -> OK/ERROR`; an already matching terminal state stays unchanged, while `UNKNOWN`, a changed backend or mismatched token usage blocks. The UNKNOWN operator acknowledgement cannot be undone by replay.
+- A successfully verified response may be returned without a second provider request. A persisted real-provider error is accounted for but still blocks automatic retry. Missing/malformed audit or response evidence, or a call without a durable bound batch, cannot trigger automatic reconciliation and remains operator-blocked.
+- The model-call file schema, ledger schema version and recorded route digest structure remain unchanged; changes to these require a dedicated migration and crash-gap fixtures.
+
