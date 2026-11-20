@@ -87,6 +87,16 @@ GitHub Actions [44747223404](https://github.com/Justices/alpha_explore_agent/act
 
 GitHub Actions [44748199366](https://github.com/Justices/alpha_explore_agent/actions/runs/44748199366) 对应代码提交 `3de1af73f7dad888fbe88aa3ab9744764bbecd51`；读取两平台原始日志：Linux **622 tests, OK**（29.044 秒），Windows **622 tests, OK**（188.767 秒），AGY SDK 合同检查通过。此结论验证不可授权提案记录的离线契约，不构成真实 BRAIN Simulation 或生产执行许可。
 
+### P1.5 独立签名授权审查（不可授权真实执行）
+
+- 新增 `orchestration/approval_review.py`，校验外部签发的 HMAC-SHA256 审查收据；精确绑定单个 Task ID、Workflow、Request SHA-256、Execution Proposal SHA-256、模型配置 Profile SHA-256、单次审查预算及最长 30 分钟 UTC 有效期。
+- 校验密钥只从 `ALPHA_RESEARCH_APPROVAL_VERIFY_KEY` 环境变量读取；状态和日志中只持久化签名收据的摘要与非敏感身份信息，**不持久化签名密钥**。签发流程不包含在此服务中。
+- 允许的唯一用途为 `review_execution_proposal`，成功校验后也恒定返回 `simulation_authorized=false`、`model_call_authorized=false`、`alpha_submission_authorized=false`。
+- 全局单写入锁下持久化 `RESERVED_REVIEW_ONLY` 审查消费记录，同一个 approval ID 只能记录一次；重复调用拒绝，不能自动重放或升级成真实授权。
+- 新增 `tests/test_approval_review.py` 覆盖签名篡改、跨任务/模型指纹、过期与未来时间、越权操作、整数预算、重复 ID 与审查后权限仍关闭。
+
+**授权信任边界：** 仅凭共享环境密钥持有和签名校验不能证明真人批准；本实现只验证技术审查凭据，不赋予 BRAIN 调用权限。若未来开放真实执行，必须通过独立可信的人工审批/操作授权发行器，绑定费用限额、实际可调用操作及单次执行收据，复用既有 CLI 全局锁、模型调用账本和 Simulation Intent 恢复，并完成故障注入验证。当前 `ProductionWorkflowAdapter` 的 `validate` 拒绝行为和 CLI 的生产入口禁用状态不变。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
