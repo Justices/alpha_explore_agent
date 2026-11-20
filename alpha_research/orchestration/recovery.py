@@ -244,7 +244,9 @@ class RecoveryCoordinator:
                 status="BLOCKED",
                 failure={
                     "type": type(exc).__name__,
-                    "message": str(exc)[:500],
+                    # External exception messages can contain request data or
+                    # credentials. Persist the class only, never provider text.
+                    "reason": "recovery_handler_failed_manual_review_required",
                 },
                 updated_at=_now(),
             )
