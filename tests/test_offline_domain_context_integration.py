@@ -51,6 +51,7 @@ class OfflineDomainContextIntegrationTests(unittest.TestCase):
                     "optimization": "optimization:",
                 }[workflow] + "a" * 32
                 calls = []
+                targets = []
 
                 def fake_domain(*args, **kwargs):
                     calls.append(1)
@@ -69,6 +70,7 @@ class OfflineDomainContextIntegrationTests(unittest.TestCase):
                         target.parent.mkdir(parents=True, exist_ok=True)
                         target.write_text(json.dumps({"workflow": workflow}), encoding="utf-8")
                         context["bind_recovery_target"]("simulation_intent", target)
+                    targets.append(target.resolve())
                     return outputs[workflow]
 
                 with patch("alpha_research.orchestration.dispatch." + func,
@@ -76,7 +78,7 @@ class OfflineDomainContextIntegrationTests(unittest.TestCase):
                     done = runner.execute(task["task_id"])
                 self.assertEqual(done["status"], "COMPLETED")
                 self.assertEqual(done["research_identity"]["research_id"], expected_id)
-                self.assertEqual(done["recovery_target"]["ref"], str(target.resolve()))
+                self.assertEqual(done["recovery_target"]["ref"], str(targets[0]))
                 self.assertEqual(done["budget"]["reserved"], 0)
                 self.assertEqual(done["budget"]["used"], 1)
                 self.assertEqual(len(calls), 1)
@@ -90,7 +92,7 @@ class OfflineDomainContextIntegrationTests(unittest.TestCase):
             runner = MainOrchestrator(root, adapter=adapter)
             task = runner.create("super", {"objective": "mock failure"})
             intent_path = root / "state" / "research_v1_1" / "unknown_simulation_intent.json"
-            intent_path.parent.mkdir(parents=True)
+            intent_path.parent.mkdir(parents=True, exist_ok=True)
             intent_path.write_text(json.dumps({"workflow": "super"}), encoding="utf-8")
             invoked = []
 
