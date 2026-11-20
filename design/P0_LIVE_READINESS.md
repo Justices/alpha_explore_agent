@@ -8,6 +8,21 @@ research provenance tags after readback**; approval for live execution must
 therefore also account for those platform tag writes. Other Alpha property
 mutations are outside this rollout.
 
+## Observed model-only acceptance evidence (operator report)
+
+On 2026-11-20, an operator reported a Windows `models smoke --role both
+--allow-model-call` result of `PASS` for the DeepSeek registration selected
+as both Research Lead and Research Executor. Each role completed one
+`model_probe_v1` call; the reported usage was 345 and 349 tokens
+respectively, and `brain_invoked=false`. This report demonstrates the
+model-only acceptance path **on that operator's environment**. The underlying
+local audit files and platform connectivity have not been independently
+verified in the repository or offline CI. It does not authorize Simulation,
+Alpha submission, or tag/property mutation.
+
+For the consolidated status and document index, see
+[Current Design](CURRENT_DESIGN.md).
+
 ## Implemented locally (no network)
 
 1. The CLI `plan-regular`, `plan-super`, `plan-optimization`, BRAIN evidence
