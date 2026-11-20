@@ -26,7 +26,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_http.py` | HTTPS model API requests, headers, timeout and provider-specific response envelopes |
 | `integrations/model_json.py` | Shared strict JSON decision decoder for CLI and HTTPS providers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
-| `integrations/model_journal.py` | Durable append-only model-call events, incremental batch copies, manifest/session indices |
+| `integrations/model_journal.py` | Single owner of session call history, durable call paths, intent/terminal writes, append-only events, batch manifests and session indices |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
 | `agents/configuration.py` | Strict role/task binding and immutable snapshot routing; delegates backend policy |
@@ -90,6 +90,7 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - `model_replay` accepts only previously recorded successful JSON decisions bound to the task, context digest and exact role/backend route digest. Invalid manifests and missing or tampered responses must block rather than trigger automatic real-provider retries.
 - The persisted file names, manifest structure and event status vocabulary remain unchanged by this refactor; a separate versioned migration would be necessary to modify persisted semantics.
 - The model budget ledger remains the authority for call reservations and settlements; a crash during a real provider call is not classified as a safely retriable failure.
+- `DecisionRecorder` owns the execution order, task route and call budget coordination. `ModelCallJournal` exclusively owns its per-session call history and persistence paths; starting a new session clears only the in-memory history, never audit files.
 - When a batch contains a persisted response, `model_replay` first checks the task/context digest, exact route, audit identity, response checksum, status, and reported usage. If governance is enabled, it additionally pins the research ID. Only then does it reconcile the original budget attempt by call ID without creating a new reservation.
 - `ModelCallLedger.reconcile_verified_response` is a locked, idempotent transition: `IN_FLIGHT -> OK/ERROR`; an already matching terminal state stays unchanged, while `UNKNOWN`, a changed backend or mismatched token usage blocks. The UNKNOWN operator acknowledgement cannot be undone by replay.
 - A successfully verified response may be returned without a second provider request. A persisted real-provider error is accounted for but still blocks automatic retry. Missing/malformed audit or response evidence, or a call without a durable bound batch, cannot trigger automatic reconciliation and remains operator-blocked.
