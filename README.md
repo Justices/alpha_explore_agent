@@ -245,6 +245,26 @@ do not persist threads.
 A real model smoke test requires an explicit `--allow-model-call` flag.
 It never authorizes BRAIN Simulation or Alpha submission.
 
+### P0: local live-readiness check (no external calls)
+
+Before choosing a live Regular/Super/Optimization command, verify the local
+research configuration, model role IDs, registered backend prerequisites,
+bounded model-attempt budget and external BRAIN credential-file format:
+
+```sh
+python -m alpha_research --state-root "<state-root>" \
+  --lead glm --executor kimi preflight --region CHN
+```
+
+`READY_LOCAL` is **not** a login or API contract check, and does not grant
+Simulation permission. Follow the staged acceptance checklist in
+[Controlled live research readiness](design/P0_LIVE_READINESS.md).
+BRAIN read-only planning commands (`plan-regular`, `plan-super`,
+`plan-optimization`) do not require a model registry or Lead/Executor
+selection; they do require authorized BRAIN access when executed.
+Actual research with registered live backends requires an explicit
+`model_governance` attempt/token budget and `failover=manual`.
+
 The Workbench is a standalone Python service. For a single operator on a
 Linux host, run the following from the checkout under a dedicated service
 account (for example, with systemd managing the process):
@@ -262,6 +282,13 @@ authenticate it as that account. Preserve Codex CLI session storage as well as
 the research state if you need to resume Codex threads. For a service that
 does not depend on desktop logins, register the intended HTTPS LLM API
 backends and select their IDs through the `--lead` and `--executor` flags.
+
+The Workbench loads the same model registry as the CLI, showing Lead and
+Executor dropdowns for both new campaigns and their recovery. The local server
+verifies model availability and governance before launching a child process.
+If the registry is not bundled, pass `--registry /path/to/model_registry.json`
+to `workbench/serve.py`. The server never exposes API key values through
+the registry listing and does not select a provider implicitly.
 
 The current Workbench is for one operator. It binds to loopback, checks the
 local Host and Origin, and keeps browser BRAIN credentials in memory for up to
