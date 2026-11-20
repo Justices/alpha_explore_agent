@@ -114,6 +114,10 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
                        execution_context=None):
     """One evidence-registered native Super experiment; no auto-submission."""
     run_id = uuid4().hex
+    if execution_context is not None:
+        bind_identity = execution_context.get("bind_research_identity")
+        if callable(bind_identity):
+            bind_identity(f"super:{run_id}")
     gateway.call("set_case", case_key=run_id, run_id=run_id)
     prepared = prepare_super_run(
         gateway, state_root, region=region, objective=objective,
