@@ -5,12 +5,12 @@ evidence, never a Gateway instance or executable tool handle. The bridge
 cannot submit/resume Simulation, tag an Alpha, or modify platform state.
 """
 import hashlib
-import json
 import re
 from pathlib import Path
 from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.fingerprint import fingerprint_json
 
 
 class ModelGatewayPermissionError(ValueError):
@@ -25,11 +25,9 @@ READ_ACTIONS = frozenset({
 
 def _digest(value):
     try:
-        raw = json.dumps(value, sort_keys=True, ensure_ascii=False,
-                         allow_nan=False, separators=(",", ":"))
+        return fingerprint_json(value)
     except (TypeError, ValueError) as exc:
         raise ModelGatewayPermissionError("unserializable BRAIN evidence") from exc
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 class ReadOnlyEvidenceGateway:
