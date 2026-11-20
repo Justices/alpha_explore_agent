@@ -159,3 +159,54 @@ def reserve_review_receipt(orchestrator, receipt, *, model_profile_sha256, envir
             return record
     except WriterLockError as exc:
         raise OrchestrationError("approval review ledger is busy") from exc
+
+
+def inspect_review_reservation(orchestrator, task_id):
+    """Read-only audit of canonical reservation and derived projections.
+
+    Returns a reconciliation hint, never an authorization decision. Missing
+    projections must not cause automatic ledger replay or duplicate writes.
+    """
+    orchestrator._path(task_id)  # validate task ID without mutating state
+    root = Path(orchestrator.state_root) / "state" / "research_v1_1" / "approval_reviews"
+    ledger_path = root / "reservations.json"
+    task_path = root / "tasks" / (task_id + ".json")
+    if not ledger_path.exists():
+        return {"task_id": task_id, "status": (
+            "LEGACY_UNVERIFIED" if task_path.exists() else "NOT_RESERVED"),
+            "simulation_authorized": False}
+    try:
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        if (not isinstance(ledger, dict) or set(ledger) !=
+                {"schema_version", "by_task", "by_approval"}
+                or type(ledger["schema_version"]) is not int
+                or ledger["schema_version"] != SCHEMA_VERSION
+                or not isinstance(ledger["by_task"], dict)
+                or not isinstance(ledger["by_approval"], dict)):
+            raise ValueError("invalid canonical review ledger")
+        approval_id = ledger["by_task"].get(task_id)
+        if approval_id is None:
+            return {"task_id": task_id, "status": (
+                "LEGACY_UNVERIFIED" if task_path.exists() else "NOT_RESERVED"),
+                "simulation_authorized": False}
+        if (not isinstance(approval_id, str)
+                or ledger["by_approval"].get(approval_id) != task_id):
+            return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
+                    "simulation_authorized": False}
+        approval_path = root / (approval_id + ".json")
+        if not task_path.is_file() or not approval_path.is_file():
+            return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
+                    "simulation_authorized": False}
+        task_projection = json.loads(task_path.read_text(encoding="utf-8"))
+        approval_projection = json.loads(approval_path.read_text(encoding="utf-8"))
+        if (task_projection != approval_projection
+                or task_projection.get("status") != "RESERVED_REVIEW_ONLY"
+                or task_projection.get("task_id") != task_id
+                or task_projection.get("approval_id") != approval_id):
+            return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
+                    "simulation_authorized": False}
+        return {"task_id": task_id, "status": "RESERVED_REVIEW_ONLY",
+                "approval_id": approval_id, "simulation_authorized": False}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
+                "simulation_authorized": False}
