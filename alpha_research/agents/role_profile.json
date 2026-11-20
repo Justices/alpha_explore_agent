@@ -15,7 +15,8 @@
     "diagnose_failures": "research_executor",
     "prepare_execution": "research_executor",
     "plan_experiments": "research_lead",
-    "research_decide": "research_lead"
+    "research_decide": "research_lead",
+    "review_dataset_results": "research_lead"
   },
   "roles": {
     "research_lead": {
