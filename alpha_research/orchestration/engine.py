@@ -209,16 +209,23 @@ class MainOrchestrator:
         except (OSError, ValueError) as exc:
             raise OrchestrationError("recovery receipt is unreadable") from exc
         actual_sha = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+        if actual_sha != receipt_sha256:
+            raise OrchestrationError("recovery receipt does not verify this task outcome")
         target = task.get("recovery_target") or {}
-        journal_path = Path(receipt.get("recovery_journal_ref", "")).expanduser().resolve()
+        journal_ref = receipt.get("recovery_journal_ref")
+        if not isinstance(journal_ref, str) or not journal_ref:
+            raise OrchestrationError("domain recovery journal reference is invalid")
         journal_root = (self.state_root / "state" / "research_v1_1" / "recoveries").resolve()
+        journal_path = Path(journal_ref).expanduser().resolve()
+        if (not journal_path.is_relative_to(journal_root)
+                or not journal_path.is_file()):
+            raise OrchestrationError("domain recovery journal must stay under the recovery root")
         try:
             journal = json.loads(journal_path.read_text(encoding="utf-8"))
             journal_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
         except (OSError, ValueError) as exc:
             raise OrchestrationError("domain recovery journal is unreadable") from exc
-        if (not journal_path.is_relative_to(journal_root)
-                or journal.get("status") != "COMPLETED"
+        if (journal.get("status") != "COMPLETED"
                 or journal.get("task_id") != task_id
                 or journal.get("step") != step
                 or journal.get("workflow") != task["workflow"]
@@ -226,8 +233,7 @@ class MainOrchestrator:
                 or journal.get("target_ref") != (task.get("recovery_target") or {}).get("ref")
                 or journal_sha != receipt.get("recovery_journal_sha256")):
             raise OrchestrationError("domain recovery journal does not verify this task")
-        if (actual_sha != receipt_sha256
-                or receipt.get("status") != "COMPLETED"
+        if (receipt.get("status") != "COMPLETED"
                 or receipt.get("task_id") != task_id
                 or receipt.get("workflow") != task["workflow"]
                 or receipt.get("step") != step
