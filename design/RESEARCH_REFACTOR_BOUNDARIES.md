@@ -24,7 +24,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
 | `integrations/model.py` | `ConfiguredModelClient` transport dispatcher plus `DecisionRecorder` call/budget coordinator; no inline HTTP or CLI execution |
 | `integrations/model_cli.py` | Isolated CLI Agent invocation, sandbox/thread controls and CLI response admission |
-| `integrations/model_http.py` | HTTPS model API requests, headers, timeout and provider-specific response envelopes |
+| `integrations/model_openai.py` | OpenAI Python SDK compatible HTTPS Chat Completions calls, JSON admission, retries disabled and credential-safe errors |
 | `integrations/model_json.py` | Shared JSON decision decoder for CLI, HTTPS and Antigravity SDK; adapters retain their own error contracts |
 | `integrations/model_metadata.py` | Context-scoped `last_usage`, model name, raw response and thread binding for direct HTTP/SDK clients and role routers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
