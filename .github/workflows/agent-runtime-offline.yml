@@ -37,6 +37,11 @@ jobs:
         run: python -m pip install -e .
       - name: Compile
         run: python -m compileall -q alpha_research tests
+      - name: Registry CLI smoke (no provider or BRAIN calls)
+        run: |
+          python -m alpha_research models list
+          python -m alpha_research --lead codex --executor glm models inspect
+          python -m alpha_research --lead kimi --executor claude-code models inspect
       - name: Inspect offline role configuration
         run: |
           python -m alpha_research.agents --config config.mock.example.json --task plan_experiments --task prepare_execution

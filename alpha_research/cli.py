@@ -11,7 +11,8 @@ from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.agents.configuration import AgentConfigError
 from alpha_research.agents.registry import (
-    ModelRegistryError, load_registry, describe_registry, select_registered_backends,
+    ModelRegistryError, bundled_registry_path, load_registry, describe_registry,
+    select_registered_backends,
 )
 from alpha_research.agents.__main__ import inspect_roles
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
@@ -197,9 +198,7 @@ def main(argv=None):
     registry_path = args.registry or (
         root / "config" / "model_registry.json" if
         (root / "config" / "model_registry.json").exists() else
-        # Packaged checkout default; use --registry for production deployments.
-        Path(__file__).resolve().parents[1] /
-        "model_registry.example.json"
+        bundled_registry_path()
     )
     registry_assignments = {
         role: value for role, value in (
@@ -214,12 +213,17 @@ def main(argv=None):
                 result = describe_registry(registered)
             else:
                 path = args.config or root / "config" / "nastu_quant.json"
-                cfg = json.loads(path.read_text(encoding="utf-8"))
-                if not isinstance(cfg, dict) or not isinstance(cfg.get("model"), dict):
-                    raise ModelRegistryError("models inspect requires config with model section")
-                effective = (select_registered_backends(
-                    cfg["model"], registered, assignments=registry_assignments)
-                    if registry_assignments else cfg["model"])
+                if path.exists():
+                    cfg = json.loads(path.read_text(encoding="utf-8"))
+                    profile = cfg.get("model") if isinstance(cfg, dict) else None
+                else:
+                    profile = json.loads(
+                        (Path(__file__).resolve().parent / "agents" /
+                         "role_profile.json").read_text(encoding="utf-8"))
+                if not isinstance(profile, dict):
+                    raise ModelRegistryError("models inspect requires a role profile")
+                effective = select_registered_backends(
+                    profile, registered, assignments=registry_assignments)
                 result = inspect_roles(effective, [])
                 result["selected_registrations"] = registry_assignments
                 result["registry_path"] = str(registry_path)
@@ -498,14 +502,15 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict) or not isinstance(cfg.get("model"), dict):
+            raise ModelRegistryError("research config must contain a model role profile")
         if registry_assignments:
             catalog = load_registry(registry_path)
             cfg["model"] = select_registered_backends(
                 cfg["model"], catalog, assignments=registry_assignments)
-        elif args.registry:
-            # A supplied registry must be valid even when keeping the base
-            # role assignments unchanged.
-            load_registry(registry_path)
+        elif cfg["model"].get("provider") == "role_router":
+            raise ModelRegistryError(
+                "select registered roles with --lead <id> --executor <id>")
         model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
                                           "sync-backtest-cache", "tag-alpha"}
                  or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")

@@ -1,0 +1,26 @@
+{
+  "provider": "role_router",
+  "default_role": "research_lead",
+  "task_roles": {
+    "select_scope": "research_lead",
+    "select_dataset": "research_lead",
+    "plan_probes": "research_lead",
+    "construct_batch": "research_lead",
+    "construct_field_expressions": "research_lead",
+    "construct_super": "research_lead",
+    "optimize_alpha": "research_lead",
+    "decide_next": "research_lead",
+    "review_candidate": "research_lead",
+    "attribute_results": "research_executor",
+    "diagnose_failures": "research_executor",
+    "prepare_execution": "research_executor"
+  },
+  "roles": {
+    "research_lead": {
+      "description": "Research hypothesis, expression construction, reflection"
+    },
+    "research_executor": {
+      "description": "Read-only attribution; simulation handled by the BRAIN gateway"
+    }
+  }
+}
