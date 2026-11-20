@@ -323,9 +323,12 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - The batch manifest itself, the Session index and the global-call and
   batch evidence directories are checked before Journal reads/copies/writes.
   Canonical paths are enforced for each internal Journal evidence copy.
-  Every manifest row is validated both during replay and batch rebinding,
-  including rows for tasks other than the current call. A forged unrelated
-  row cannot silently bypass model-call admission or poison the Session index.
+  Every manifest row is validated during replay and batch rebinding,
+  including rows for tasks other than the current call. During replay, each
+  row's call/session/task/context/route identity is checked against the global
+  audit, and its original input is rehashed **before** task filtering.
+  A forged task name or context digest therefore cannot turn a prior call
+  into a false non-match and authorize a duplicate request.
 - The global audit's `session_id`, `research_id`, `batch_ref`,
   `context_ref`, `response_ref`, task and route digest must match the
   manifest and trusted roots. The global original input JSON is also
