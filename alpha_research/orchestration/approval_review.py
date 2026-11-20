@@ -114,6 +114,7 @@ def reserve_review_receipt(orchestrator, receipt, *, model_profile_sha256, envir
         environ=environ, now=now)
     root = Path(orchestrator.state_root) / "state" / "research_v1_1" / "approval_reviews"
     path = root / (info["approval_id"] + ".json")
+    task_path = root / "tasks" / (info["task_id"] + ".json")
     try:
         with SingleWriterLock(root / "reviews.lock"):
             # Re-evaluate after acquiring lock to reject task/proposal changes.
@@ -122,10 +123,16 @@ def reserve_review_receipt(orchestrator, receipt, *, model_profile_sha256, envir
                 environ=environ, now=now)
             if path.exists():
                 raise OrchestrationError("approval review ID already consumed")
+            if task_path.exists():
+                raise OrchestrationError("task approval review already reserved")
             record = {"schema_version": SCHEMA_VERSION,
                       "status": "RESERVED_REVIEW_ONLY",
                       **info,
                       "recorded_at": datetime.now(timezone.utc).isoformat()}
+            # Task identity is the primary replay fence. Publish it first so
+            # interruption before the secondary approval-ID record remains
+            # fail-closed for this task. Never auto-clean a partial fence.
+            atomic_write_json(task_path, record)
             atomic_write_json(path, record)
             return record
     except WriterLockError as exc:
