@@ -16,6 +16,7 @@ from uuid import uuid4
 from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, LocalCliModelTool
 from alpha_research.progress import write_progress
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.writer_lock import SingleWriterLock
 
 
 class ModelError(RuntimeError):
@@ -413,29 +414,19 @@ class DecisionRecorder:
         self._sync_batch_calls(self.session_calls)
 
     def _write_log_record(self, record):
+        """Append one audit EVENT; .record.json remains the latest-state source.
+
+        Unlike rewriting the full JSONL file for every status transition,
+        append-only events have bounded work per model call and preserve both
+        the in-flight and terminal transitions for forensics.
+        """
         self.logs_root.mkdir(parents=True, exist_ok=True)
-        current = []
-        if self.log_path.exists():
-            current = self.log_path.read_text(encoding="utf-8").splitlines()
-        rendered = json.dumps(record, ensure_ascii=False, sort_keys=True)
-        replaced = False
-        for index, line in enumerate(current):
-            try:
-                old = json.loads(line)
-            except ValueError:
-                continue
-            if old.get("call_id") == record["call_id"]:
-                current[index] = rendered
-                replaced = True
-                break
-        if not replaced:
-            current.append(rendered)
-        tmp = self.log_path.with_suffix(self.log_path.suffix + ".tmp")
-        with tmp.open("w", encoding="utf-8", newline="\n") as handle:
-            handle.write("\n".join(current) + "\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(tmp, self.log_path)
+        line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
+        with SingleWriterLock(self.logs_root / "model_log.lock"):
+            with self.log_path.open("a", encoding="utf-8", newline="\n") as handle:
+                handle.write(line)
+                handle.flush()
+                os.fsync(handle.fileno())
 
     def _sync_batch_calls(self, calls):
         """One source of truth for batch model-call manifests.
@@ -514,9 +505,13 @@ class DecisionRecorder:
         manifest_path = self.batch_dir / "model_call_manifest.json"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
             return None
-        for row in manifest.get("calls", []):
+        except (OSError, ValueError) as exc:
+            raise ModelError("existing batch model manifest is unreadable; replay blocked") from exc
+        if not isinstance(manifest, dict) or not isinstance(manifest.get("calls"), list):
+            raise ModelError("existing batch model manifest schema is invalid")
+        for row in manifest["calls"]:
             if row.get("task") != task or row.get("context_sha256") != context_sha:
                 continue
             if row.get("route_sha256") != route_sha:
@@ -528,15 +523,17 @@ class DecisionRecorder:
                 response_path = Path(row["global_response_ref"])
             try:
                 payload = json.loads(response_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, KeyError):
-                continue
+            except (OSError, ValueError, KeyError) as exc:
+                raise ModelError(
+                    "previous model response is missing or unreadable; retry blocked"
+                ) from exc
             record_path = Path(row.get("global_record_ref") or "")
             try:
                 record = json.loads(record_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
-            if route_sha is not None and not isinstance(record, dict):
-                raise ModelError("recorded agent decision is missing its audit record")
+            if not isinstance(record, dict):
+                raise ModelError("recorded model decision is missing its audit record")
             response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
             if isinstance(record, dict) and record.get("response_sha256"):
                 if record["response_sha256"] != response_sha:
@@ -550,6 +547,9 @@ class DecisionRecorder:
                 self._write_log_record(record)
             if payload.get("status") == "ok" and isinstance(payload.get("result"), dict):
                 return payload["result"]
+            raise ModelError(
+                "previous model decision is not a verified successful result; "
+                "an explicit state reconciliation is required")
         return None
 
     @staticmethod
