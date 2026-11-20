@@ -5,9 +5,15 @@ import os
 import re
 import sys
 from types import SimpleNamespace
+from pathlib import Path
 from alpha_research.workflows.regular.agent import ResearchAgent
 from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.integrations.model import ModelError, build_model_client
+from alpha_research.agents.configuration import AgentConfigError
+from alpha_research.agents.registry import (
+    ModelRegistryError, load_registry, describe_registry, select_registered_backends,
+)
+from alpha_research.agents.__main__ import inspect_roles
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
@@ -31,7 +37,15 @@ def main(argv=None):
     parser = argparse.ArgumentParser(prog="alpha_research")
     parser.add_argument("--state-root", type=_path_argument, default=default_state_root())
     parser.add_argument("--config", type=_path_argument)
+    parser.add_argument("--registry", type=_path_argument,
+                        help="model/agent registration JSON; defaults to bundled preset when selecting")
+    parser.add_argument("--lead", metavar="ID",
+                        help="registered backend ID for research_lead")
+    parser.add_argument("--executor", metavar="ID",
+                        help="registered backend ID for research_executor")
     sub = parser.add_subparsers(dest="command", required=True)
+    models = sub.add_parser("models", help="list or inspect model/agent registrations offline")
+    models.add_argument("models_action", choices=("list", "inspect"))
     orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
     orchestrate.add_argument("--workflow", choices=("regular", "super", "optimization"))
     orchestrate.add_argument("--objective")
@@ -179,6 +193,42 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.state_root.resolve()
     stop_flag = root / "state" / "stop.flag"
+
+    registry_path = args.registry or (
+        root / "config" / "model_registry.json" if
+        (root / "config" / "model_registry.json").exists() else
+        # Packaged checkout default; use --registry for production deployments.
+        Path(__file__).resolve().parents[1] /
+        "model_registry.example.json"
+    )
+    registry_assignments = {
+        role: value for role, value in (
+            ("research_lead", args.lead),
+            ("research_executor", args.executor),
+        ) if value is not None
+    }
+    if args.command == "models":
+        try:
+            registered = load_registry(registry_path)
+            if args.models_action == "list":
+                result = describe_registry(registered)
+            else:
+                path = args.config or root / "config" / "nastu_quant.json"
+                cfg = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(cfg, dict) or not isinstance(cfg.get("model"), dict):
+                    raise ModelRegistryError("models inspect requires config with model section")
+                effective = (select_registered_backends(
+                    cfg["model"], registered, assignments=registry_assignments)
+                    if registry_assignments else cfg["model"])
+                result = inspect_roles(effective, [])
+                result["selected_registrations"] = registry_assignments
+                result["registry_path"] = str(registry_path)
+        except (OSError, KeyError, ValueError, TypeError) as exc:
+            print(f"model registry unavailable: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     if args.command in {"stop", "resume"}:
         try:
             update_stop_flag(stop_flag, args.command == "stop")
@@ -448,11 +498,19 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        if registry_assignments:
+            catalog = load_registry(registry_path)
+            cfg["model"] = select_registered_backends(
+                cfg["model"], catalog, assignments=registry_assignments)
+        elif args.registry:
+            # A supplied registry must be valid even when keeping the base
+            # role assignments unchanged.
+            load_registry(registry_path)
         model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
                                           "sync-backtest-cache", "tag-alpha"}
                  or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")
                  else build_model_client(cfg["model"]))
-    except (OSError, ValueError, KeyError, ModelError) as exc:
+    except (OSError, ValueError, KeyError, TypeError, ModelError) as exc:
         write_progress("无法加载研究配置或模型配置")
         print(f"configuration unavailable: {exc}", file=sys.stderr)
         return 2
