@@ -28,6 +28,34 @@ def gateway():
 
 
 class TestConfigurableAgents(unittest.TestCase):
+    def test_role_inspection_is_offline_and_credential_safe(self):
+        from alpha_research.agents.__main__ import inspect_roles
+        cfg = config()
+        cfg["backends"]["agy_mock"] = {
+            "provider": "antigravity_sdk",
+            "api_key_env": "GEMINI_API_KEY",
+            "timeout_seconds": 90,
+        }
+        report = inspect_roles(cfg, ["plan_experiments", "prepare_execution"])
+        self.assertTrue(report["validated"])
+        self.assertFalse(report["provider_invoked"])
+        self.assertEqual(report["task_routes"]["prepare_execution"]["role"],
+                         "research_executor")
+        self.assertEqual(report["roles"]["research_executor"]["api_key_env"],
+                         "GEMINI_API_KEY")
+        self.assertEqual(report["roles"]["research_lead"]["provider"], "mock")
+        self.assertNotIn("responses", json.dumps(report))
+
+    def test_role_inspection_rejects_unsafe_configuration_without_loading_sdk(self):
+        from alpha_research.agents.__main__ import inspect_roles
+        cfg = config()
+        cfg["backends"]["agy_mock"] = {
+            "provider": "antigravity_sdk", "api_key_env": "GEMINI_API_KEY",
+            "mcp_servers": ["unapproved"],
+        }
+        with self.assertRaises(AgentConfigError):
+            inspect_roles(cfg, ["attribute_results"])
+
     def test_routes_lead_and_executor_by_role(self):
         m = build_model_client(config())
         self.assertEqual(m.role_for("plan_experiments"), "research_lead")

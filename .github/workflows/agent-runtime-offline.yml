@@ -37,6 +37,8 @@ jobs:
         run: python -m pip install -e .
       - name: Compile
         run: python -m compileall -q alpha_research tests
+      - name: Inspect offline role configuration
+        run: python -m alpha_research.agents --config config.mock.example.json --task plan_experiments --task prepare_execution
       - name: Configurable runtime offline tests
         run: python -m unittest discover -s tests -p 'test_configurable_agents.py' -v
       - name: Durable research offline tests
