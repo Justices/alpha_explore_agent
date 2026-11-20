@@ -135,3 +135,29 @@ def inspect_execution_identity(orchestrator, task_id, model_config, governance_p
             or record.get("identity_sha256") != fingerprint_json(expected)):
         raise OrchestrationError("execution identity or policy drift; explicit review required")
     return copy.deepcopy(record)
+
+
+def verify_identity_bound_review(orchestrator, task_id, model_config,
+                                 governance_policy, receipt, *,
+                                 environ=None, now=None, consume=False):
+    """Verify an inspect-only receipt against the saved, drift-checked model.
+
+    The hash is derived from the selected registry profile, never accepted
+    from a caller-provided claim. Consuming still records REVIEW ONLY;
+    it never makes ProductionWorkflowAdapter executable.
+    """
+    from alpha_research.orchestration.approval_review import (
+        verify_review_receipt, reserve_review_receipt,
+    )
+
+    identity = inspect_execution_identity(
+        orchestrator, task_id, model_config, governance_policy)["identity"]
+    if not isinstance(receipt, dict) or not isinstance(receipt.get("claims"), dict):
+        raise OrchestrationError("review receipt is not an object")
+    if receipt["claims"].get("task_id") != task_id:
+        raise OrchestrationError("review receipt task identity mismatch")
+    callback = reserve_review_receipt if consume else verify_review_receipt
+    return callback(
+        orchestrator, receipt,
+        model_profile_sha256=identity["model_profile_sha256"],
+        environ=environ, now=now)
