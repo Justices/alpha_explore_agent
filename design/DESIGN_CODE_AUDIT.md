@@ -160,6 +160,15 @@ GitHub Actions [44753707015](https://github.com/Justices/alpha_explore_agent/act
 
 此验收不包含 BRAIN 凭证/会话、真实领域 Research ID、模型计费请求、Simulation Intent、真实 Dispatch 执行或跨系统恢复；上述事项仍属于生产统一入口的待开发边界。
 
+### P1.9 生产运行上下文中的领域 Research ID 交接（开发）
+
+- `MainOrchestrator.bind_research_identity()` 仅在当前任务 `execute=RUNNING` 时允许领域方绑定 `research_id`。按工作流验证 `regular:campaign:<32位十六进制>`、`super:<32位十六进制>`、`optimization:<32位十六进制>`；同值幂等，不允许中途切换为另一个 ID，绑定记录随任务持久化。
+- 编排执行上下文 `execution_context` 新增 `bind_research_identity` 回调；三类现有领域执行入口在生成 Research ID 后、第一次 Gateway/model API 调用前主动绑定。这让任务与领域模型预算归属有可核验的一对一证据链，不再假设 Task ID 等于 Research ID。
+- `execution_identity.inspect_domain_research_handoff()` 支持在任务运行、阻断或完成后，读取已保存的身份/提案并校验模型 Profile 和治理 Policy 指纹，然后用已有的 `ModelCallLedger.status(research_id)` **只读**查询已发生的模型调用账本；可以识别 `IN_FLIGHT`、`UNKNOWN` 及阻断原因，**不新建第二套调用账本，也不预留预算**。
+- 新增 `tests/test_research_identity_binding.py`：三工作流回调持久绑定、同值幂等、身份冲突拒绝、异常后保留预算和身份且无法自动重放。新增 `tests/test_domain_research_binding.py`：实际三类领域入口在任何 Gateway 调用之前已发出 Research ID 绑定回调。扩展 `tests/test_execution_identity.py`：模拟模型账本中断的 `IN_FLIGHT` 条目，验证统一任务仍可只读检查正确 Research ID 和原账本并在策略漂移时拒绝检查。
+
+**关键边界**：这是运行身份关联，不是生产授权。现有 CLI 的 `state/agent.lock`、Gateway/模型初始化仍由 CLI 负责； `ProductionWorkflowAdapter` 继续无条件拒绝真实运行。真实领域 Session/Simulation Intent 的端到端生产装配需要另行评审已授权的 Gateway/Model 实例和调用成本、恢复行为，不能因为读到身份或审查记录就打开 `execute`。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
