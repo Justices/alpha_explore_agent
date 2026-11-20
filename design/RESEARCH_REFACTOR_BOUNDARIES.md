@@ -22,7 +22,8 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
 | `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
 | `integrations/model.py` | Model transport and durable DecisionRecorder; consumes prompts without defining them |
-| `agents/configuration.py` | Fail-closed, snapshot-isolated role/backend routing configuration |
+| `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
+| `agents/configuration.py` | Strict role/task binding and immutable snapshot routing; delegates backend policy |
 
 ## Execution authority
 
