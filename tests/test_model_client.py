@@ -254,5 +254,76 @@ class TestConfiguredModelClient(unittest.TestCase):
         self.assertIn("field constraints", prompt)
 
 
+    def test_batch_audit_is_incremental_and_rebinding_does_not_recopy(self):
+        from alpha_research.integrations.model import build_model_client
+        with tempfile.TemporaryDirectory() as root:
+            config = json.loads((Path(__file__).resolve().parent.parent /
+                                 "config.mock.example.json").read_text(encoding="utf-8"))["model"]
+            recorder = DecisionRecorder(build_model_client(config), Path(root))
+            recorder.begin_session(research_id="R1")
+            batch = Path(root) / "batch"
+            recorder.bind_batch(batch)
+            recorder.complete_json("plan_experiments", {"round_index": 0})
+            first_manifest = json.loads(
+                (batch / "model_call_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(first_manifest["calls"]), 1)
+            self.assertTrue(first_manifest["calls"][0]["response_sha256"])
+            with patch("alpha_research.integrations.model.shutil.copy2",
+                       side_effect=AssertionError("old model audit copied twice")):
+                recorder.bind_batch(batch)
+            recorder.complete_json("attribute_results", {"round_index": 0})
+            manifest = json.loads(
+                (batch / "model_call_manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(manifest["calls"]), 2)
+            events = [json.loads(line) for line in (
+                Path(root) / "logs" / "model_log.jsonl").read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(len(events), 4)
+            self.assertEqual({row["status"] for row in events},
+                             {"in_flight", "ok"})
+            self.assertEqual(len({row["call_id"] for row in events}), 2)
+
+    def test_corrupted_model_manifest_blocks_reexecution(self):
+        from alpha_research.integrations.model import build_model_client
+        with tempfile.TemporaryDirectory() as root:
+            config = json.loads((Path(__file__).resolve().parent.parent /
+                                 "config.mock.example.json").read_text(encoding="utf-8"))["model"]
+            batch = Path(root) / "batch"
+            first = DecisionRecorder(build_model_client(config), Path(root))
+            first.begin_session(research_id="R1")
+            first.bind_batch(batch)
+            first.complete_json("attribute_results", {})
+            manifest = batch / "model_call_manifest.json"
+            manifest.write_text("{truncated", encoding="utf-8")
+            second = DecisionRecorder(build_model_client(config), Path(root))
+            second.begin_session(research_id="R1")
+            second.batch_dir = batch
+            with self.assertRaisesRegex(ModelError, "unreadable; replay blocked"):
+                second.complete_json("attribute_results", {})
+            self.assertEqual(len(list((Path(root) / "logs" / "model_calls")
+                                      .glob("*.record.json"))), 1)
+
+    def test_missing_previous_model_response_blocks_automatic_retry(self):
+        from alpha_research.integrations.model import build_model_client
+        with tempfile.TemporaryDirectory() as root:
+            config = json.loads((Path(__file__).resolve().parent.parent /
+                                 "config.mock.example.json").read_text(encoding="utf-8"))["model"]
+            batch = Path(root) / "batch"
+            first = DecisionRecorder(build_model_client(config), Path(root))
+            first.begin_session(research_id="R1")
+            first.bind_batch(batch)
+            first.complete_json("attribute_results", {})
+            manifest = json.loads((batch / "model_call_manifest.json")
+                                  .read_text(encoding="utf-8"))["calls"][0]
+            Path(manifest["response_ref"]).unlink()
+            Path(manifest["global_response_ref"]).unlink()
+            second = DecisionRecorder(build_model_client(config), Path(root))
+            second.begin_session(research_id="R1")
+            second.bind_batch(batch)
+            with self.assertRaisesRegex(ModelError, "retry blocked"):
+                second.complete_json("attribute_results", {})
+            self.assertEqual(len(list((Path(root) / "logs" / "model_calls")
+                                      .glob("*.record.json"))), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
