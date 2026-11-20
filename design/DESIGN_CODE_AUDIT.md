@@ -75,6 +75,14 @@ GitHub Actions 运行 [44745226700](https://github.com/Justices/alpha_explore_ag
 
 GitHub Actions [44747223404](https://github.com/Justices/alpha_explore_agent/actions/runs/44747223404) 对应代码提交 `46655b60dd696b87cc8432a1a34b4010fcf5352f`。读取 Linux/Windows Job 原始日志，**两个平台均为 619 tests, OK**（Linux 23.127s，Windows 152.767s）；AGY SDK 契约检查同样通过。此前一个新增测试的异常文案断言失败已在本提交修复。此次验收仅证明共享流程合同和不可执行的生产适配层在隔离环境中通过离线验证。
 
+### P1.4 执行提案与授权隔离
+
+新增 `orchestration/execution_proposal.py`，在任务仍为 `CREATED`、预算未使用且请求指纹一致时，允许生成一份持久化的 `PROPOSED_NOT_AUTHORIZED` 执行提案（精确 task ID、workflow、request SHA-256、单批次预算、执行命令、生成时间）。提案可重复读取并核验；不允许变更后静默覆盖，不能接受已启动或已绑定恢复目标的任务。
+
+**关键安全语义：提案不是授权收据。** 文件包含 `authorization=null` 与三个恒定 false 的调用/Simulation/提交权限；文件 SHA-256 仅检测变更，不能证明用户授权，也不能抵抗恶意本地改写。任何生产 Adapter 都不得将此提案当成访问 BRAIN 的令牌。未来若新增生产执行，必须定义独立、可信且不可重放的审批证明，明确操作、范围、成本与期限，并绑定原任务/模型注册快照；不允许仅编辑 JSON 获得权限。
+
+新增 `tests/test_execution_proposal.py` 进行纯离线校验，覆盖三类工作流的指纹绑定、幂等读取、篡改拒绝、错误预算和非 CREATED 任务。生产 Adapter 的 `validate` 阶段拒绝行为与 CLI 入口禁用规则保持不变。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
