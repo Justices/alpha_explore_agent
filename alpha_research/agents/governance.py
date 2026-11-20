@@ -11,6 +11,7 @@ a per-research cross-platform filesystem lock.
 """
 import hashlib
 import json
+import re
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -107,7 +108,14 @@ class ModelCallLedger:
                     or not isinstance(item.get("task"), str)
                     or not isinstance(item.get("role"), (str, type(None)))
                     or not isinstance(item.get("backend"), (str, type(None)))
-                    or not isinstance(item.get("backend_sha256"), (str, type(None)))):
+                    or not isinstance(item.get("backend_sha256"), (str, type(None)))
+                    or (item.get("backend_sha256") is not None
+                        and re.fullmatch(r"[0-9a-f]{64}",
+                                         item["backend_sha256"]) is None)
+                    or (isinstance(item.get("role"), str)
+                        and not item["role"].strip())
+                    or (isinstance(item.get("backend"), str)
+                        and not item["backend"].strip())):
                 raise ModelBudgetError("model budget attempt ledger is invalid")
             seen.add(item["call_id"])
             for field in ("token_in", "token_out"):
@@ -147,8 +155,13 @@ class ModelCallLedger:
             raise ModelBudgetError("model call_id required")
         if not isinstance(task, str) or not task.strip():
             raise ModelBudgetError("model task required")
+        for label, value in (("role", role), ("backend", backend)):
+            if value is not None and (
+                    not isinstance(value, str) or not value.strip()):
+                raise ModelBudgetError(f"invalid model {label}")
         if backend_sha256 is not None and (
-                not isinstance(backend_sha256, str) or len(backend_sha256) != 64):
+                not isinstance(backend_sha256, str)
+                or re.fullmatch(r"[0-9a-f]{64}", backend_sha256) is None):
             raise ModelBudgetError("invalid model backend profile digest")
         path, lock = self._paths(research_id)
         with self._ledger_guard(lock):
