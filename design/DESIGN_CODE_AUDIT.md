@@ -49,6 +49,28 @@
 
 在以上契约完成设计审查之前，生产 Adapter 保持未实现；本轮不开放真实执行。
 
+## P1.2 领域恢复与状态一致性核对
+
+本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
+
+| 工作流 | 恢复目标 | 允许恢复的已提交证据状态 | 统一任务的后续动作 |
+| --- | --- | --- | --- |
+| Regular | 保存了 `simulation_intent.json` 的批次目录 | `SUBMITTING` 或 `READ_BACK`（读回需已有结果） | 经领域恢复及 Campaign 对账生成执行结果，随后由经签名/摘要核验的恢复收据完成任务 `execute` |
+| Super | 受控 state root 下的 Simulation Intent 文件 | `POSTING` / `OUTCOME_UNKNOWN` / `RESPONSE_RECEIVED` / `READ_BACK` | 只恢复已有平台操作或完成下游审计，禁止再次 POST |
+| Optimization | 受控 state root 下的 Simulation Intent 文件 | 同 Super | 保持源 Alpha 只读和分支证据，禁止再次 POST |
+
+- `PREPARED` 从未被视为恢复执行许可。
+- 任务必须先阻断、已经持久绑定合法领域恢复目标，且 `execute` 尚在 `RUNNING` 时才允许 `recover_task`。
+- Recovery Coordinator 的目标锁、领域 journal、任务 receipt 和 `MainOrchestrator.reconcile` 的摘要核验共同防止自动重放。
+- 统一任务 `budget.reserved` 在结果不明时保持不释放；仅经成功执行或验真的显式协调转为 `used`。
+- Regular 的任务级恢复当前只允许一批次，且必须把恢复批次与原 Campaign 收据严格关联；多批次生产任务不能直接套用这一恢复路径。
+
+**本轮新增修复（回归仍待运行）：**
+- `recovery.py` 不再把未经信任的异常消息复制到持久失败日志，改为记录异常类型和固定原因；新增含模拟敏感信息的负例测试。
+- 修正 `tests/test_offline_model_orchestration.py` 中错误的跨工作流资格输出断言：Regular 的投影有 `status`，Super/Optimization 的投影有 `candidate_status`，不能混用。
+
+**剩余验收门槛：** 需要在项目 Python 环境实际运行 `tests.test_recovery_coordinator`、`tests.test_workflow_adapter`、`tests.test_orchestrator` 和新加的离线编排测试；并以进程终止/重启方式验证跨进程锁、未完成 journal、Intent 与收据持久性。未取得这些结果前，不宣称恢复机制端到端已验证。
+
 ## 已处理缺陷
 
 **AUD-001（P0，修复已提交，回归待运行）**
