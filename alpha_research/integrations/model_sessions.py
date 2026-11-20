@@ -1,8 +1,7 @@
-"""Validate and merge durable model-session indices across research batches.
+"""Strict model-session index contract for a research spanning multiple batches.
 
-A session may be bound to several batches. The historical `batch_ref`
-field remains the initial binding; `call_ids` is the unique union.
-The additive `batches` field records each batch's exact call membership.
+Only the current v2 shape is supported. No inferred primary batch, legacy
+three-field index, migration or reconstruction of unverifiable history.
 """
 import re
 from pathlib import Path
@@ -10,11 +9,12 @@ from pathlib import Path
 from alpha_research.integrations.model_errors import ModelError
 
 
-_SESSION_ID = re.compile(r"[0-9a-f]{32}\Z")
+SESSION_INDEX_VERSION = 2
+_HEX_ID = re.compile(r"[0-9a-f]{32}\Z")
 
 
 def index_path(logs_root, session_id):
-    if not isinstance(session_id, str) or _SESSION_ID.fullmatch(session_id) is None:
+    if not isinstance(session_id, str) or _HEX_ID.fullmatch(session_id) is None:
         raise ModelError("model session ID must be a 32-character lowercase hex ID")
     return Path(logs_root) / "model_sessions" / (session_id + ".json")
 
@@ -22,69 +22,57 @@ def index_path(logs_root, session_id):
 def _ids(items):
     if (not isinstance(items, list)
             or any(not isinstance(item, str)
-                   or _SESSION_ID.fullmatch(item) is None for item in items)
+                   or _HEX_ID.fullmatch(item) is None for item in items)
             or len(set(items)) != len(items)):
         raise ModelError("model session index has invalid call IDs")
     return sorted(items)
 
 
-def merge_index(existing, session_id, batch_ref, call_ids, *,
-                research_id=None):
-    """Return one deterministic index; never discard prior batch relationships.
-
-    Legacy three-field records are upgraded in place only when a batch is
-    rebound. Broken new-schema histories fail closed rather than being reset.
-    """
-    incoming = _ids(call_ids)
-    if research_id is not None and (
-            not isinstance(research_id, str) or not research_id.strip()):
+def merge_index(existing, session_id, research_id, batch_ref, call_ids):
+    """Validate v2 identity and merge one batch without dropping other batches."""
+    index_path(".", session_id)
+    if not isinstance(research_id, str) or not research_id.strip():
         raise ModelError("model session research ID is invalid")
-    if existing is None:
-        primary = batch_ref
-        entries = {}
-    else:
+    if not isinstance(batch_ref, str) or not batch_ref:
+        raise ModelError("model session batch reference is invalid")
+    incoming = _ids(call_ids)
+    entries = {}
+    if existing is not None:
         if (not isinstance(existing, dict)
-                or existing.get("session_id") != session_id
-                or not isinstance(existing.get("batch_ref"), str)
-                or not existing["batch_ref"]):
-            raise ModelError("model session index identity is invalid")
-        prior_research = existing.get("research_id")
-        if (prior_research is not None and
-                (not isinstance(prior_research, str) or not prior_research.strip())):
-            raise ModelError("model session index research identity is invalid")
-        if (research_id is not None and prior_research is not None
-                and research_id != prior_research):
+                or set(existing) != {"schema_version", "session_id",
+                                     "research_id", "call_ids", "batches"}
+                or existing["schema_version"] != SESSION_INDEX_VERSION
+                or existing["session_id"] != session_id):
+            raise ModelError("model session index does not match current contract")
+        if existing["research_id"] != research_id:
             raise ModelError("model session ID belongs to a different research")
-        if research_id is None:
-            research_id = prior_research
-        primary = existing["batch_ref"]
-        legacy_ids = _ids(existing.get("call_ids"))
-        existing_batches = existing.get("batches")
-        if existing_batches is None:
-            entries = {primary: legacy_ids}
-        else:
-            if not isinstance(existing_batches, list):
-                raise ModelError("model session index has invalid batches")
-            entries = {}
-            for row in existing_batches:
-                if (not isinstance(row, dict)
-                        or not isinstance(row.get("batch_ref"), str)
-                        or not row["batch_ref"]
-                        or row["batch_ref"] in entries):
-                    raise ModelError("model session index has invalid batch references")
-                entries[row["batch_ref"]] = _ids(row.get("call_ids"))
-            if (primary not in entries
-                    or legacy_ids != sorted({c for ids in entries.values() for c in ids})):
-                raise ModelError("model session index conflicts with batch membership")
+        rows = existing["batches"]
+        if not isinstance(rows, list):
+            raise ModelError("model session index has invalid batches")
+        for row in rows:
+            if (not isinstance(row, dict)
+                    or set(row) != {"batch_ref", "call_ids"}
+                    or not isinstance(row["batch_ref"], str)
+                    or not row["batch_ref"]
+                    or row["batch_ref"] in entries):
+                raise ModelError("model session index has invalid batch references")
+            entries[row["batch_ref"]] = _ids(row["call_ids"])
+        aggregate = sorted({call for ids in entries.values() for call in ids})
+        if _ids(existing["call_ids"]) != aggregate:
+            raise ModelError("model session index conflicts with batch membership")
+
+    # An existing call cannot be attributed to multiple batch directories.
+    prior_members = {call: ref for ref, ids in entries.items() for call in ids
+                     if ref != batch_ref}
+    if any(call in prior_members for call in incoming):
+        raise ModelError("model session call belongs to another batch")
     entries[batch_ref] = incoming
     aggregate = sorted({call for ids in entries.values() for call in ids})
-    result = {
+    return {
+        "schema_version": SESSION_INDEX_VERSION,
         "session_id": session_id,
-        "batch_ref": primary,
+        "research_id": research_id,
         "call_ids": aggregate,
         "batches": [{"batch_ref": ref, "call_ids": entries[ref]}
                     for ref in sorted(entries)],
     }
-    if research_id is not None:
-        result["research_id"] = research_id
-    return result
