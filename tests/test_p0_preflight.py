@@ -189,6 +189,36 @@ class P0PreflightTests(unittest.TestCase):
         self.assertEqual(json.loads(output.getvalue())["brain_credentials"],
                          "BLOCKED")
 
+    def test_mock_model_registration_cannot_start_real_brain_research(self):
+        registry = json.loads(
+            registry_path(self.arguments, self.root).read_text(encoding="utf-8"))
+        registry["entries"]["fixture_mock"] = {
+            "kind": "mock", "provider": "mock", "responses": {},
+        }
+        override = self.root / "mock-registrations.json"
+        override.write_text(json.dumps(registry), encoding="utf-8")
+        args = [*self.arguments, "--registry", str(override)]
+        selected = {"lead": "fixture_mock", "executor": "fixture_mock"}
+        with self.assertRaisesRegex(ValueError, "mock model"):
+            checked_selection(selected, args, self.root)
+        with patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
+            code = entry.main([
+                *args, "--lead", "fixture_mock",
+                "--executor", "fixture_mock",
+                "run-once", "--objective", "trial",
+            ])
+        self.assertEqual(code, 2)
+        gateway.assert_not_called()
+        output = StringIO()
+        with redirect_stdout(output):
+            rc = entry.main([
+                *args, "--lead", "fixture_mock",
+                "--executor", "fixture_mock",
+                "preflight", "--region", "CHN",
+            ])
+        self.assertEqual(rc, 2)
+        self.assertEqual(json.loads(output.getvalue())["models"], "BLOCKED")
+
     def test_registered_live_cli_requires_budget_even_with_model_keys(self):
         self.cfg.write_text("{}", encoding="utf-8")
         with patch.dict(os.environ, {
