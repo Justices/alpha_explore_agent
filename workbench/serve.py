@@ -171,6 +171,8 @@ def handler_for(agent_args, port):
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=False)
+            atomic_write_json(log_path.with_suffix(".launch.json"), {
+                "args": args, "status": "starting"})
             Thread(target=run_campaign, args=(args, credentials, log_path), daemon=True).start()
         except (OSError, RuntimeError):
             launch["status"] = "failed"

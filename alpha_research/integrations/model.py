@@ -70,6 +70,8 @@ TASK_INSTRUCTIONS = {
         "Screen fields using the supplied platform catalog: field description, type, coverage, "
         "dateCoverage, alphaCount, userCount, and valueScore when present. "
         "Popularity and scores are screening signals, not proof of performance. "
+        "For routine screening, incomplete semantic detail or missing L2 notes alone "
+        "should not exclude an otherwise eligible field. "
         "For probe measures use only these exact dimension IDs: "
         + ", ".join(FIELD_EVIDENCE_KEYS) + ". "
         "Generic diagnostic simulations only provide approximate nominal coverage and, with a "
@@ -99,6 +101,9 @@ TASK_INSTRUCTIONS = {
         "operator_rationale, field_relationship, settings_rationale, failure_criterion, "
         "mechanism_tags, field_generation_tags, and variants. Use only the screened core_fields "
         "and record relevant limitations in the research rationale. "
+        "Use operator knowledge and past research to design a testable baseline when "
+        "field semantics are incomplete. State any economic interpretation as a hypothesis "
+        "and describe what the simulation can measure. "
         "Each variant needs expression and ex-ante reason. These top-level rationale "
         "fields plus hypothesis, expected_sign, and failure_criterion must be substantive, "
         "nonempty research evidence suitable for the local pre-backtest receipt. "
@@ -119,6 +124,15 @@ TASK_INSTRUCTIONS = {
         "REGULAR operator definitions and descriptions. Use them to justify the economic "
         "hypothesis, operator and window choices, and expected direction. Keep the supplied "
         "settings and Dataset fixed. Do not invent field semantics or statistical evidence. "
+        "An incomplete field description or missing exact L2 notes is not a reason to omit "
+        "a screened field. Use the supplied operator definitions and relevant prior research "
+        "to construct at least one single-field baseline. For a MATRIX field, consider a "
+        "cross-sectional rank or a historical change when the values support it. "
+        "For a VECTOR field whose values cannot safely be compared, consider a vec_count "
+        "baseline for record availability if that operator is supplied. Treat these as "
+        "exploratory associations. Record the uncertain interpretation in data_rationale, "
+        "what the transformation actually measures in operator_rationale, and a measurable "
+        "failure criterion. Do not infer a buy/sell direction from a categorical code. "
         "For each field in vector_field_ids, first choose a compatible operator from "
         "vector_adapters using its catalog description. In every expression, apply a "
         "supplied vec_* operator directly to each VECTOR field before any time-series or "
@@ -132,13 +146,14 @@ TASK_INSTRUCTIONS = {
         "field_relationship, settings_rationale, expected_behavior, and failure_criterion "
         "as substantive strings. Prefer distinct hypotheses or justified controls over parameter grids. "
         "Do not splice signals with + or *, use trade_when/add/multiply, or repeat prior expressions. "
-        "If no defensible expression is possible for a target, return an empty variants list "
-        "and an unresolved_reason for that field. For a VECTOR field, state which adapters "
-        "were considered and why they could not support the hypothesis, or that none were available. "
+        "Return an empty variants list only if a concrete field or operator constraint prevents "
+        "even a baseline from being expressed. Identify that constraint in unresolved_reason. "
         "If validation_feedback is supplied, revise only the rejected variants using their exact "
         "validation errors and preserve the target field and original economic intent. Return "
         "at most one replacement per rejected variant, in the same order, using the same fields "
         "response schema. Do not repeat any expression in prior_expressions. "
+        "A feedback entry with a null expression means the field was skipped. Give that field "
+        "one executable baseline under the supplied constraints, stating its uncertainty. "
         "If a repair cannot preserve the hypothesis using the supplied catalog, explain why."
     ),
     "attribute_results": (
@@ -149,6 +164,16 @@ TASK_INSTRUCTIONS = {
         "Report failed checks first, then measured metrics. Compare each result with the "
         "pre-registered failure criterion for its variant when supplied, and classify support, refutation, or insufficient "
         "evidence. Platform ERROR is technical, not hypothesis failure. Do not declare Candidate."
+    ),
+    "review_dataset_results": (
+        "Synthesize the supplied batch attributions for one Dataset. Explain which hypotheses "
+        "the measurements support, what failed, and the limits of the evidence. State concrete "
+        "lessons for the next study. Compare settings separately when they differ. "
+        "Return {summary, selection, selection_reason}. Select at most one Alpha for one "
+        "targeted optimization, only from eligible_sources. Use selection=null when there is "
+        "no measured and actionable hypothesis. Otherwise selection is the exact Alpha ID "
+        "and selection_reason must name a measured result, an observed weakness and a specific "
+        "improvement to test within the source scope. Never declare Candidate or authorize submission."
     ),
     "diagnose_failures": (
         "Explain the deterministic signatures without changing the gate verdict. Choose only "
@@ -324,7 +349,10 @@ class RoutedModelClient:
         self.active = None
 
     def _backend(self, task):
-        return self.backends[self.routes.get(task, self.default)]
+        route = self.routes.get(task)
+        if route is None and task == "review_dataset_results":
+            route = self.routes.get("attribute_results")
+        return self.backends[route or self.default]
 
     def config_for(self, task):
         return self._backend(task).config

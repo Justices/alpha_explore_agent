@@ -46,6 +46,7 @@ def write_campaign_summary(state, path):
         rows.append(row)
     report = {"campaign_id": state["campaign_id"], "objective": state["request"]["objective"],
               "status": state["status"], "updated_at": state["updated_at"],
+              "dataset_reviews": state.get("dataset_reviews", {}),
               "total_combinations": len(state["items"]), "combinations": rows,
               "alpha_count": sum(row["alpha_count"] for row in rows)}
     atomic_write_json(path, report)
@@ -63,11 +64,14 @@ def prior_campaign_findings(directory, current_id, items):
             matches = history.get(tuple(row.get(key) for key in scope_keys))
             if matches is None or len(matches) >= 3:
                 continue
+            dataset_summary = (report.get("dataset_reviews", {}).get(row["dataset_id"], {})
+                               .get("attribution") or {}).get("summary")
+            attribution = ([dataset_summary] if dataset_summary else []) + row["attribution"]
             matches.append({
                 "campaign_id": report["campaign_id"], "objective": report["objective"],
                 "status": row["status"], "alpha_count": row["alpha_count"],
                 "gate_counts": row["gate_counts"], "common_failures": row["common_failures"],
                 "best_sharpe": row["best_sharpe"], "attribution_status": row["attribution_status"],
-                "attribution": [text[:350] for text in row["attribution"][:2]],
+                "attribution": [text[:350] for text in attribution[:2]],
             })
     return history

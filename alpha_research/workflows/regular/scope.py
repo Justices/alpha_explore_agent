@@ -88,7 +88,14 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                 settings.append((current_delay, current_universe))
     settings = sorted(set(settings), key=lambda item: (str(item[0]), item[1]))
     if not settings:
-        raise ScopeDiscoveryError("no platform-valid settings match the requested scope")
+        available = sorted({
+            value for row in rows
+            if isinstance(row, dict) and row.get("InstrumentType") == "EQUITY"
+            and row.get("Region") == region and row.get("Delay") == delay
+            for value in row.get("Universe", []) if isinstance(value, str)})
+        raise ScopeDiscoveryError(
+            f"no platform-valid settings match Region={region!r}, Delay={delay}, "
+            f"Universe={universe!r}; available Universes: {available}")
 
     discovered = {}
     unresolved = []

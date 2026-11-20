@@ -1344,7 +1344,25 @@ class ResearchAgent:
             locked=(prereg.get("dataset_selection") or {}).get("mode") == "fixed",
             auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
             status="batch_complete")
+        if str(context.get("research_id", "")).startswith("regular:campaign:"):
+            return result
         return self._attribute_completed_batch(batch_dir, prereg, result, diagnosis)
+
+    def attribute_saved_batch(self, batch_dir, result):
+        """Attribute one verified receipt without entering simulation recovery."""
+        batch_dir = Path(batch_dir).resolve()
+        if not batch_dir.is_relative_to(self.runs_root.resolve()):
+            raise ResearchError("attribution path outside research runs")
+        intent = read_json(batch_dir / "simulation_intent.json")
+        state = read_json(batch_dir / "state.json")
+        prereg_path = batch_dir / "prereg.json"
+        if (intent.get("status") != "READ_BACK" or intent.get("alpha_ids") != result["alpha_ids"]
+                or not verify_prereg(prereg_path, state)):
+            raise ResearchError("saved attribution inputs do not match the simulation receipt")
+        if result.get("attribution_status") == "complete" and result.get("attribution"):
+            return result
+        return self._attribute_completed_batch(
+            batch_dir, read_json(prereg_path), result, read_json(batch_dir / "diagnosis.json"))
 
     def _attribute_completed_batch(self, batch_dir, prereg, result, diagnosis):
         """Record the model report separately from the durable simulation receipt."""
@@ -1369,22 +1387,63 @@ class ResearchAgent:
                     "pending_gates": gate.get("pending", []),
                     "failure_signatures": diagnosis["alphas"][alpha_id]["signatures"],
                 })
-            attribution = self._decide("attribute_results", {
-                "objective": prereg["objective"],
-                "dataset_id": prereg["dataset_id"], "scope": prereg["scope"],
-                "results": evidence}, batch_dir=batch_dir)
-            summary = attribution.get("summary") if isinstance(attribution, dict) else None
-            if not isinstance(summary, str) or not summary.strip():
-                raise ResearchError("result attribution has no summary")
         except Exception as exc:
             result.update(attribution=None, attribution_status="unresolved",
                           attribution_error={"type": type(exc).__name__, "reason": str(exc)})
-            write_progress(f"{prereg['dataset_id']} · 回测结果已保存，归因待补 · {type(exc).__name__}")
         else:
-            result.update(attribution=attribution, attribution_status="complete")
-            result.pop("attribution_error", None)
+            self._attribute_groups(batch_dir, prereg, result, evidence)
+        if result["attribution_status"] == "unresolved":
+            write_progress(f"{prereg['dataset_id']} · 回测结果已保存，归因待补 · "
+                           f"{result['attribution_error']['type']}")
         atomic_write_json(batch_dir / "results.json", result)
         return result
+
+    def _attribute_groups(self, batch_dir, prereg, result, evidence):
+        # Shorter model requests keep a slow attribution from losing the whole batch.
+        group_size = 4
+        completed = {tuple(part["alpha_ids"]): part["report"]
+                     for part in result.get("attribution_parts", [])}
+        errors = []
+        parts = []
+        for start in range(0, len(evidence), group_size):
+            group = evidence[start:start + group_size]
+            alpha_ids = tuple(row["alpha_id"] for row in group)
+            report = completed.get(alpha_ids)
+            if report is None:
+                try:
+                    report = self._decide("attribute_results", {
+                        "objective": prereg["objective"],
+                        "dataset_id": prereg["dataset_id"], "scope": prereg["scope"],
+                        "results": group}, batch_dir=batch_dir)
+                    summary = report.get("summary") if isinstance(report, dict) else None
+                    if not isinstance(summary, str) or not summary.strip():
+                        raise ResearchError("result attribution has no summary")
+                except Exception as exc:
+                    errors.append({"alpha_ids": list(alpha_ids), "type": type(exc).__name__,
+                                   "reason": str(exc)})
+                    continue
+                completed[alpha_ids] = report
+                result["attribution_parts"] = [
+                    {"alpha_ids": list(ids), "report": saved} for ids, saved in completed.items()]
+                atomic_write_json(batch_dir / "results.json", result)
+            parts.append(report)
+        if len(evidence) <= group_size:
+            attribution = parts[0] if parts else None
+        else:
+            attribution = ({
+                "summary": "\n\n".join(part["summary"] for part in parts),
+                "findings": [finding for part in parts
+                             if isinstance(part.get("findings"), list)
+                             for finding in part["findings"]
+                             if isinstance(finding, dict)],
+            } if parts else None)
+        result.update(attribution=attribution,
+                      attribution_status="unresolved" if errors else "complete")
+        if errors:
+            result.update(attribution_error=errors[0], attribution_errors=errors)
+        else:
+            result.pop("attribution_error", None)
+            result.pop("attribution_errors", None)
 
     def _finalize_remedy_outcome(self, batch_dir, prereg, diagnosis=None):
         """Idempotently record remedy outcomes only after the batch is closed."""
@@ -1523,12 +1582,8 @@ class ResearchAgent:
                 auth_mode=(self.config.get("auth") or {}).get("mode", "auto"),
                 status="batch_complete")
             if result.get("attribution_status") in {"pending", "unresolved"}:
-                if result.get("alpha_ids") != intent.get("alpha_ids"):
-                    raise ResearchError("saved attribution inputs do not match the simulation receipt")
-                diagnosis = read_json(batch_dir / "diagnosis.json")
-                if not isinstance(diagnosis, dict):
-                    raise ResearchError("saved diagnosis unavailable for attribution recovery")
-                return self._attribute_completed_batch(batch_dir, prereg, result, diagnosis)
+                if not str(context.get("research_id", "")).startswith("regular:campaign:"):
+                    return self.attribute_saved_batch(batch_dir, result)
             return result
         expressions = intent["expressions"]
         raw_path = batch_dir / "simulation_raw.json"
@@ -2284,8 +2339,6 @@ class ResearchAgent:
                               catalog, operators, operator_catalog, prior_case):
         dataset_id = context["dataset_id"]
         description = context["dataset_selection"].get("description")
-        if not isinstance(description, str) or not description.strip():
-            raise ResearchError(f"Dataset description unavailable: {dataset_id}")
         settings = self._platform_settings(context["scope"])
         seen = {expression for batch in prior_case.get("batches", [])
                 if batch.get("dataset_id") == dataset_id
@@ -2339,8 +2392,13 @@ class ResearchAgent:
                     limit = len(originals) if attempt else 3
                     if not isinstance(proposed, list) or not 1 <= len(proposed) <= limit:
                         reason = proposals[0].get("unresolved_reason") or f"expected one to {limit} variants"
-                        failures.extend([{**row, "repair_error": reason} for row in originals]
-                                        or [{"field_id": field_id, "reason": reason}])
+                        if not attempt and proposed == [] and (
+                                catalog[field_id]["type"] != "VECTOR" or vector_adapters):
+                            rejected[field_id] = [{"field_id": field_id, "expression": None,
+                                                   "reason": reason}]
+                        else:
+                            failures.extend([{**row, "repair_error": reason} for row in originals]
+                                            or [{"field_id": field_id, "reason": reason}])
                         continue
                     for variant in proposed:
                         if not isinstance(variant, dict):
@@ -2378,7 +2436,7 @@ class ResearchAgent:
                 elif rejected:
                     feedback = rejected
                     targets = list(feedback)
-                    write_progress(f"{dataset_id} · 正在将校验错误反馈给模型修订")
+                    write_progress(f"{dataset_id} · 正在反馈未生成或未通过校验的表达式")
                 else:
                     break
         plan = {"schema_version": 1, "dataset_id": dataset_id, "simulation_settings": settings,

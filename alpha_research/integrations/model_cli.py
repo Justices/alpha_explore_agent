@@ -147,7 +147,7 @@ class LocalCliModelTool:
             raise CliModelError(f"{provider} requires a native .exe on Windows")
         thread_id = _bound_thread(thread_path) if thread_path else None
         try:
-            with TemporaryDirectory(prefix="alpha-model-") as directory:
+            with TemporaryDirectory(prefix="alpha-model-", ignore_cleanup_errors=True) as directory:
                 workspace = Path(directory)
                 if thread_path:
                     workspace = thread_path.parent / "workspace"

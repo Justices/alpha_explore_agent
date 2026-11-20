@@ -13,6 +13,7 @@ from alpha_research.workflows.regular.agent import ResearchAgent, ResearchError
 from alpha_research.integrations.brain.runtime import PlatformRuntime
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.simulation.matching import SETTING_KEYS
+from alpha_research.state.store import atomic_write_json
 from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
 
@@ -382,12 +383,22 @@ class TestResearchAgent(unittest.TestCase):
             {"fields": [{"field_id": field, "variants": variants_for(field)}
                         for field in group]}
             for group in (field_ids[:8], field_ids[8:])]
+        self.model.decisions["construct_field_expressions"][0]["fields"][-1] = {
+            "field_id": "signal_7", "variants": [], "unresolved_reason": "limited field description"}
+        self.model.decisions["construct_field_expressions"].insert(1, {"fields": [
+            {"field_id": "signal_7", "variants": variants_for("signal_7")},
+        ]})
         repaired = {**variants_for("signal_8")[0],
                     "expression": "rank(ts_mean(vec_avg(signal_8), 10))"}
         self.model.decisions["construct_field_expressions"].append({"fields": [
             {"field_id": "signal_8", "variants": [repaired]},
             {"field_id": "signal_9", "variants": [variants_for("signal_9")[-1]]},
         ]})
+        self.model.decisions["review_dataset_results"] = {
+            "summary": "The successful group has measured lending signals.",
+            "selection": "A1",
+            "selection_reason": "Test smoothing of the measured lending signal to reduce turnover.",
+        }
         agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
         original_call = self.gateway.call
         submitted = []
@@ -407,7 +418,7 @@ class TestResearchAgent(unittest.TestCase):
                 ]
             if command == "simulate_batch":
                 submitted.append(params["variants"])
-                self.assertEqual(self.model.tasks.count("construct_field_expressions"), 3)
+                self.assertEqual(self.model.tasks.count("construct_field_expressions"), 4)
                 self.assertTrue(list(Path(self.tmp.name).rglob("field_research_plan.json")))
                 if len(submitted) == 1:
                     raise RuntimeError("simulated loss of execution response")
@@ -417,7 +428,22 @@ class TestResearchAgent(unittest.TestCase):
                 raise KeyboardInterrupt
             return original_call(command, **params)
 
-        with patch.object(self.gateway, "call", side_effect=call):
+        def lose_optimization_response(gateway, model, config, root, *, run_id, **kwargs):
+            self.assertEqual(kwargs["alpha_id"], "A1")
+            self.assertEqual(kwargs["expected_dataset"], "risk60")
+            self.assertEqual(kwargs["expected_settings"]["universe"], "TOP3000")
+            intent = root / "state/research_v1_1/optimization" / f"{run_id}_simulation_intent.json"
+            atomic_write_json(intent, {"status": "OUTCOME_UNKNOWN"})
+            raise RuntimeError("simulated loss of optimization response")
+
+        review_module = "alpha_research.workflows.regular.dataset_review"
+        with (
+            patch.object(self.gateway, "call", side_effect=call),
+            patch(f"{review_module}.run_optimization", side_effect=lose_optimization_response) as optimize,
+            patch(f"{review_module}.recover_simulation_intent", return_value={
+                "candidate_alpha_id": "OPT1", "candidate_status": "EVIDENCE_PENDING",
+            }) as recover_optimization,
+        ):
             request = {"objective": "test lending signals", "region": "GLB",
                        "dataset_ids": ["risk60"], "delay": 1, "universe": "TOP3000", "max_batches": 1}
             with self.assertRaises(KeyboardInterrupt):
@@ -432,10 +458,19 @@ class TestResearchAgent(unittest.TestCase):
             target_failure, = recovered["field_failures"]
             self.assertEqual(target_failure["field_id"], "signal_9")
             self.assertEqual(result["subtasks"][0]["status"], "partial")
+            self.assertEqual(result["dataset_reviews"]["risk60"]["status"], "optimization_pending")
+            self.assertEqual(result["completed"][0]["attribution_status"], "complete")
+            resumed = run_regular_campaign(agent, self.gateway, **request)
+            self.assertEqual(resumed["dataset_reviews"]["risk60"]["optimization"]["candidate_alpha_id"],
+                             "OPT1")
+            optimize.assert_called_once()
+            recover_optimization.assert_called_once()
+            self.assertEqual(self.model.tasks.count("review_dataset_results"), 1)
             child = Path(recovered["child_batches"][0]["batch_dir"])
             manifest = json.loads((child / "model_call_manifest.json").read_text(encoding="utf-8"))
             self.assertNotIn("construct_field_expressions", {row["task"] for row in manifest["calls"]})
         self.assertEqual([len(group) for group in submitted], [8, 5])
+        self.assertIn("rank(signal_7)", [row["expression"] for row in submitted[0]])
         context = self.model.contexts["construct_field_expressions"]
         self.assertEqual(context["validation_feedback"][0]["expression"], "rank(signal_8)")
         self.assertEqual(context["validation_feedback"][0]["reason"][0]["code"],
@@ -1164,6 +1199,26 @@ class TestResearchAgent(unittest.TestCase):
         self.assertNotIn("get_user_alphas", [name for name, _ in self.gateway.calls])
         self.assertEqual(sum(name == "simulate_batch"
                              for name, _ in self.gateway.calls), 1)
+
+    def test_attribution_retries_only_the_unfinished_group(self):
+        batch = Path(self.tmp.name)
+        agent = ResearchAgent(self.gateway, self.model, self.config, batch)
+        prereg = {"objective": "lending signal", "dataset_id": "risk60", "scope": {}}
+        evidence = [{"alpha_id": f"A{i}"} for i in range(1, 9)]
+        result = {"alpha_ids": [row["alpha_id"] for row in evidence]}
+        with patch.object(agent, "_decide", side_effect=[
+                RuntimeError("AGY timed out"), {"summary": "second group"},
+                {"summary": "first group"}]) as decide:
+            agent._attribute_groups(batch, prereg, result, evidence)
+            self.assertEqual(result["attribution_status"], "unresolved")
+            self.assertEqual(result["attribution"]["summary"], "second group")
+            self.assertEqual(result["attribution_error"]["alpha_ids"], ["A1", "A2", "A3", "A4"])
+            saved = json.loads((batch / "results.json").read_text(encoding="utf-8"))
+            agent._attribute_groups(batch, prereg, saved, evidence)
+        self.assertEqual(saved["attribution_status"], "complete")
+        self.assertEqual(saved["attribution"]["summary"], "first group\n\nsecond group")
+        self.assertEqual([call.args[1]["results"] for call in decide.call_args_list],
+                         [evidence[:4], evidence[4:], evidence[:4]])
 
     def test_invalid_core_field_plan_does_not_block_the_next_research(self):
         valid_plan = self.model.decisions["plan_probes"]

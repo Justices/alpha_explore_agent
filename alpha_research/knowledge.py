@@ -52,6 +52,10 @@ RULE_MAP = {
         ("canonical", "Research scope and evidence"),
         ("advisory", "## 四、Alpha 优化方法论"),
     ],
+    "review_dataset_results": [
+        ("canonical", "Model and platform responsibilities"),
+        ("canonical", "Research scope and evidence"),
+    ],
     "diagnose_failures": [
         ("canonical", "Research scope and evidence"),
         ("canonical", "Model and platform responsibilities"),
@@ -81,6 +85,7 @@ SCOPE_RULE_MAP = {
                         "7. Outputs and evidence"),
     "attribute_results": ("7. Outputs and evidence",
                           "8. Budgets, stopping and completeness"),
+    "review_dataset_results": ("5. Alpha Optimization", "7. Outputs and evidence"),
     "diagnose_failures": ("5. Alpha Optimization",
                           "7. Outputs and evidence"),
     "review_candidate": ("7. Outputs and evidence",
@@ -968,12 +973,12 @@ class KnowledgeService:
                 tags = {**query_tags, "dataset_id": candidate}
                 evidence.extend(self.search_evidence(tags, k=1, query_text=query_text,
                                                      _documents=indexed_docs))
-        elif task in {"plan_probes", "construct_batch",
+        elif task in {"plan_probes", "construct_batch", "construct_field_expressions",
                       "diagnose_failures", "decide_next"}:
             evidence = self.search_evidence(query_tags, k=5, query_text=query_text)
         unique = {item["id"]: item for item in evidence}
         l3_rows = list(unique.values())
-        if task == "select_dataset":
+        if task in {"select_dataset", "construct_field_expressions"}:
             l3_rows = [{key: item[key] for key in
                         ("id", "source", "date", "validity", "validity_reason",
                          "tags", "scope", "score", "history_only") if key in item} | {
