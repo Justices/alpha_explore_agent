@@ -74,6 +74,32 @@ class ModelTransactionBoundaryTests(unittest.TestCase):
         self.assertEqual(second_model.calls, 0)
         self.assertEqual(len(self.manifest()), 0)
 
+    def test_orphan_reservation_reports_call_id_without_implicit_settlement(self):
+        first = self.recorder()
+        with patch.object(first.journal, "persist_intent",
+                          side_effect=KeyboardInterrupt("crash after reserve")):
+            with self.assertRaisesRegex(KeyboardInterrupt, "after reserve"):
+                first.complete_json("task", {"step": 1})
+        report = first.budget.status("R1")
+        call_ids = report["unresolved_call_ids"]
+        self.assertEqual(len(call_ids), 1)
+        self.assertEqual(len(call_ids[0]), 32)
+        self.assertEqual(report["unknown_call_ids"], [])
+        self.assertEqual(self.audit(), [])
+
+        # An explicit operator acknowledgement does not claim that a
+        # provider failed or authorize another attempt in this research.
+        first.budget.acknowledge_unknown(
+            "R1", call_ids[0], reason="No verifiable durable model outcome")
+        closed = first.budget.status("R1")
+        self.assertEqual(closed["unresolved_call_ids"], [])
+        self.assertEqual(closed["unknown_call_ids"], call_ids)
+        self.assertTrue(closed["blocked"])
+        next_model = FakeModel()
+        with self.assertRaisesRegex(ValueError, "unknown model outcome"):
+            self.recorder(next_model).complete_json("task", {"step": 1})
+        self.assertEqual(next_model.calls, 0)
+
     def test_crash_between_context_and_global_audit_blocks_new_request(self):
         first_model = FakeModel()
         first = self.recorder(first_model)
