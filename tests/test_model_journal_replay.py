@@ -198,6 +198,9 @@ class JournalReplayTests(unittest.TestCase):
             self.assertFalse(hasattr(recorder, "session_calls"))
             self.assertFalse(hasattr(recorder, "global_calls_root"))
             self.assertEqual(len(recorder.journal.session_calls), 1)
+            self.assertEqual(recorder.journal.log_path,
+                             root / "logs" / "model_log.jsonl")
+            self.assertTrue(recorder.journal.log_path.exists())
             persisted = list(recorder.journal.calls_root.glob("*.record.json"))
             self.assertEqual(len(persisted), 1)
             recorder.begin_session(research_id="R2")
