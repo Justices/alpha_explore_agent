@@ -10,6 +10,7 @@ from pathlib import Path
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.sealed import is_sealed_state
 
 
 def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
@@ -66,8 +67,10 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
                 or record.get("context_sha256") != context_sha
                 or record.get("route_sha256") != route_sha):
             raise ModelError("recorded model audit identity mismatch; replay blocked")
-        if not isinstance(payload, dict):
-            raise ModelError("previous model response is malformed; retry blocked")
+        if not is_sealed_state(payload):
+            raise ModelError(
+                "previous model response integrity seal is missing or invalid; "
+                "budget reconciliation and retry blocked")
         response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
         if row.get("response_sha256") is not None and row["response_sha256"] != response_sha:
             raise ModelError("recorded model manifest checksum mismatch")
