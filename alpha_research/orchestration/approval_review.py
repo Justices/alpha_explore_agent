@@ -115,23 +115,45 @@ def reserve_review_receipt(orchestrator, receipt, *, model_profile_sha256, envir
     root = Path(orchestrator.state_root) / "state" / "research_v1_1" / "approval_reviews"
     path = root / (info["approval_id"] + ".json")
     task_path = root / "tasks" / (info["task_id"] + ".json")
+    ledger_path = root / "reservations.json"
     try:
         with SingleWriterLock(root / "reviews.lock"):
             # Re-evaluate after acquiring lock to reject task/proposal changes.
             info = verify_review_receipt(
                 orchestrator, receipt, model_profile_sha256=model_profile_sha256,
                 environ=environ, now=now)
-            if path.exists():
+            if ledger_path.exists():
+                try:
+                    ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise OrchestrationError("review ledger is unreadable; manual review required") from exc
+                if (not isinstance(ledger, dict) or set(ledger) !=
+                        {"schema_version", "by_task", "by_approval"}
+                        or type(ledger["schema_version"]) is not int
+                        or ledger["schema_version"] != SCHEMA_VERSION
+                        or not isinstance(ledger["by_task"], dict)
+                        or not isinstance(ledger["by_approval"], dict)):
+                    raise OrchestrationError("review ledger schema invalid; manual review required")
+            else:
+                ledger = {"schema_version": SCHEMA_VERSION,
+                          "by_task": {}, "by_approval": {}}
+            # Always honor older persisted projections too; existing state
+            # predating this canonical ledger must remain conservatively blocked.
+            if info["approval_id"] in ledger["by_approval"] or path.exists():
                 raise OrchestrationError("approval review ID already consumed")
-            if task_path.exists():
+            if info["task_id"] in ledger["by_task"] or task_path.exists():
                 raise OrchestrationError("task approval review already reserved")
             record = {"schema_version": SCHEMA_VERSION,
                       "status": "RESERVED_REVIEW_ONLY",
                       **info,
                       "recorded_at": datetime.now(timezone.utc).isoformat()}
-            # Task identity is the primary replay fence. Publish it first so
-            # interruption before the secondary approval-ID record remains
-            # fail-closed for this task. Never auto-clean a partial fence.
+            # A SINGLE atomic state update claims both identities. Derived
+            # task / approval files may be missing after a hard crash, but
+            # cannot grant either identity again. Never automatically repair
+            # or delete a partially projected ledger entry.
+            ledger["by_task"][info["task_id"]] = info["approval_id"]
+            ledger["by_approval"][info["approval_id"]] = info["task_id"]
+            atomic_write_json(ledger_path, ledger)
             atomic_write_json(task_path, record)
             atomic_write_json(path, record)
             return record
