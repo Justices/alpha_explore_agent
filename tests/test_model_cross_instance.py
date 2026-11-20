@@ -169,7 +169,8 @@ class CrossInstanceModelTests(unittest.TestCase):
         with SingleWriterLock(path):
             with self.assertRaisesRegex(ModelError, "another writer is updating"):
                 item.journal.sync_batch_calls(
-                    [], batch_dir=batch, session_id=item.session_id)
+                    [], batch_dir=batch, session_id=item.session_id,
+                    research_id=item.research_id)
         self.assertEqual((batch / "model_call_manifest.json").read_bytes(), before)
 
     def test_interrupted_model_call_is_not_retried_by_another_recorder(self):
