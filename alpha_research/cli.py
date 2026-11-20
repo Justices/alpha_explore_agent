@@ -271,7 +271,6 @@ def main(argv=None):
         except Exception as exc:
             # The models CLI is an operational boundary: don't leak provider
             # credential-bearing exceptions, network payloads, or raw prompts.
-            from alpha_research.integrations.model import ModelError
             if isinstance(exc, ModelRegistryError):
                 print(f"model runtime failed: {exc}", file=sys.stderr)
                 return 2
