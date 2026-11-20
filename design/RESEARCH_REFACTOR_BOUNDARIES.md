@@ -25,6 +25,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_cli.py` | Isolated CLI Agent invocation, sandbox/thread controls and CLI response admission |
 | `integrations/model_http.py` | HTTPS model API requests, headers, timeout and provider-specific response envelopes |
 | `integrations/model_json.py` | Shared JSON decision decoder for CLI, HTTPS and Antigravity SDK; adapters retain their own error contracts |
+| `integrations/model_metadata.py` | Context-scoped `last_usage`, model name, raw response and thread binding for direct HTTP/SDK clients and role routers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
 | `integrations/model_journal.py` | Single owner of session call history, durable call paths, intent/terminal writes, append-only events, batch manifests and session indices |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
@@ -81,6 +82,8 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 - `tests/test_agent_runtime_boundaries.py`:
   deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
+- `tests/test_agent_runtime_concurrency.py`:
+  per-backend execution exclusion, independently parallel backends, concurrent lazy cache construction, per-invocation usage isolation and shared-recorder audit safety
 - `tests/test_orchestrator.py`:
   includes receipt-path containment and nonstring journal-path rejection before any external file read
 - `tests/test_orchestration_concurrency.py`:
@@ -153,3 +156,26 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - This guarantee is scoped to processes observing the **same local filesystem
   locks**. No network-filesystem/distributed lock semantics are assumed.
   Task checkpoint and model budget ledgers remain distinct state machines.
+
+## Agent invocation concurrency contracts
+
+- A `RoleRoutedModelClient` constructs a backend instance once under its
+  short-lived factory lock and uses a **separate lock for each backend ID**
+  across the full `complete_json` call and metadata capture. Two tasks
+  sharing the same registered backend are serialized; separate backends
+  may run concurrently even when they share the router object.
+- All `last_usage`, `last_model`, `last_response_text` and
+  `last_thread_id` observations are **invocation-context-local**. The
+  shared `InvocationMetadata` helper provides copy-on-write ContextVar
+  storage for role routers, standalone HTTPS clients and Antigravity SDK
+  clients. Callers cannot mutate another invocation's usage dictionary.
+  Failure before transport validation clears stale success metadata.
+- `DecisionRecorder` holds a recorder-local re-entrant lock while
+  switching sessions, rebinding a batch or recording an entire model
+  invocation. This prevents in-memory session history and manifest writes
+  from racing when one recorder is reused by multiple threads.
+- These are **in-process runtime guarantees**, not a distributed provider
+  request lock. The CLI's coarse-grained `state/agent.lock`, persisted
+  in-flight intents and budget-ledger protections remain authoritative
+  for separate processes. An unknown remote result is never silently
+  retried. No model-call audit schema or route fingerprint was changed.
