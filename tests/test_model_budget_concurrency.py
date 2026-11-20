@@ -161,6 +161,23 @@ class BudgetConcurrencyTests(unittest.TestCase):
         self.assertEqual((state["attempts"], state["successful"],
                           state["reported_tokens"]), (1, 1, 12))
 
+    def test_rapid_cross_thread_ledger_lock_turnover_keeps_file_initialized(self):
+        ledger = self.ledger()
+        ledger.reserve("R1", "C1", task="task")
+        _, lock_path = ledger._paths("R1")
+        start = threading.Barrier(4, timeout=8)
+
+        def report():
+            start.wait()
+            return [ledger.status("R1")["attempts"] for _ in range(12)]
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            jobs = [pool.submit(report) for _ in range(3)]
+            start.wait()
+            for job in jobs:
+                self.assertEqual(job.result(timeout=15), [1] * 12)
+        self.assertGreaterEqual(lock_path.stat().st_size, 1)
+
     def test_child_process_waits_for_parent_ledger_lock_then_reads(self):
         ledger = self.ledger()
         ledger.reserve("R1", "C1", task="task")
