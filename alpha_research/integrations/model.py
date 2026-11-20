@@ -41,6 +41,8 @@ class ConfiguredModelClient:
         self.last_model = None
         self.last_thread_id = None
         provider = self.config.get("provider")
+        if not isinstance(provider, str):
+            raise ModelError("model provider must be a nonempty string")
         if provider in CLI_COMMANDS:
             return complete_cli(self, task, context, thread_path=thread_path)
         if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
