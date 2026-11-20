@@ -2,6 +2,7 @@
 import copy
 import json
 import unittest
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 from alpha_research.agents.antigravity import AntigravityModelClient
@@ -22,7 +23,9 @@ def minimal_config():
         "roles": {"research_lead": {"backend": "test_api"}},
         "task_roles": {"plan_experiments": "research_lead"},
         "backends": {
-            "test_api": {"provider": "json_http", "url": "https://api.example.invalid/v1"}
+            "test_api": {"provider": "openai_sdk",
+                         "base_url": "https://api.example.invalid/v1",
+                         "model": "offline-model", "api_key_env": "OFFLINE_KEY"}
         },
     }
 
@@ -44,16 +47,34 @@ class PromptBoundaryTests(unittest.TestCase):
 
     def test_api_transport_uses_shared_task_instructions(self):
         requests = []
+
+        class SDK:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def __init__(self):
+                self.chat = SimpleNamespace(completions=SimpleNamespace(
+                    create=self.create))
+            def create(self, **kwargs):
+                requests.append(kwargs)
+                return SimpleNamespace(
+                    model="offline-model", usage=None,
+                    choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"ok":true}'))])
+
         client = ConfiguredModelClient(
-            {"provider": "json_http", "url": "https://api.example.invalid/v1"},
-            transport=lambda url, headers, payload: (
-                requests.append(payload) or {"result": {"ok": True}}
-            ),
-            environ={},
+            {"provider": "openai_sdk",
+             "base_url": "https://api.example.invalid/v1",
+             "model": "offline-model", "api_key_env": "OFFLINE_KEY"},
+            sdk_factory=lambda **kw: SDK(),
+            environ={"OFFLINE_KEY": "fixture"},
         )
         self.assertEqual(client.complete_json("plan_experiments", {"round": 1}),
                          {"ok": True})
-        self.assertEqual(requests[0]["instruction"], instruction_for("plan_experiments"))
+        self.assertEqual(
+            json.loads(requests[0]["messages"][0]["content"])["instruction"],
+            instruction_for("plan_experiments"))
 
     def test_agy_transport_uses_same_task_rules_without_real_sdk(self):
         client = AntigravityModelClient(
@@ -75,11 +96,11 @@ class RoutingValidationTests(unittest.TestCase):
         source = minimal_config()
         parsed = RoleRoutingConfig.parse(source)
         source["roles"]["research_lead"]["backend"] = "unknown"
-        source["backends"]["test_api"]["url"] = "http://not-safe"
+        source["backends"]["test_api"]["base_url"] = "http://not-safe"
         source["task_roles"]["plan_experiments"] = "unknown"
         selected = parsed.resolve("plan_experiments")
         self.assertEqual(selected.backend_name, "test_api")
-        self.assertEqual(selected.backend["url"], "https://api.example.invalid/v1")
+        self.assertEqual(selected.backend["base_url"], "https://api.example.invalid/v1")
 
     def test_malformed_nested_types_fail_as_config_errors(self):
         for item, replacement in (
@@ -96,8 +117,8 @@ class RoutingValidationTests(unittest.TestCase):
                     }
                 elif item == "response_format":
                     source["backends"]["test_api"] = {
-                        "provider": "openai_compatible", "model": "test",
-                        "url": "https://api.example.invalid/v1",
+                        "provider": "openai_sdk", "model": "test",
+                        "base_url": "https://api.example.invalid/v1",
                         "api_key_env": "API_TEST_KEY",
                         "response_format": replacement,
                     }
@@ -128,8 +149,8 @@ class RoutingValidationTests(unittest.TestCase):
         ):
             with self.subTest(url=url):
                 source = minimal_config()
-                source["backends"]["test_api"]["url"] = url
-                with self.assertRaisesRegex(AgentConfigError, "HTTPS URL"):
+                source["backends"]["test_api"]["base_url"] = url
+                with self.assertRaisesRegex(AgentConfigError, "HTTPS API base_url"):
                     RoleRoutingConfig.parse(source)
 
     def test_cli_executable_and_agy_key_must_not_be_blank(self):
