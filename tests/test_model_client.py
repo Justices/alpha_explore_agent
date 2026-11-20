@@ -12,17 +12,18 @@ from alpha_research.integrations.model import ConfiguredModelClient, DecisionRec
 
 
 class TestConfiguredModelClient(unittest.TestCase):
-    def test_attribution_requests_json_and_retains_invalid_model_text(self):
-        agy = {"event": "result", "result": {"status": "SUCCESS",
-               "response": "The simulations did not support the hypothesis."}}
-        client = ConfiguredModelClient({"provider": "agy_cli"})
+    def test_claude_invalid_decision_preserves_raw_response(self):
+        output = {"type": "result", "subtype": "success",
+                  "result": "The simulations did not support the hypothesis."}
+        client = ConfiguredModelClient({"provider": "claude_cli"})
         with patch("shutil.which", return_value=sys.executable), \
-                patch("subprocess.run", return_value=CompletedProcess([], 0, json.dumps(agy), "")) as run:
+                patch("subprocess.run", return_value=CompletedProcess(
+                    [], 0, json.dumps(output), "")) as run:
             with self.assertRaisesRegex(ModelError, "invalid JSON decision"):
                 client.complete_json("attribute_results", {})
-        prompt = json.loads(json.loads(run.call_args.kwargs["input"])["message"]["content"])
+        prompt = json.loads(run.call_args.kwargs["input"])
         self.assertIn("exactly one JSON object", prompt["instruction"])
-        self.assertEqual(client.last_response_text, agy["result"]["response"])
+        self.assertEqual(client.last_response_text, output["result"])
 
     def test_codex_thread_is_resumed_by_research_id_across_recorders(self):
         thread_ids = iter(["11111111-1111-4111-8111-111111111111",
@@ -71,37 +72,50 @@ class TestConfiguredModelClient(unittest.TestCase):
                     recorder.complete_json("plan_probes", {})
             self.assertEqual(run.call_count, 1)
 
-    def test_configured_routes_use_agy_and_record_selected_backend(self):
+    def test_role_router_selects_claude_runtime_and_records_identity(self):
         from alpha_research.integrations.model import build_model_client
 
-        agy = {"event": "result", "result": {"status": "SUCCESS",
-               "response": '{"classification":"fixture"}',
-               "usage": {"input_tokens": 7, "output_tokens": 2}}}
+        output = {"type": "result", "subtype": "success",
+                  "result": '{"classification":"fixture"}',
+                  "usage": {"input_tokens": 7, "output_tokens": 2}}
         model = build_model_client({
-            "provider": "router", "default": "http",
-            "routes": {"attribute_results": "agy", "diagnose_failures": "agy"},
-            "backends": {"agy": {"provider": "agy_cli", "executable": "agy"},
-                         "http": {"provider": "json_http", "url": "https://model.example"}},
+            "provider": "role_router", "default_role": "research_lead",
+            "task_roles": {"attribute_results": "research_executor",
+                           "diagnose_failures": "research_executor"},
+            "roles": {"research_lead": {"backend": "http"},
+                      "research_executor": {"backend": "claude"}},
+            "backends": {
+                "claude": {"provider": "claude_cli", "session": "ephemeral"},
+                "http": {"provider": "json_http", "url": "https://model.example"},
+            },
         })
         with tempfile.TemporaryDirectory() as root, \
                 patch("shutil.which", return_value=sys.executable), \
                 patch("subprocess.run", return_value=CompletedProcess(
-                    [], 0, json.dumps(agy), "")) as run:
+                    [], 0, json.dumps(output), "")) as run:
             recorder = DecisionRecorder(model, Path(root))
             for task in ("attribute_results", "diagnose_failures"):
                 self.assertEqual(recorder.complete_json(task, {}),
                                  {"classification": "fixture"})
             self.assertEqual(run.call_count, 2)
             command = run.call_args.args[0]
-            self.assertIn("--input-format=stream-json", command)
-            self.assertNotIn("diagnose_failures", command)
+            self.assertIn("--no-session-persistence", command)
+            self.assertIn("--tools", command)
             prompt = json.loads(run.call_args.kwargs["input"])
-            self.assertIn("diagnose_failures", prompt["message"]["content"])
+            self.assertEqual(prompt["task"], "diagnose_failures")
             rows = [json.loads(path.read_text(encoding="utf-8")) for path in
                     (Path(root) / "logs" / "model_calls").glob("*.record.json")]
-            self.assertEqual({row["provider"] for row in rows}, {"agy_cli"})
+            self.assertEqual({row["provider"] for row in rows}, {"claude_cli"})
+            self.assertEqual({row["agent_role"] for row in rows}, {"research_executor"})
             self.assertEqual({row["token_in"] for row in rows}, {7})
             self.assertEqual(model.config_for("construct_batch")["provider"], "json_http")
+
+    def test_old_router_and_agy_cli_are_not_runtime_entrypoints(self):
+        from alpha_research.integrations.model import build_model_client
+        with self.assertRaisesRegex(ModelError, "provider=role_router"):
+            build_model_client({"provider": "router", "backends": {}})
+        with self.assertRaisesRegex(ModelError, "provider=role_router"):
+            build_model_client({"provider": "agy_cli"})
 
     def test_codex_and_claude_tools_parse_json_and_usage(self):
         fixtures = {

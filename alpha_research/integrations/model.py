@@ -366,66 +366,13 @@ class ConfiguredModelClient:
         return result
 
 
-class RoutedModelClient:
-    """Select a configured backend for each decision node."""
-
-    def __init__(self, config):
-        backends = config.get("backends")
-        routes = config.get("routes", {})
-        default = config.get("default")
-        if (not isinstance(backends, dict) or not isinstance(routes, dict)
-                or not isinstance(default, str) or default not in backends
-                or any(not isinstance(value, str) or value not in backends
-                       for value in routes.values())):
-            raise ModelError("model router requires a default and routes to defined backends")
-        providers = {*CLI_COMMANDS, "json_http", "openai_compatible", "anthropic_compatible"}
-        if any(not isinstance(item, dict) or not isinstance(item.get("provider"), str)
-               or item["provider"] not in providers for item in backends.values()):
-            raise ModelError("model router backend provider is unsupported")
-        self.backends = {name: ConfiguredModelClient(item) for name, item in backends.items()}
-        self.routes = routes
-        self.default = default
-        self.active = None
-
-    def _backend(self, task):
-        route = self.routes.get(task)
-        if route is None and task == "review_dataset_results":
-            route = self.routes.get("attribute_results")
-        return self.backends[route or self.default]
-
-    def config_for(self, task):
-        return self._backend(task).config
-
-    @property
-    def last_usage(self):
-        return getattr(self.active, "last_usage", None)
-
-    @property
-    def last_response_text(self):
-        return getattr(self.active, "last_response_text", None)
-
-    @property
-    def last_model(self):
-        return getattr(self.active, "last_model", None)
-
-    @property
-    def last_thread_id(self):
-        return getattr(self.active, "last_thread_id", None)
-
-    def complete_json(self, task, context, *, thread_path=None):
-        self.active = self._backend(task)
-        return self.active.complete_json(task, context, thread_path=thread_path)
-
-
 def build_model_client(config):
     if not isinstance(config, dict):
         raise ModelError("model configuration must be an object")
-    if config.get("provider") == "role_router":
-        from alpha_research.agents.router import RoleRoutedModelClient
-        return RoleRoutedModelClient(config)
-    if config.get("provider") == "router":
-        return RoutedModelClient(config)
-    return ConfiguredModelClient(config)
+    if config.get("provider") != "role_router":
+        raise ModelError("model runtime requires provider=role_router and registered roles")
+    from alpha_research.agents.router import RoleRoutedModelClient
+    return RoleRoutedModelClient(config)
 
 
 def _json_bytes(value):

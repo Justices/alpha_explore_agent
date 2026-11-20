@@ -14,7 +14,6 @@ from alpha_research.state.store import atomic_write_json
 
 CLI_COMMANDS = {
     "codex_cli": "codex",
-    "agy_cli": "agy",
     "claude_cli": "claude",
 }
 _CLI_ENVIRONMENT = {
@@ -30,20 +29,6 @@ class CliModelError(RuntimeError):
 
 
 def _command(provider, executable, workspace, prompt, *, persistent=False, thread_id=None):
-    if provider == "agy_cli":
-        settings = workspace / "agy-settings.json"
-        settings.write_text(json.dumps({
-            "toolPermission": "strict",
-            "permissions": {"deny": [
-                "command(*)", "read_file(*)", "write_file(*)",
-                "read_url(*)", "execute_url(*)", "mcp(*)",
-            ]},
-        }), encoding="utf-8")
-        return [executable, "--print=", "--input-format=stream-json",
-                "--output-format=stream-json", "--sandbox", "--disable-slash-commands",
-                f"--settings={settings}"], json.dumps({
-                    "event": "user", "message": {"content": prompt},
-                }, ensure_ascii=False) + "\n"
     if provider == "claude_cli":
         return [executable, "--print", "--output-format", "json",
                 "--no-session-persistence", "--setting-sources", "",
@@ -109,11 +94,6 @@ def _response(provider, stdout):
             raise CliModelError("Claude CLI did not complete a decision")
         return result["result"], result.get("usage"), result.get("model")
     events = [json.loads(line) for line in stdout.splitlines() if line.strip()]
-    if provider == "agy_cli":
-        result, = [event["result"] for event in events if event.get("event") == "result"]
-        if result["status"] != "SUCCESS":
-            raise CliModelError("AGY CLI did not complete a decision")
-        return result["response"], result.get("usage"), result.get("model")
     completed, = [event for event in events if event.get("type") == "turn.completed"]
     messages = [event["item"]["text"] for event in events
                 if event.get("type") == "item.completed"
@@ -128,6 +108,8 @@ class LocalCliModelTool:
 
     def invoke(self, prompt, *, thread_path=None):
         provider = self.config["provider"]
+        if provider not in CLI_COMMANDS:
+            raise CliModelError(f"unsupported CLI runtime: {provider}")
         name = self.config.get("executable") or CLI_COMMANDS[provider]
         if not isinstance(name, str):
             raise CliModelError("local model executable must be a path or program name")
