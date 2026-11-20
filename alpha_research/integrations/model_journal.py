@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import time
+from uuid import uuid4
 import hashlib
 from pathlib import Path
 
@@ -69,6 +70,20 @@ class ModelCallJournal:
         self.session_calls.append(call)
         self.sync_batch_calls([call], batch_dir=batch_dir, session_id=session_id)
 
+
+    @staticmethod
+    def _copy_batch_evidence(source, destination):
+        """Expose only complete copies, never partially written audit files."""
+        destination = Path(destination)
+        temporary = destination.with_name(
+            destination.name + ".tmp-" + uuid4().hex)
+        try:
+            shutil.copy2(source, temporary)
+            with temporary.open("r+b") as handle:
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+        finally:
+            temporary.unlink(missing_ok=True)
 
     def append_event(self, record):
         """Append one audit EVENT; .record.json remains the latest-state source.
@@ -155,10 +170,10 @@ class ModelCallJournal:
             if valid_copy:
                 continue
             if not copied_context.exists():
-                shutil.copy2(context_path, copied_context)
-            shutil.copy2(record_path, copied_record)
+                self._copy_batch_evidence(context_path, copied_context)
+            self._copy_batch_evidence(record_path, copied_record)
             if response_path.exists():
-                shutil.copy2(response_path, copied_response)
+                self._copy_batch_evidence(response_path, copied_response)
             entries[record["call_id"]] = entry
             changed = True
         if changed:
