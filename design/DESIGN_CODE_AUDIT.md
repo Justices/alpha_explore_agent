@@ -115,6 +115,12 @@ GitHub Actions [44748199366](https://github.com/Justices/alpha_explore_agent/act
 
 GitHub Actions [44749354566](https://github.com/Justices/alpha_explore_agent/actions/runs/44749354566) 对应代码提交 `c04c5c0e6327e4e8f0d58223da081ee0d825d2f1`。已读取原始日志：**Linux 626 tests, OK（18.013 秒）**、**Windows 626 tests, OK（115.647 秒）**，AGY SDK 契约 Job 通过。此项仅验证审查收据的离线安全合同，**不代表**已经签发受信任的人类授权、实现真实生产执行或取得 BRAIN 端到端许可。
 
+### P1.6 双平台离线验收（2026-11-20）
+
+GitHub Actions [44750223262](https://github.com/Justices/alpha_explore_agent/actions/runs/44750223262) 对应代码提交 `6bb5c644c9d49d8d2edd4466ec9ec32dfc766879`；读取两平台完整 Job 日志确认：**Linux 629 tests, OK（26.111 秒）**、**Windows 629 tests, OK（153.494 秒）**，AGY SDK 契约检查通过。覆盖同任务审批 ID 轮换防重放、双索引写入崩溃间隙及审查后 Production Adapter 仍禁止执行。
+
+此结果确认的是离线状态一致性和 fail-closed 行为。跨进程强制终止与真正的授权发行/生产执行仍未完成，不能推论真实 BRAIN 调用安全已验收。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
