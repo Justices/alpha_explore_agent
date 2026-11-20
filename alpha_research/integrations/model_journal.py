@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_evidence import check_trusted_path
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
@@ -38,8 +39,11 @@ class ModelCallJournal:
 
     def persist_intent(self, record, context, *, batch_dir, session_id):
         """Write the call intent and batch references before the provider runs."""
+        check_trusted_path(self.calls_root, label="global calls directory")
         self.calls_root.mkdir(parents=True, exist_ok=True)
         context_path, response_path, record_path = self.call_paths(record["call_id"])
+        for path in (context_path, response_path, record_path):
+            check_trusted_path(path, label="global model evidence")
         atomic_write_json(context_path, context)
         atomic_write_json(record_path, record)
         call = (record, context_path, response_path, record_path)
@@ -129,7 +133,8 @@ class ModelCallJournal:
         Batch -> session is the only lock order. A bounded wait permits two
         independent batches of one session to merge without lost updates.
         """
-        target = index_path(self.logs_root, session_id)
+        target = check_trusted_path(
+            index_path(self.logs_root, session_id), label="session index")
         target.parent.mkdir(parents=True, exist_ok=True)
         deadline = time.monotonic() + 2.0
         while True:
@@ -154,6 +159,10 @@ class ModelCallJournal:
         if session_id is None or not isinstance(research_id, str) or not research_id.strip():
             raise ModelError("model session and research IDs are required for batch sync")
         batch_dir = Path(batch_dir).resolve()
+        check_trusted_path(batch_dir / "model_call_manifest.json",
+                           label="batch manifest")
+        check_trusted_path(batch_dir / "model_calls",
+                           label="batch evidence directory")
         # The lock spans read -> merge -> copies -> manifest/index write.
         # Provider calls never hold this *manifest* lock.
         try:
@@ -171,7 +180,8 @@ class ModelCallJournal:
         """Rebinding completed calls is idempotent; never re-copy unchanged rows."""
         target = batch_dir / "model_calls"
         target.mkdir(parents=True, exist_ok=True)
-        manifest_path = batch_dir / "model_call_manifest.json"
+        manifest_path = check_trusted_path(
+            batch_dir / "model_call_manifest.json", label="batch manifest")
         try:
             previous = json.loads(manifest_path.read_text(encoding="utf-8"))
         except FileNotFoundError:
@@ -189,9 +199,20 @@ class ModelCallJournal:
         entries = {row["call_id"]: row for row in rows}
         changed = not manifest_path.exists()
         for record, context_path, response_path, record_path in calls:
-            copied_context = target / context_path.name
-            copied_response = target / response_path.name
-            copied_record = target / record_path.name
+            # Copy only artifacts generated under this state root.
+            canonical_sources = self.call_paths(record["call_id"])
+            for actual, expected in zip(
+                    (context_path, response_path, record_path),
+                    canonical_sources):
+                if Path(actual) != expected:
+                    raise ModelError("model evidence source is not canonical")
+                check_trusted_path(actual, label="global model evidence")
+            copied_context = check_trusted_path(
+                target / context_path.name, label="batch context")
+            copied_response = check_trusted_path(
+                target / response_path.name, label="batch response")
+            copied_record = check_trusted_path(
+                target / record_path.name, label="batch audit")
             entry = {
                 "call_id": record["call_id"], "task": record["task"],
                 "session_id": record.get("session_id"),
