@@ -15,7 +15,7 @@ from alpha_research.agents.registry import (
 from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.probe import run_model_probe, ModelProbeError
-from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError
+from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError, validate_policy
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
@@ -582,6 +582,9 @@ def main(argv=None):
         else:
             cfg["model"] = load_role_profile(cfg)
             if registry_assignments:
+                # Explicit real backend selection must not silently run with
+                # an absent or malformed model-attempt governance policy.
+                validate_policy(cfg.get("model_governance"))
                 catalog = load_registry(registry_path)
                 cfg["model"] = select_registered_backends(
                     cfg["model"], catalog, assignments=registry_assignments)
