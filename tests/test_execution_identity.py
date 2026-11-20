@@ -1,15 +1,21 @@
 """Offline identity snapshot tests: no provider or BRAIN sessions."""
 import copy
+import hashlib
+import hmac
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from alpha_research.agents.registry import (
     bundled_registry_path, load_registry, load_role_profile, select_registered_backends,
 )
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
+from alpha_research.orchestration.approval_review import KEY_ENV, SIGNING_CONTEXT
+from alpha_research.state.fingerprint import canonical_json_bytes
 from alpha_research.orchestration.execution_identity import (
     build_execution_identity, persist_execution_identity, inspect_execution_identity,
+    verify_identity_bound_review,
 )
 
 POLICY = {"max_calls": 3, "max_reported_tokens": 2000, "failover": "manual"}
@@ -85,6 +91,48 @@ class ExecutionIdentityTests(unittest.TestCase):
             with self.assertRaises(OrchestrationError):
                 build_execution_identity(
                     other, task["task_id"], self.model_config, POLICY)
+
+    def test_review_receipt_must_match_persisted_selected_model_profile(self):
+        identity = persist_execution_identity(
+            self.runner, self.task["task_id"], self.model_config, POLICY)["identity"]
+        now = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+        key = "test-only-pinned-review-key-at-least-32-characters"
+        claims = {
+            "schema_version": 1, "approval_id": "f" * 32,
+            "issuer": "offline-contract-test", "task_id": self.task["task_id"],
+            "workflow": self.task["workflow"],
+            "request_sha256": self.task["request_sha256"],
+            "proposal_sha256": identity["proposal_sha256"],
+            "model_profile_sha256": identity["model_profile_sha256"],
+            "operation": "review_execution_proposal",
+            "max_execution_attempts": 1,
+            "issued_at": (now - timedelta(minutes=1)).isoformat(),
+            "expires_at": (now + timedelta(minutes=5)).isoformat(),
+        }
+        signature = hmac.new(
+            key.encode("utf-8"), SIGNING_CONTEXT + canonical_json_bytes(claims),
+            hashlib.sha256).hexdigest()
+        receipt = {"claims": claims, "signature": signature}
+        args = {"environ": {KEY_ENV: key}, "now": now}
+        checked = verify_identity_bound_review(
+            self.runner, self.task["task_id"],
+            self.model_config, POLICY, receipt, **args)
+        self.assertTrue(checked["verified"])
+        self.assertFalse(checked["model_call_authorized"])
+        consumed = verify_identity_bound_review(
+            self.runner, self.task["task_id"], self.model_config, POLICY,
+            receipt, consume=True, **args)
+        self.assertFalse(consumed["simulation_authorized"])
+        with self.assertRaisesRegex(OrchestrationError, "already consumed"):
+            verify_identity_bound_review(
+                self.runner, self.task["task_id"], self.model_config, POLICY,
+                receipt, consume=True, **args)
+        different = copy.deepcopy(self.model_config)
+        different["task_roles"]["attribute_results"] = "research_lead"
+        with self.assertRaisesRegex(OrchestrationError, "drift"):
+            verify_identity_bound_review(
+                self.runner, self.task["task_id"], different, POLICY,
+                receipt, **args)
 
     def test_preparation_never_unlocks_production_execution(self):
         from alpha_research.orchestration.production_adapter import ProductionWorkflowAdapter
