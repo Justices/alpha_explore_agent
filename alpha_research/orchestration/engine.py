@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _hash
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.state.records import ResearchRecordStore
@@ -54,6 +55,12 @@ class MainOrchestrator:
             raise OrchestrationError("invalid task ID")
         return self.root / f"{task_id}.json"
 
+    def _mutation_lock_path(self, task_id):
+        return self._path(task_id).with_suffix(".write.lock")
+
+    def _execution_lock_path(self, task_id):
+        return self._path(task_id).with_suffix(".execute.lock")
+
     def load(self, task_id):
         path = self._path(task_id)
         task = json.loads(path.read_text(encoding="utf-8"))
@@ -65,15 +72,21 @@ class MainOrchestrator:
 
     def _save(self, task, *, expected=None):
         path = self._path(task["task_id"])
-        if expected is None and path.exists():
-            raise OrchestrationError("task already exists")
-        if expected is not None:
-            current = self.load(task["task_id"])
-            if current["updated_at"] != expected:
-                raise OrchestrationError("concurrent task update")
-        task["updated_at"] = _now(expected)
-        atomic_write_json(path, task)
-        return copy.deepcopy(task)
+        # Compare-and-save must be one filesystem-serialized transaction.
+        # Otherwise independent runners can both observe the same version.
+        try:
+            with SingleWriterLock(self._mutation_lock_path(task["task_id"])):
+                if expected is None and path.exists():
+                    raise OrchestrationError("task already exists")
+                if expected is not None:
+                    current = self.load(task["task_id"])
+                    if current["updated_at"] != expected:
+                        raise OrchestrationError("concurrent task update")
+                task["updated_at"] = _now(expected)
+                atomic_write_json(path, task)
+                return copy.deepcopy(task)
+        except WriterLockError as exc:
+            raise OrchestrationError("another writer is updating this task") from exc
 
     def create(self, workflow, request, *, task_id=None, budget=1):
         if workflow not in WORKFLOWS:
@@ -129,6 +142,19 @@ class MainOrchestrator:
             "kind": kind, "ref": str(path), "bound_at": _now()})
 
     def execute(self, task_id):
+        """Fail fast on concurrent executors before touching RUNNING state.
+
+        The lock is held across the injected adapter call. Recovery-target
+        callbacks take a separate short-lived mutation lock, not this one.
+        """
+        try:
+            with SingleWriterLock(self._execution_lock_path(task_id)):
+                return self._execute_locked(task_id)
+        except WriterLockError as exc:
+            raise OrchestrationError(
+                "another executor is already running this task") from exc
+
+    def _execute_locked(self, task_id):
         if self.adapter is None:
             raise OrchestrationError("offline adapter is required; live dispatch is disabled")
         task = self.load(task_id)
@@ -190,6 +216,18 @@ class MainOrchestrator:
         return self.execute(task_id)
 
     def reconcile(self, task_id, step, outcome, *, receipt_ref=None, receipt_sha256=None):
+        """Reconcile only when no other executor owns this task."""
+        try:
+            with SingleWriterLock(self._execution_lock_path(task_id)):
+                return self._reconcile_locked(
+                    task_id, step, outcome,
+                    receipt_ref=receipt_ref, receipt_sha256=receipt_sha256)
+        except WriterLockError as exc:
+            raise OrchestrationError(
+                "another executor is already running this task") from exc
+
+    def _reconcile_locked(self, task_id, step, outcome, *,
+                          receipt_ref=None, receipt_sha256=None):
         """Accept a checkpoint only when backed by a coordinator-issued durable receipt."""
         task = self.load(task_id)
         if (task["status"] != "BLOCKED" or task.get("failure", {}).get("step") != step
