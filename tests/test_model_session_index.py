@@ -104,6 +104,7 @@ class SessionIndexTests(unittest.TestCase):
         r.complete_json("first", {"round": 1})
         legacy = self.index()
         legacy.pop("batches")
+        legacy.pop("research_id")
         self.index_path.write_text(json.dumps(legacy), encoding="utf-8")
         r.bind_batch(b)
         r.complete_json("second", {"round": 2})
@@ -184,6 +185,50 @@ class SessionIndexTests(unittest.TestCase):
                     r.begin_session(invalid, research_id="R1")
                 self.assertIsNone(r.session_id)
         self.assertFalse((self.root / "logs" / "outside.json").exists())
+
+    def test_session_id_cannot_be_reused_by_a_different_research(self):
+        first = self.recorder(research_id="R1")
+        first.bind_batch(self.root / "a")
+        first.complete_json("first", {"round": 1})
+        before = self.index_path.read_bytes()
+        second_model = CountingModel()
+        contender = self.recorder(model=second_model, research_id="R2")
+        with self.assertRaisesRegex(ModelError, "different research"):
+            contender.bind_batch(self.root / "b")
+        self.assertIsNone(contender.batch_dir)
+        self.assertEqual(second_model.calls, 0)
+        self.assertEqual(self.index_path.read_bytes(), before)
+        self.assertEqual(self.index()["research_id"], "R1")
+
+    def test_legacy_index_rejects_conflicting_research_based_on_saved_audit(self):
+        first = self.recorder(research_id="R1")
+        first.bind_batch(self.root / "a")
+        first.complete_json("first", {"round": 1})
+        legacy = self.index()
+        legacy.pop("research_id")
+        legacy.pop("batches")
+        self.index_path.write_text(json.dumps(legacy), encoding="utf-8")
+        contender = self.recorder(research_id="R2")
+        with self.assertRaisesRegex(ModelError, "audit research identity mismatch"):
+            contender.bind_batch(self.root / "b")
+        self.assertIsNone(contender.batch_dir)
+        self.assertNotIn("research_id", self.index())
+
+    def test_legacy_index_with_missing_audit_fails_closed(self):
+        first = self.recorder(research_id="R1")
+        first.bind_batch(self.root / "a")
+        first.complete_json("first", {"round": 1})
+        legacy = self.index()
+        legacy.pop("research_id")
+        legacy.pop("batches")
+        self.index_path.write_text(json.dumps(legacy), encoding="utf-8")
+        call_id = legacy["call_ids"][0]
+        (self.root / "logs" / "model_calls" /
+         f"{call_id}.record.json").unlink()
+        resumed = self.recorder(research_id="R1")
+        with self.assertRaisesRegex(ModelError, "lacks verifiable"):
+            resumed.bind_batch(self.root / "b")
+        self.assertIsNone(resumed.batch_dir)
 
     def test_pure_index_merge_rejects_conflicting_aggregate(self):
         index = {
