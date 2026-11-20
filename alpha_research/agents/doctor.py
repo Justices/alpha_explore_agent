@@ -66,8 +66,15 @@ def check_registered_roles(model_config, *, environ=None,
             endpoint_valid = url.scheme == "https" and bool(url.hostname)
             installed = _openai_sdk_present()
             ready = endpoint_valid and has_key and installed
+            missing = []
+            if not installed:
+                missing.append("OpenAI Python SDK not installed")
+            if not endpoint_valid:
+                missing.append("HTTPS base_url invalid")
+            if not has_key:
+                missing.append("model credential environment missing: " + env_name)
             reason = ("OpenAI Python SDK and model credential configured; remote access unverified"
-                      if ready else "OpenAI Python SDK, HTTPS base_url, or model credential missing")
+                      if ready else "; ".join(missing))
         else:
             ready = False
             reason = "unsupported model provider"
