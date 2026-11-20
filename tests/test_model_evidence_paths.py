@@ -196,6 +196,65 @@ class ReplayEvidencePathsTests(unittest.TestCase):
             self.replay_without_binding(model)
         self.assertEqual(model.calls, 0)
 
+    def test_symlinked_manifest_is_rejected_during_batch_binding(self):
+        outside = self.root / "external-manifest.json"
+        outside.write_bytes(self.manifest_path.read_bytes())
+        self.manifest_path.unlink()
+        try:
+            os.symlink(outside, self.manifest_path)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable on this runner: {exc}")
+        model = OfflineModel()
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            self.recorder(model)
+        self.assertEqual(model.calls, 0)
+
+    def test_symlinked_session_index_is_rejected_during_batch_binding(self):
+        session_id = self.row["session_id"]
+        index_path = self.root / "logs" / "model_sessions" / (session_id + ".json")
+        outside = self.root / "external-session.json"
+        outside.write_bytes(index_path.read_bytes())
+        index_path.unlink()
+        try:
+            os.symlink(outside, index_path)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable on this runner: {exc}")
+        model = OfflineModel()
+        recorder = DecisionRecorder(model, self.root, governance=POLICY)
+        recorder.begin_session(session_id, research_id="R1")
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            recorder.bind_batch(self.batch)
+        self.assertEqual(model.calls, 0)
+
+    def test_symlinked_batch_evidence_directory_blocks_binding(self):
+        folder = self.batch / "model_calls"
+        external = self.root / "external-evidence"
+        folder.rename(external)
+        try:
+            os.symlink(external, folder, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable on this runner: {exc}")
+        model = OfflineModel()
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            self.recorder(model)
+        self.assertEqual(model.calls, 0)
+
+    def test_untrusted_global_calls_directory_blocks_new_intent(self):
+        folder = self.root / "logs" / "model_calls"
+        external = self.root / "external-calls"
+        folder.rename(external)
+        try:
+            os.symlink(external, folder, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable on this runner: {exc}")
+        model = OfflineModel()
+        recorder = DecisionRecorder(model, self.root, governance=POLICY)
+        recorder.begin_session(research_id="R1")
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            recorder.complete_json("different_task", {"index": 2})
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(recorder.budget.status("R1")["unresolved"], 1)
+
     def test_normal_verified_replay_returns_without_new_provider_call(self):
         model = OfflineModel()
         self.assertEqual(self.replay_without_binding(model),
