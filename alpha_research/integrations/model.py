@@ -107,13 +107,20 @@ class DecisionRecorder:
         call_id = uuid4().hex
         context_bytes = _json_bytes(context)
         context_sha = hashlib.sha256(context_bytes).hexdigest()
-        config_for = getattr(self.model, "config_for", None)
-        config = (config_for(task) if callable(config_for)
-                  else getattr(self.model, "config", {})) or {}
-        role_for = getattr(self.model, "role_for", None)
-        selected_role = role_for(task) if callable(role_for) else None
-        backend_name_for = getattr(self.model, "backend_name_for", None)
-        selected_backend = backend_name_for(task) if callable(backend_name_for) else None
+        route_for = getattr(self.model, "route_for", None)
+        if callable(route_for):
+            binding = route_for(task)
+            config = binding.backend
+            selected_role = binding.role
+            selected_backend = binding.backend_name
+        else:
+            config_for = getattr(self.model, "config_for", None)
+            config = (config_for(task) if callable(config_for)
+                      else getattr(self.model, "config", {})) or {}
+            role_for = getattr(self.model, "role_for", None)
+            selected_role = role_for(task) if callable(role_for) else None
+            backend_name_for = getattr(self.model, "backend_name_for", None)
+            selected_backend = backend_name_for(task) if callable(backend_name_for) else None
         route_sha = None
         if selected_role is not None:
             identity = {
