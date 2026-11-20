@@ -28,6 +28,10 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
+from alpha_research.orchestration.execution_proposal import persist_execution_proposal
+from alpha_research.orchestration.execution_identity import (
+    persist_execution_identity, inspect_domain_research_handoff,
+)
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.preflight import local_preflight
@@ -71,6 +75,17 @@ def main(argv=None):
     orchestrate.add_argument("--task-id")
     orchestrate.add_argument("--fixtures", type=_path_argument, required=True)
     orchestrate.add_argument("--budget", type=int, default=1)
+    prepare = sub.add_parser(
+        "orchestration-prepare",
+        help="create a one-batch task and immutable model identity without model/BRAIN calls")
+    prepare.add_argument("--workflow", choices=("regular", "super", "optimization"),
+                         required=True)
+    prepare.add_argument("--objective", required=True)
+    prepare.add_argument("--alpha-id")
+    handoff = sub.add_parser(
+        "orchestration-handoff",
+        help="inspect prepared identity and existing domain model ledger without external calls")
+    handoff.add_argument("task_id")
     orchestration_status = sub.add_parser("orchestration-status", help="read a persisted orchestration task")
     orchestration_status.add_argument("task_id")
     run = sub.add_parser("run-once", help="execute one admitted research batch")
@@ -333,6 +348,52 @@ def main(argv=None):
             print(f"stop state not changed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps({"stopped": args.command == "stop"}))
+        return 0
+    if args.command in {"orchestration-prepare", "orchestration-handoff"}:
+        try:
+            if set(registry_assignments) != {"research_lead", "research_executor"}:
+                raise OrchestrationError(
+                    "both --lead and --executor registrations are required")
+            config_path = args.config or root / "config" / "nastu_quant.json"
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            if not isinstance(cfg, dict):
+                raise OrchestrationError("research configuration must be an object")
+            policy = validate_policy(cfg.get("model_governance"))
+            effective = select_registered_backends(
+                load_role_profile(), load_registry(registry_path),
+                assignments=registry_assignments)
+            assert_live_model_routes(effective)
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                runner = MainOrchestrator(root)
+                if args.command == "orchestration-prepare":
+                    request = {"objective": args.objective}
+                    if args.workflow == "optimization":
+                        if not args.alpha_id:
+                            raise OrchestrationError("optimization requires Alpha ID")
+                        request["alpha_id"] = args.alpha_id
+                    elif args.alpha_id:
+                        raise OrchestrationError("Alpha ID applies only to optimization")
+                    task = runner.create(args.workflow, request, budget=1)
+                    proposal = persist_execution_proposal(runner, task["task_id"])
+                    identity = persist_execution_identity(
+                        runner, task["task_id"], effective, policy)
+                    result = {
+                        "status": "PREPARED_NOT_AUTHORIZED",
+                        "task_id": task["task_id"],
+                        "proposal_sha256": proposal["proposal_sha256"],
+                        "identity_sha256": identity["identity_sha256"],
+                        "model_call_authorized": False,
+                        "brain_invoked": False,
+                    }
+                else:
+                    result = inspect_domain_research_handoff(
+                        runner, args.task_id, effective, policy)
+        except (OSError, ValueError, TypeError, KeyError, WriterLockError) as exc:
+            # Avoid exposing raw model/provider configuration or secret values.
+            print(f"orchestration preparation failed: {type(exc).__name__}",
+                  file=sys.stderr)
+            return 2
+        print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command in {"orchestrate-offline", "orchestration-status"}:
         try:
