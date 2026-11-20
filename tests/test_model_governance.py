@@ -209,6 +209,68 @@ class ModelLedgerTests(unittest.TestCase):
                 second.complete_json("plan_experiments", {"step": 1}), result)
             self.assertEqual(second.budget.status("R1")["attempts"], 1)
 
+    def test_role_model_identity_pinned_across_calls_and_restart(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = ModelCallLedger(folder, dict(POLICY, max_calls=4))
+            first = "a" * 64
+            second = "b" * 64
+            ledger.reserve(
+                "R1", "C1", task="plan_experiments", role="research_lead",
+                backend="registry:glm", backend_sha256=first)
+            ledger.settle("R1", "C1", success=True)
+            restarted = ModelCallLedger(folder, dict(POLICY, max_calls=4))
+            with self.assertRaisesRegex(ModelBudgetError, "backend changed"):
+                restarted.reserve(
+                    "R1", "C2", task="research_decide", role="research_lead",
+                    backend="registry:glm", backend_sha256=second)
+            with self.assertRaisesRegex(ModelBudgetError, "backend changed"):
+                restarted.reserve(
+                    "R1", "C2", task="research_decide", role="research_lead",
+                    backend="registry:deepseek", backend_sha256=first)
+            restarted.reserve(
+                "R1", "C2", task="research_decide", role="research_lead",
+                backend="registry:glm", backend_sha256=first)
+            restarted.settle("R1", "C2", success=True)
+
+    def test_unknown_outcome_is_not_mislabeled_as_failure_or_retried(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = ModelCallLedger(folder, POLICY)
+            ledger.reserve("R1", "C1", task="plan_experiments")
+            summary = ledger.acknowledge_unknown(
+                "R1", "C1", reason="Operator could not confirm provider reply")
+            self.assertEqual(summary["unknown"], 1)
+            self.assertEqual(summary["failed"], 0)
+            self.assertEqual(summary["unresolved"], 0)
+            self.assertTrue(ledger.status("R1")["blocked"])
+            with self.assertRaisesRegex(ModelBudgetError, "new research ID"):
+                ledger.reserve("R1", "C2", task="plan_experiments")
+            with self.assertRaisesRegex(ModelBudgetError, "not found"):
+                ledger.acknowledge_unknown("R1", "C1", reason="Repeated operation")
+            # A distinct new study starts with its own independent model budget.
+            ledger.reserve("R2", "C1", task="plan_experiments")
+            ledger.settle("R2", "C1", success=True)
+
+    def test_explicit_cli_unknown_acknowledgement_is_local_only(self):
+        with tempfile.TemporaryDirectory() as folder, \
+             patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")):
+            root = Path(folder)
+            cfg_path = root / "config.json"
+            cfg_path.write_text(json.dumps({"model_governance": POLICY}), encoding="utf-8")
+            ledger = ModelCallLedger(root / "state", POLICY)
+            ledger.reserve("R1", "C1", task="plan_experiments")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = research_main([
+                    "--state-root", str(root), "--config", str(cfg_path),
+                    "models", "acknowledge-unknown", "--research-id", "R1",
+                    "--call-id", "C1", "--reason", "Manual outcome unknown after crash",
+                ])
+            self.assertEqual(code, 0)
+            report = json.loads(buf.getvalue())
+            self.assertEqual(report["unknown"], 1)
+            self.assertTrue(report["blocked"])
+            self.assertEqual(report["attempts"], 1)
+
     def test_models_budget_cli_is_local_only(self):
         with tempfile.TemporaryDirectory() as folder, \
              patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")):
