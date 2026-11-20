@@ -15,6 +15,7 @@ from alpha_research.integrations.model_http import complete_http, post_json
 from alpha_research.progress import write_progress
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_metadata import InvocationMetadata
 from alpha_research.integrations.model_journal import ModelCallJournal
 from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
@@ -23,23 +24,17 @@ from alpha_research.integrations.model_prompts import (
 )
 
 
-class ConfiguredModelClient:
+class ConfiguredModelClient(InvocationMetadata):
     """Route one model decision to its transport-specific adapter."""
 
     def __init__(self, config: dict, transport=None, environ=None):
         self.config = config
         self.transport = transport or post_json
         self.environ = os.environ if environ is None else environ
-        self.last_usage = None
-        self.last_response_text = None
-        self.last_model = None
-        self.last_thread_id = None
+        self._init_invocation_metadata()
 
     def complete_json(self, task: str, context: dict, *, thread_path=None) -> dict:
-        self.last_usage = None
-        self.last_response_text = None
-        self.last_model = None
-        self.last_thread_id = None
+        self._reset_invocation_metadata()
         provider = self.config.get("provider")
         if not isinstance(provider, str):
             raise ModelError("model provider must be a nonempty string")
