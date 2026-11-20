@@ -1,4 +1,4 @@
-"""Read-only batch response replay with fail-closed audit verification.
+"""Provider-free batch replay with fail-closed audit verification.
 
 This module has no model or SDK imports. It cannot retry remote requests.
 Any crash gap, mismatched route, corrupt manifest or unknown outcome blocks.
@@ -68,10 +68,14 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *, append_ev
         response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
         if row.get("response_sha256") is not None and row["response_sha256"] != response_sha:
             raise ModelError("recorded model manifest checksum mismatch")
-        if isinstance(record, dict) and record.get("response_sha256"):
+        if record.get("status") not in {"in_flight", payload.get("status")}:
+            raise ModelError("recorded model status mismatch; replay blocked")
+        if record.get("status") != "in_flight" and not record.get("response_sha256"):
+            raise ModelError("recorded model terminal checksum missing; replay blocked")
+        if record.get("response_sha256"):
             if record["response_sha256"] != response_sha:
                 raise ModelError("recorded model response checksum mismatch")
-        if payload.get("status") in {"ok", "error"} and isinstance(record, dict) and record.get("status") == "in_flight":
+        if payload.get("status") in {"ok", "error"} and record.get("status") == "in_flight":
             record["status"] = payload["status"]
             record["response_sha256"] = hashlib.sha256(_json_bytes(payload)).hexdigest()
             record["token_in"] = payload.get("token_in")
