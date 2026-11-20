@@ -82,9 +82,13 @@ backend and reported usage. Audit evidence stays under
 copied into a ticket. An actual dual-role `PASS` is the acceptance criterion;
 `NOT_EXECUTED` only proves dry-run setup. If the first response is not the
 exact `model_probe_v1` object, the second call is not attempted. The first
-request is bounded to 512 generated tokens (for the OpenAI-compatible HTTP
-adapter); reported-token governance alone does not impose a hard currency
-limit, and charges remain subject to provider accounting.
+request is bounded to 512 generated tokens using the official
+OpenAI Python SDK (`max_retries=0`); reported-token governance alone does
+not impose a hard currency limit, and charges remain subject to provider
+accounting. The preset GLM backend uses the mainland BigModel
+`https://open.bigmodel.cn/api/paas/v4` API root. Use a BigModel-issued
+key in `ZAI_API_KEY`; the international Z.ai endpoint has a distinct
+credential authority.
 
 The bundled model registry uses GLM-4.6 for `glm` and currently maps `kimi`
 to `kimi-k2.5`. The current official Kimi parameter documentation
