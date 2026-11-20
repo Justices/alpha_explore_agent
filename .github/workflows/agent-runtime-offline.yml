@@ -53,6 +53,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_model_governance.py' -v
       - name: Durable research offline tests
         run: python -m unittest discover -s tests -p 'test_durable_research_cycle.py' -v
+      - name: Dataset review and optimization intent recovery tests
+        run: python -m unittest discover -s tests -p 'test_dataset_review_safety.py' -v
       - name: P3 model contract and read-only gateway tests
         run: python -m unittest discover -s tests -p 'test_p3_model_bridge.py' -v
       - name: P3 offline smoke (never calls model or BRAIN)
