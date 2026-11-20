@@ -64,9 +64,11 @@ class RoleRoutingConfig:
                     "provider", "executable", "model", "timeout_seconds",
                     "sandbox", "session",
                 }
-                if set(spec) - allowed or spec.get("sandbox", "read-only") != "read-only":
+                if (set(spec) - allowed
+                        or spec.get("sandbox", "read-only") != "read-only"
+                        or spec.get("session", "research") not in {"research", "ephemeral"}):
                     raise AgentConfigError(
-                        "Codex research backend accepts only read-only CLI options")
+                        "Codex research backend requires read-only sandbox and a valid session mode")
             timeout = spec.get("timeout_seconds", 180)
             if (type(timeout) not in (int, float) or
                     not isfinite(timeout) or timeout <= 0):

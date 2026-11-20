@@ -617,11 +617,17 @@ class DecisionRecorder:
         task_label = task if task in TASK_INSTRUCTIONS else "research"
         write_progress(f"正在请求模型决策 · {task_label}")
         try:
-            if config.get("provider") == "codex_cli":
-                thread_key = hashlib.sha256(self.research_id.encode("utf-8")).hexdigest()
+            if (config.get("provider") == "codex_cli"
+                    and config.get("session", "research") == "research"):
+                # Keep legacy per-research Codex sessions unchanged. Routed
+                # roles use independent sessions to prevent context leakage.
+                namespace = (self.research_id if selected_role is None else
+                             f"{self.research_id}:role:{selected_role}")
+                thread_key = hashlib.sha256(namespace.encode("utf-8")).hexdigest()
                 thread_path = self.state_root / "codex_threads" / thread_key / "thread.json"
                 result = self.model.complete_json(task, context, thread_path=thread_path)
             else:
+                # Explicit Codex session=ephemeral does not create a thread.
                 result = self.model.complete_json(task, context)
             token_in, token_out = self._usage(self.model)
             response_payload = {"status": "ok", "result": result,
