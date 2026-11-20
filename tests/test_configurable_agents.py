@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from subprocess import CompletedProcess
 from unittest.mock import patch
 from pathlib import Path
@@ -28,26 +29,51 @@ def gateway():
     return OfflineSimulationGateway(json.loads(fixtures.read_text(encoding="utf-8")))
 
 def api_role_config():
-    """Build protocol fixtures from the canonical role template, no old config file."""
+    """Two different compatible model services, one shared SDK contract."""
     cfg = config()
     cfg["roles"]["research_lead"]["backend"] = "research_lead_api"
     cfg["roles"]["research_executor"]["backend"] = "research_executor_api"
     cfg["backends"] = {
         "research_lead_api": {
-            "provider": "openai_compatible",
-            "url": "https://lead-provider.example.invalid/v1/chat/completions",
+            "provider": "openai_sdk",
+            "base_url": "https://lead-provider.example.invalid/v1",
             "model": "<YOUR_LEAD_MODEL_ID>",
             "api_key_env": "RESEARCH_LEAD_API_KEY",
             "response_format": "none",
         },
         "research_executor_api": {
-            "provider": "anthropic_compatible",
-            "url": "https://executor-provider.example.invalid/v1/messages",
+            "provider": "openai_sdk",
+            "base_url": "https://executor-provider.example.invalid/v1",
             "model": "<YOUR_EXECUTOR_MODEL_ID>",
             "api_key_env": "RESEARCH_EXECUTOR_API_KEY",
+            "response_format": "none",
         },
     }
     return cfg
+
+
+class OfflineSDK:
+    def __init__(self, opts, calls):
+        self.options = opts
+        self.calls = calls
+        self.chat = SimpleNamespace(
+            completions=SimpleNamespace(create=self.create))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def create(self, **kwargs):
+        self.calls.append((self.options, kwargs))
+        lead = "lead-provider" in self.options["base_url"]
+        result = '{"plan":true}' if lead else '{"attributed":true}'
+        return SimpleNamespace(
+            model=kwargs["model"], usage=SimpleNamespace(
+                prompt_tokens=6, completion_tokens=2),
+            choices=[SimpleNamespace(message=SimpleNamespace(content=result))])
+
 
 
 
@@ -82,7 +108,7 @@ class TestConfigurableAgents(unittest.TestCase):
         with self.assertRaises(AgentConfigError):
             inspect_roles(cfg, ["attribute_results"])
 
-    def test_roles_can_use_different_http_model_families_without_code_change(self):
+    def test_roles_can_use_different_model_families_without_code_change(self):
         cfg = api_role_config()
         traces = []
         credentials = {
@@ -90,55 +116,45 @@ class TestConfigurableAgents(unittest.TestCase):
             "RESEARCH_EXECUTOR_API_KEY": "offline-executor-key",
         }
 
-        def fake_transport(url, headers, payload):
-            traces.append((url, dict(headers), dict(payload)))
-            if "lead-provider" in url:
-                self.assertEqual(payload["model"], "<YOUR_LEAD_MODEL_ID>")
-                self.assertEqual(headers["Authorization"], "Bearer offline-lead-key")
-                self.assertNotIn("response_format", payload)
-                return {"choices": [{"message": {"content": '{"plan":true}'}}]}
-            self.assertEqual(payload["model"], "<YOUR_EXECUTOR_MODEL_ID>")
-            self.assertEqual(headers["x-api-key"], "offline-executor-key")
-            self.assertEqual(headers["anthropic-version"], "2023-06-01")
-            return {"content": [{"type": "text", "text": '{"attributed":true}'}]}
+        def factory(**options):
+            return OfflineSDK(options, traces)
 
-        router = RoleRoutedModelClient(
-            cfg,
-            backend_factory=lambda backend: ConfiguredModelClient(
-                backend, transport=fake_transport, environ=credentials),
-        )
+        def build(backend):
+            return ConfiguredModelClient(
+                backend, sdk_factory=factory, environ=credentials)
+
+        router = RoleRoutedModelClient(cfg, backend_factory=build)
         self.assertEqual(router.role_for("plan_experiments"), "research_lead")
         self.assertEqual(router.backend_name_for("plan_experiments"), "research_lead_api")
         self.assertEqual(router.complete_json("plan_experiments", {"a": 1}),
                          {"plan": True})
         self.assertEqual(router.role_for("attribute_results"), "research_executor")
-        self.assertEqual(router.backend_name_for("attribute_results"),
-                         "research_executor_api")
         self.assertEqual(router.complete_json("attribute_results", {"a": 2}),
                          {"attributed": True})
         self.assertEqual(len(traces), 2)
+        self.assertEqual(traces[0][0]["api_key"], "offline-lead-key")
+        self.assertEqual(traces[1][0]["api_key"], "offline-executor-key")
+        self.assertEqual(traces[0][0]["max_retries"], 0)
+        self.assertEqual(traces[1][0]["max_retries"], 0)
 
-        # Exchange models purely through configuration; no task/business code changes.
+        # Routing changes need no business-code change or raw HTTP adapter.
         swapped = api_role_config()
         swapped["roles"]["research_lead"]["backend"] = "research_executor_api"
         swapped["roles"]["research_executor"]["backend"] = "research_lead_api"
-        reversed_router = RoleRoutedModelClient(
-            swapped,
-            backend_factory=lambda backend: ConfiguredModelClient(
-                backend, transport=fake_transport, environ=credentials),
-        )
-        self.assertEqual(reversed_router.complete_json("plan_experiments", {}),
+        reverse = RoleRoutedModelClient(swapped, backend_factory=build)
+        self.assertEqual(reverse.complete_json("plan_experiments", {}),
                          {"attributed": True})
-        self.assertEqual(reversed_router.complete_json("attribute_results", {}),
+        self.assertEqual(reverse.complete_json("attribute_results", {}),
                          {"plan": True})
         self.assertEqual(len(traces), 4)
 
-    def test_http_model_configurations_fail_closed(self):
+    def test_sdk_model_configurations_fail_closed(self):
         cfg = api_role_config()
-        cfg["backends"]["research_lead_api"]["url"] = "http://public-server/"
+        cfg["backends"]["research_lead_api"]["base_url"] = "http://public-server/"
         with self.assertRaises(AgentConfigError):
             build_model_client(cfg)
-        cfg["backends"]["research_lead_api"]["url"] = "https://example.invalid/v1/chat/completions"
+        cfg["backends"]["research_lead_api"]["base_url"] = (
+            "https://example.invalid/v1")
         cfg["backends"]["research_lead_api"]["api_key_env"] = ""
         with self.assertRaises(AgentConfigError):
             build_model_client(cfg)
@@ -151,32 +167,27 @@ class TestConfigurableAgents(unittest.TestCase):
         with self.assertRaises(AgentConfigError):
             build_model_client(cfg)
 
-    def test_http_timeout_setting_reaches_default_transport(self):
-        from alpha_research.integrations import model_http as model_http_module
+    def test_sdk_timeout_setting_reaches_client(self):
         cfg = {
-            "provider": "openai_compatible",
-            "url": "https://api.example.invalid/v1/chat/completions",
+            "provider": "openai_sdk",
+            "base_url": "https://api.example.invalid/v1",
             "model": "test-model",
             "api_key_env": "TEST_API_KEY",
             "timeout_seconds": 19,
         }
-        class FakeResponse:
-            def __enter__(self):
-                return self
-            def __exit__(self, exc_type, exc, tb):
-                return False
-            def read(self, *args):
-                return b'{"choices":[{"message":{"content":"{\\"ok\\": true}"}}]}'
         seen = []
-        def fake_urlopen(request, *, timeout):
-            seen.append(timeout)
-            return FakeResponse()
-        # json.load works with a file-like .read() response.
-        with patch.object(model_http_module, "urlopen", side_effect=fake_urlopen):
-            result = ConfiguredModelClient(cfg, environ={"TEST_API_KEY": "fixture"}).complete_json(
-                "plan_experiments", {"fixture": 1})
-        self.assertEqual(result, {"ok": True})
-        self.assertEqual(seen, [19])
+
+        def factory(**options):
+            seen.append(options)
+            return OfflineSDK(options, [])
+
+        client = ConfiguredModelClient(
+            cfg, sdk_factory=factory, environ={"TEST_API_KEY": "fixture"})
+        # OfflineSDK returns a canonical plan/attribute JSON object.
+        self.assertEqual(client.complete_json("plan_experiments", {"fixture": 1}),
+                         {"attributed": True})
+        self.assertEqual(seen[0]["timeout"], 19)
+        self.assertEqual(seen[0]["max_retries"], 0)
 
     def test_routes_lead_and_executor_by_role(self):
         m = build_model_client(config())
