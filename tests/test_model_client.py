@@ -2,6 +2,7 @@ import json
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from subprocess import CompletedProcess
 from unittest.mock import patch
@@ -9,6 +10,38 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alpha_research.integrations.model import ConfiguredModelClient, DecisionRecorder, ModelError
+
+
+class OfflineOpenAISDK:
+    """Offline SDK surface matching OpenAI.chat.completions.create."""
+    def __init__(self, content, calls, options, *, usage=None, error=None):
+        self.content, self.calls, self.options = content, calls, options
+        self.usage, self.error = usage, error
+        self.chat = SimpleNamespace(
+            completions=SimpleNamespace(create=self.create))
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+    def create(self, **request):
+        self.calls.append((self.options, request))
+        if self.error is not None:
+            raise self.error
+        return SimpleNamespace(
+            model="sdk-model",
+            usage=SimpleNamespace(
+                prompt_tokens=(self.usage or (31, 9))[0],
+                completion_tokens=(self.usage or (31, 9))[1]),
+            choices=[SimpleNamespace(
+                message=SimpleNamespace(content=self.content))])
+
+
+def offline_sdk(content, calls, *, usage=None, error=None):
+    return lambda **opts: OfflineOpenAISDK(
+        content, calls, opts, usage=usage, error=error)
 
 
 class TestConfiguredModelClient(unittest.TestCase):
@@ -86,7 +119,8 @@ class TestConfiguredModelClient(unittest.TestCase):
                       "research_executor": {"backend": "claude"}},
             "backends": {
                 "claude": {"provider": "claude_cli", "session": "ephemeral"},
-                "http": {"provider": "json_http", "url": "https://model.example"},
+                "http": {"provider": "openai_sdk", "base_url": "https://model.example/v1",
+                         "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
             },
         })
         with tempfile.TemporaryDirectory() as root, \
@@ -108,7 +142,7 @@ class TestConfiguredModelClient(unittest.TestCase):
             self.assertEqual({row["provider"] for row in rows}, {"claude_cli"})
             self.assertEqual({row["agent_role"] for row in rows}, {"research_executor"})
             self.assertEqual({row["token_in"] for row in rows}, {7})
-            self.assertEqual(model.config_for("construct_batch")["provider"], "json_http")
+            self.assertEqual(model.config_for("construct_batch")["provider"], "openai_sdk")
 
     def test_old_router_and_agy_cli_are_not_runtime_entrypoints(self):
         from alpha_research.integrations.model import build_model_client
@@ -138,121 +172,88 @@ class TestConfiguredModelClient(unittest.TestCase):
                 self.assertNotIn("BRAIN_CREDENTIALS_FILE", run.call_args.kwargs["env"])
                 self.assertNotIn("construct_batch", run.call_args.args[0])
 
-    def test_anthropic_compatible_base_url_returns_json_object(self):
+    def test_openai_sdk_model_api_uses_base_url_and_no_retries(self):
         requests = []
-
-        def transport(url, headers, payload):
-            requests.append((url, headers, payload))
-            return {"content": [{"type": "text", "text": '{"dataset_id":"analyst69"}'}],
-                    "usage": {"input_tokens": 31, "output_tokens": 9}}
-
         client = ConfiguredModelClient(
-            {"provider": "anthropic_compatible",
-             "url": "https://open.bigmodel.cn/api/anthropic",
-             "model": "glm-5.3", "api_key_env": "BIGMODEL_API_KEY"},
-            transport=transport, environ={"BIGMODEL_API_KEY": "secret"})
-        self.assertEqual(client.complete_json("select_dataset", {"region": "GLB"}),
-                         {"dataset_id": "analyst69"})
-        url, headers, payload = requests[0]
-        self.assertEqual(url, "https://open.bigmodel.cn/api/anthropic/v1/messages")
-        self.assertEqual(headers["x-api-key"], "secret")
-        self.assertEqual(headers["anthropic-version"], "2023-06-01")
-        self.assertNotIn("Authorization", headers)
-        self.assertEqual(payload["model"], "glm-5.3")
-        self.assertGreater(payload["max_tokens"], 0)
-        self.assertIn("select_dataset", payload["messages"][0]["content"])
-        self.assertEqual(client.last_usage, {"input_tokens": 31, "output_tokens": 9})
-
-    def test_anthropic_compatible_accepts_one_fenced_json_decision(self):
-        client = ConfiguredModelClient(
-            {"provider": "anthropic_compatible",
-             "url": "https://model.example/api/anthropic", "model": "glm-5.3",
-             "api_key_env": "TEST_MODEL_KEY"},
-            transport=lambda *args: {"content": [{"type": "text", "text":
-                'Scope selection\n```json\n{"universe":"TOPDIV3000"}\n```\nValidated.'}]},
+            {"provider": "openai_sdk", "base_url": "https://model.example/v1",
+             "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
+            sdk_factory=offline_sdk('{"dataset_id":"risk60"}', requests),
             environ={"TEST_MODEL_KEY": "secret"})
+        self.assertEqual(client.complete_json("select_dataset", {"region": "GLB"}),
+                         {"dataset_id": "risk60"})
+        opts, request = requests[0]
+        self.assertEqual(opts["api_key"], "secret")
+        self.assertEqual(opts["base_url"], "https://model.example/v1")
+        self.assertEqual(opts["max_retries"], 0)
+        self.assertEqual(request["model"], "research-model")
+        self.assertEqual(request["response_format"], {"type": "json_object"})
+        self.assertIn("select_dataset", request["messages"][0]["content"])
+        self.assertNotIn("tools", request)
+        self.assertEqual(client.last_usage,
+                         {"prompt_tokens": 31, "completion_tokens": 9})
+        self.assertEqual(client.last_model, "sdk-model")
+
+    def test_openai_sdk_supports_fenced_json_and_none_response_format(self):
+        requests = []
+        client = ConfiguredModelClient(
+            {"provider": "openai_sdk", "base_url": "https://model.example/v1",
+             "model": "research-model", "api_key_env": "TEST_MODEL_KEY",
+             "response_format": "none"},
+            sdk_factory=offline_sdk(
+                'Scope selection\\n```json\\n{"universe":"TOPDIV3000"}\\n```\\nValidated.',
+                requests), environ={"TEST_MODEL_KEY": "secret"})
         self.assertEqual(client.complete_json("select_scope", {}),
                          {"universe": "TOPDIV3000"})
+        self.assertNotIn("response_format", requests[0][1])
 
-    def test_anthropic_compatible_requires_key_and_valid_response(self):
-        config = {"provider": "anthropic_compatible",
-                  "url": "https://open.bigmodel.cn/api/anthropic/v1/messages",
-                  "model": "glm-5.3", "api_key_env": "BIGMODEL_API_KEY"}
-        client = ConfiguredModelClient(config,
-            transport=lambda *args: self.fail("request sent"), environ={})
-        with self.assertRaises(ModelError):
-            client.complete_json("select_dataset", {})
-        client = ConfiguredModelClient(config,
-            transport=lambda *args: {"content": [{"type": "thinking", "thinking": "x"}]},
-            environ={"BIGMODEL_API_KEY": "secret"})
-        with self.assertRaises(ModelError):
-            client.complete_json("select_dataset", {})
-
-    def test_invalid_model_text_is_retained_in_local_error_evidence(self):
+    def test_openai_sdk_missing_key_fails_without_sdk_creation(self):
         client = ConfiguredModelClient(
-            {"provider": "anthropic_compatible",
-             "url": "https://model.example/api/anthropic", "model": "glm-5.3",
-             "api_key_env": "TEST_MODEL_KEY"},
-            transport=lambda *args: {"content": [{"type": "text",
-                                                   "text": "```json\n{broken}\n```"}]},
+            {"provider": "openai_sdk", "base_url": "https://model.example/v1",
+             "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
+            sdk_factory=lambda **opts: self.fail("SDK opened without a key"),
+            environ={})
+        with self.assertRaises(ModelError):
+            client.complete_json("select_dataset", {})
+
+    def test_openai_sdk_invalid_text_preserved_in_durable_error_evidence(self):
+        requests = []
+        client = ConfiguredModelClient(
+            {"provider": "openai_sdk", "base_url": "https://model.example/v1",
+             "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
+            sdk_factory=offline_sdk("```json\\n{broken}\\n```", requests),
             environ={"TEST_MODEL_KEY": "secret"})
         with tempfile.TemporaryDirectory() as root:
             recorder = DecisionRecorder(client, Path(root))
-            with self.assertRaises(ModelError):
+            with self.assertRaisesRegex(ModelError, "valid JSON"):
                 recorder.complete_json("select_dataset", {"region": "GLB"})
-            records = list((Path(root) / "logs" / "model_calls").glob("*.response.json"))
-            self.assertEqual(len(records), 1)
-            saved = json.loads(records[0].read_text(encoding="utf-8"))
-            self.assertEqual(saved["service_text"], "```json\n{broken}\n```")
+            files = list((Path(root) / "logs" / "model_calls").glob("*.response.json"))
+            self.assertEqual(len(files), 1)
+            stored = json.loads(files[0].read_text(encoding="utf-8"))
+            self.assertEqual(stored["service_text"], "```json\\n{broken}\\n```")
+            self.assertEqual(stored["status"], "error")
 
-    def test_openai_compatible_service_returns_json_object(self):
-        requests = []
-
-        def transport(url, headers, payload):
-            requests.append((url, headers, payload))
-            return {"choices": [{"message": {"content": '{"dataset_id":"risk60"}'}}]}
-
-        client = ConfiguredModelClient(
-            {"provider": "openai_compatible", "url": "https://model.example/v1/chat/completions",
-             "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
-            transport=transport, environ={"TEST_MODEL_KEY": "secret"})
-        self.assertEqual(client.complete_json("select_dataset", {"region": "GLB"}),
-                         {"dataset_id": "risk60"})
-        url, headers, payload = requests[0]
-        self.assertEqual(url, "https://model.example/v1/chat/completions")
-        self.assertEqual(headers["Authorization"], "Bearer secret")
-        self.assertEqual(payload["model"], "research-model")
-        self.assertIn("select_dataset", payload["messages"][0]["content"])
-
-    def test_missing_key_fails_before_request(self):
-        client = ConfiguredModelClient(
-            {"provider": "openai_compatible", "url": "https://model.example/v1/chat/completions",
-             "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
-            transport=lambda *args: self.fail("request sent"), environ={})
-        with self.assertRaises(ModelError):
-            client.complete_json("select_dataset", {})
-
-    def test_json_http_backend_uses_same_agent_contract(self):
-        client = ConfiguredModelClient(
-            {"provider": "json_http", "url": "https://model.example/research"},
-            transport=lambda url, headers, payload: {"result": {"decision": "stop"}},
-            environ={})
-        self.assertEqual(client.complete_json("next_step", {}), {"decision": "stop"})
+    def test_old_raw_http_providers_are_rejected(self):
+        for provider in ("openai_compatible", "anthropic_compatible", "json_http"):
+            with self.subTest(provider=provider):
+                client = ConfiguredModelClient(
+                    {"provider": provider},
+                    sdk_factory=lambda **opts: self.fail("legacy route reached"),
+                    environ={"TEST_MODEL_KEY": "fixture"})
+                with self.assertRaisesRegex(ModelError, "unsupported model provider"):
+                    client.complete_json("select_dataset", {})
 
     def test_construction_prompt_requests_ex_ante_evidence(self):
-        requests = []
+        calls = []
         client = ConfiguredModelClient(
-            {"provider": "openai_compatible", "url": "https://model.example/v1/chat/completions",
+            {"provider": "openai_sdk", "base_url": "https://model.example/v1",
              "model": "research-model", "api_key_env": "TEST_MODEL_KEY"},
-            transport=lambda url, headers, payload: (
-                requests.append(payload) or {"choices": [{"message": {"content": "{}"}}]}),
+            sdk_factory=offline_sdk("{}", calls),
             environ={"TEST_MODEL_KEY": "secret"})
         client.complete_json("construct_batch", {})
-        prompt = json.dumps(requests[0]["messages"])
+        prompt = json.dumps(calls[0][1]["messages"])
         self.assertIn("expected_sign", prompt)
         self.assertIn("failure_criterion", prompt)
         self.assertIn("field constraints", prompt)
-
 
     def test_batch_audit_is_incremental_and_rebinding_does_not_recopy(self):
         from alpha_research.integrations.model import build_model_client
@@ -329,25 +330,26 @@ class TestConfiguredModelClient(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             batch = Path(root) / "batch"
             calls = []
-            def uncertain(*args):
-                calls.append("POSTED")
-                raise TimeoutError("response lost after model provider POST")
             provider = ConfiguredModelClient({
-                "provider": "openai_compatible",
-                "url": "https://model.example/v1/chat/completions",
+                "provider": "openai_sdk",
+                "base_url": "https://model.example/v1",
                 "model": "remote-model", "api_key_env": "RESEARCH_KEY",
-            }, transport=uncertain, environ={"RESEARCH_KEY": "fixture"})
+            }, sdk_factory=offline_sdk(
+                "{}", calls,
+                error=TimeoutError("response lost after provider POST")),
+                environ={"RESEARCH_KEY": "fixture"})
             before = DecisionRecorder(provider, Path(root))
             before.begin_session(research_id="remote:R1")
             before.bind_batch(batch)
-            with self.assertRaises(TimeoutError):
+            with self.assertRaisesRegex(ModelError, "SDK model request failed"):
                 before.complete_json("attribute_results", {"batch": 1})
             resumed = DecisionRecorder(provider, Path(root))
             resumed.begin_session(research_id="remote:R1")
             resumed.bind_batch(batch)
             with self.assertRaisesRegex(ModelError, "explicit state reconciliation"):
                 resumed.complete_json("attribute_results", {"batch": 1})
-            self.assertEqual(calls, ["POSTED"])
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0]["max_retries"], 0)
 
 
 if __name__ == "__main__":
