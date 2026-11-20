@@ -5,19 +5,23 @@ Any crash gap, mismatched route, corrupt manifest or unknown outcome blocks.
 """
 import hashlib
 import json
-from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_evidence import check_trusted_path, trusted_replay_paths
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.sealed import is_sealed_state
 
 
 def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
-                      append_event, on_verified=None, expected_research_id=None):
+                      calls_root, append_event, on_verified=None,
+                      expected_research_id):
     if batch_dir is None:
         return None
-    manifest_path = batch_dir / "model_call_manifest.json"
+    if not isinstance(expected_research_id, str) or not expected_research_id.strip():
+        raise ModelError("model replay requires a trusted research identity")
+    manifest_path = check_trusted_path(
+        batch_dir / "model_call_manifest.json", label="batch manifest")
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -39,21 +43,19 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             raise ModelError(
                 "recorded model role/backend differs from current configuration; "
                 "an explicit research migration is required")
-        if (not isinstance(row.get("response_ref"), str)
-                or not row["response_ref"]
-                or not isinstance(row.get("global_record_ref"), str)
-                or not row["global_record_ref"]):
-            raise ModelError("existing batch model manifest has invalid audit paths")
-        response_path = Path(row["response_ref"])
-        if not response_path.exists() and row.get("global_response_ref"):
-            response_path = Path(row["global_response_ref"])
+        # Verify every manifest-supplied path before any file is opened.
+        # Never resolve and read a forged relative, absolute, or symlink path.
+        paths = trusted_replay_paths(batch_dir, calls_root, row)
+        response_path = paths["response_ref"]
+        if not response_path.exists():
+            response_path = paths["global_response_ref"]
         try:
             payload = json.loads(response_path.read_text(encoding="utf-8"))
         except (OSError, ValueError, KeyError) as exc:
             raise ModelError(
                 "previous model response is missing or unreadable; retry blocked"
             ) from exc
-        record_path = Path(row.get("global_record_ref") or "")
+        record_path = paths["global_record_ref"]
         try:
             record = json.loads(record_path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -61,12 +63,27 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
         if not isinstance(record, dict):
             raise ModelError("recorded model decision is missing its audit record")
         if (record.get("call_id") != row["call_id"]
-                or (expected_research_id is not None
-                    and record.get("research_id") != expected_research_id)
+                or record.get("session_id") != row["session_id"]
+                or record.get("research_id") != expected_research_id
                 or record.get("task") != task
                 or record.get("context_sha256") != context_sha
-                or record.get("route_sha256") != route_sha):
+                or record.get("route_sha256") != route_sha
+                or record.get("batch_ref") not in (
+                    str(batch_dir), f"session:{row['session_id']}")
+                or record.get("context_ref") != str(paths["global_context_ref"])
+                or record.get("response_ref") != str(paths["global_response_ref"])):
             raise ModelError("recorded model audit identity mismatch; replay blocked")
+        # The original input must agree with the manifest and audit digest.
+        # A matching user-supplied hash string is not evidence of the input
+        # file's actual content.
+        try:
+            stored_context = json.loads(
+                paths["global_context_ref"].read_text(encoding="utf-8"))
+            input_sha = hashlib.sha256(_json_bytes(stored_context)).hexdigest()
+        except (OSError, ValueError, TypeError) as exc:
+            raise ModelError("recorded model input is unreadable; replay blocked") from exc
+        if input_sha != context_sha:
+            raise ModelError("recorded model input checksum mismatch; replay blocked")
         if not is_sealed_state(payload):
             raise ModelError(
                 "previous model response integrity seal checksum mismatch or missing; "
