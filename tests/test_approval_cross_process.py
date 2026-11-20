@@ -31,7 +31,7 @@ from alpha_research.orchestration.engine import MainOrchestrator
 root, payload_path, ready, start, output, mode = sys.argv[1:]
 payload = json.loads(Path(payload_path).read_text(encoding="utf-8"))
 runner = MainOrchestrator(root)
-if mode == "crash_after_task_fence":
+if mode == "crash_after_canonical_claim":
     original = mod.atomic_write_json
     writes = [0]
     def interrupt_after_first(path, record):
@@ -136,7 +136,7 @@ class CrossProcessApprovalTests(unittest.TestCase):
                        "approval_reviews" / "tasks").glob("*.json"))
         self.assertEqual(len(fences), 1)
 
-    def test_hard_process_exit_after_task_fence_blocks_restart(self):
+    def test_hard_process_exit_after_canonical_claim_blocks_both_identities(self):
         process, ready, _ = self._launch(
             "crash", self._payload("3" * 32), mode="crash_after_task_fence")
         self._ready([ready])
@@ -150,6 +150,20 @@ class CrossProcessApprovalTests(unittest.TestCase):
                 model_profile_sha256=self.model_hash,
                 environ={KEY_ENV: self.secret}, now=self.now)
         self.assertEqual(self.runner.load(self.task["task_id"])["status"], "CREATED")
+        # The approval ID is also consumed, even though the secondary
+        # approval-ID projection was never written before the hard exit.
+        second_task = self.runner.create(
+            "regular", {"objective": "second task", "region": "CHN"})
+        second_proposal = persist_execution_proposal(
+            self.runner, second_task["task_id"])
+        with self.assertRaisesRegex(OrchestrationError, "ID already consumed"):
+            reserve_review_receipt(
+                MainOrchestrator(self.root),
+                self._payload("3" * 32, task=second_task,
+                              proposal=second_proposal)["receipt"],
+                model_profile_sha256=self.model_hash,
+                environ={KEY_ENV: self.secret}, now=self.now)
+
 
 
 if __name__ == "__main__":
