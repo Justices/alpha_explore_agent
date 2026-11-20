@@ -119,6 +119,38 @@ class SessionIndexTests(unittest.TestCase):
         self.assertEqual(manifest["calls"][0]["task"], "before_batch")
         self.assertEqual(self.index()["call_ids"], [manifest["calls"][0]["call_id"]])
 
+    def test_unbound_call_is_attached_only_to_its_first_batch(self):
+        r = self.recorder()
+        r.complete_json("before_batch", {"round": 0})
+        a, b = self.root / "a", self.root / "b"
+        r.bind_batch(a)
+        first = json.loads((a / "model_call_manifest.json")
+                           .read_text(encoding="utf-8"))["calls"]
+        self.assertEqual(len(first), 1)
+        r.bind_batch(b)
+        second = json.loads((b / "model_call_manifest.json")
+                            .read_text(encoding="utf-8"))["calls"]
+        self.assertEqual(second, [])
+        self.assertEqual(self.index()["batches"], [
+            {"batch_ref": str(a.resolve()), "call_ids": [first[0]["call_id"]]},
+            {"batch_ref": str(b.resolve()), "call_ids": []},
+        ])
+
+    def test_v2_rejects_missing_and_extra_contract_fields(self):
+        r = self.recorder()
+        r.bind_batch(self.root / "a")
+        previous = self.index()
+        for corrupt in (
+            {k: v for k, v in previous.items() if k != "research_id"},
+            {**previous, "batch_ref": str(self.root / "a")},
+            {**previous, "schema_version": 1},
+        ):
+            with self.subTest(corrupt=corrupt):
+                self.index_path.write_text(json.dumps(corrupt), encoding="utf-8")
+                with self.assertRaisesRegex(ModelError, "current contract"):
+                    r.bind_batch(self.root / "b")
+        self.index_path.write_text(json.dumps(previous), encoding="utf-8")
+
     def test_previous_three_field_index_is_rejected_not_migrated(self):
         r = self.recorder()
         r.bind_batch(self.root / "a")
