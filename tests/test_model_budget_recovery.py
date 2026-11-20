@@ -196,13 +196,14 @@ class BudgetRecoveryTests(unittest.TestCase):
             first = self.make_recorder(root, initial_model)
             original_sync = first.journal.sync_batch_calls
 
-            def interrupt_final_sync(calls, *, batch_dir, session_id):
+            def interrupt_final_sync(calls, *, batch_dir, session_id,
+                                     research_id=None):
                 # The global response and terminal audit have been persisted,
                 # but the batch manifest still contains the initial intent.
                 if calls and calls[0][0]["status"] == "ok":
                     raise RuntimeError("crash before terminal batch sync")
                 return original_sync(calls, batch_dir=batch_dir,
-                                     session_id=session_id)
+                                     session_id=session_id, research_id=research_id)
 
             with patch.object(first.journal, "sync_batch_calls",
                               side_effect=interrupt_final_sync):
