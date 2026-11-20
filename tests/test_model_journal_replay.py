@@ -177,6 +177,8 @@ class JournalReplayTests(unittest.TestCase):
             record = json.loads(record_path.read_text(encoding="utf-8"))
             record["status"] = "in_flight"
             record["response_sha256"] = None
+            record["token_in"] = None
+            record["token_out"] = None
             record_path.write_text(json.dumps(record), encoding="utf-8")
             model = CountingModel()
             self.assertEqual(self.replay(root, batch, model), expected)
