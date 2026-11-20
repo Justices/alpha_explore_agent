@@ -94,6 +94,8 @@ Regular Campaign 遵循已批准的 Delay 1、Dataset 轮换与预算规则；�
 
 不要把“代码已实现”“测试已编写”“本地测试通过”“真实平台验证通过”视为同一个状态。
 
+本轮设计—代码逐项审计、已修复偏差和后续验收门槛，见 [设计—代码一致性审计](DESIGN_CODE_AUDIT.md)。
+
 ## 7. 建议的推进次序
 
 1. 在 Windows 项目虚拟环境中执行离线单元与集成测试，修复失败并核查不发生真实调用。
@@ -117,5 +119,6 @@ Regular Campaign 遵循已批准的 Delay 1、Dataset 轮换与预算规则；�
 | [MODEL_AGENT_REGISTRY.md](MODEL_AGENT_REGISTRY.md) | 注册格式、模型/Agent 选择与传输 |
 | [MODEL_RUNTIME_GOVERNANCE.md](MODEL_RUNTIME_GOVERNANCE.md) | Doctor、预算、身份固定与未知结局 |
 | [P0_LIVE_READINESS.md](P0_LIVE_READINESS.md) | 运维预检、分阶段授权和验收手册 |
+| [DESIGN_CODE_AUDIT.md](DESIGN_CODE_AUDIT.md) | 当前设计与代码的逐项映射、修复状态和验证门槛 |
 
 曾有的三份 `AGENT_REQUIREMENTS.md`、`AGENT_DESIGN.md` 与 `AGENT_KNOWLEDGE_DESIGN.md` 属于已被现行范围/架构/知识实现替代的原始设计，不再作为当前分支的维护入口；若需考证历史，可从 Git 提交历史中读取。
