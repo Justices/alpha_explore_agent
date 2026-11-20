@@ -16,6 +16,7 @@ from pathlib import Path
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.state.fingerprint import fingerprint_json as _sha
+from alpha_research.state.sealed import write_sealed_json, is_sealed_state
 
 
 class ModelBudgetError(ValueError):
@@ -52,13 +53,8 @@ class ModelCallLedger:
         root = self.state_root / "logs" / "model_budget"
         return root / (stem + ".json"), root / (stem + ".lock")
 
-    @staticmethod
-    def _payload(state):
-        return {k: v for k, v in state.items() if k != "state_sha256"}
-
     def _write(self, path, state):
-        state["state_sha256"] = _sha(self._payload(state))
-        atomic_write_json(path, state)
+        write_sealed_json(path, state)
 
     def _load(self, path, research_id):
         if not path.exists():
@@ -78,7 +74,7 @@ class ModelCallLedger:
                 or state.get("research_id") != research_id
                 or state.get("policy") != self.policy
                 or state.get("policy_sha256") != self.policy_sha256
-                or state.get("state_sha256") != _sha(self._payload(state))
+                or not is_sealed_state(state)
                 or not isinstance(state.get("calls"), list)):
             raise ModelBudgetError("model budget ledger is invalid or policy changed")
         seen = set()

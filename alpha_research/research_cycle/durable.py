@@ -20,6 +20,7 @@ from alpha_research.research_cycle.engine import (
 from alpha_research.state.store import atomic_write_json, read_json
 from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.state.fingerprint import fingerprint_json
+from alpha_research.state.sealed import write_sealed_json, is_sealed_state
 
 
 def fingerprint(value):
@@ -152,24 +153,15 @@ class DurableOfflineResearchRunner:
         key = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
         return self.state_root / "state" / "research_cycle" / (key + ".json")
 
-    @staticmethod
-    def _state_payload(state):
-        return {key: value for key, value in state.items()
-                if key != "state_sha256"}
-
     def _save(self, state):
-        # Detect accidental/corrupt state edits. This is an integrity check,
-        # not an HMAC or protection against someone able to rewrite the file.
-        state["state_sha256"] = fingerprint(self._state_payload(state))
-        atomic_write_json(self._path(state["request"]["research_id"]), state)
+        write_sealed_json(self._path(state["request"]["research_id"]), state)
 
     def load(self, research_id):
         path = self._path(research_id)
         state = read_json(path)
         if not isinstance(state, dict):
             raise ResearchContractError("no readable durable research state")
-        if (not isinstance(state.get("state_sha256"), str)
-                or state["state_sha256"] != fingerprint(self._state_payload(state))):
+        if not is_sealed_state(state):
             raise ResearchContractError(
                 "durable state checksum invalid or unsealed; explicit migration required")
         request = state.get("request")
