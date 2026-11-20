@@ -12,7 +12,6 @@ from uuid import uuid4
 from alpha_research.integrations.model_cli import CLI_COMMANDS, complete_cli
 from alpha_research.integrations.model_http import complete_http, post_json
 from alpha_research.progress import write_progress
-from alpha_research.state.store import atomic_write_json
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_journal import ModelCallJournal
@@ -67,23 +66,21 @@ class DecisionRecorder:
     def __init__(self, model, state_root: Path, *, governance=None):
         self.model = model
         self.state_root = Path(state_root).resolve()
-        self.logs_root = self.state_root / "logs"
         self.journal = ModelCallJournal(self.state_root)
         self.budget = None
         if governance is not None:
             from alpha_research.agents.governance import ModelCallLedger
             self.budget = ModelCallLedger(self.state_root, governance)
-        self.global_calls_root = self.logs_root / "model_calls"
         self.session_id = None
         self.research_id = None
         self.batch_dir = None
-        self.session_calls = []
+        self.journal.reset_session()
 
     def begin_session(self, session_id=None, *, research_id=None):
         self.session_id = session_id or uuid4().hex
         self.research_id = research_id or self.session_id
         self.batch_dir = None
-        self.session_calls = []
+        self.journal.reset_session()
         return self.session_id
 
     def bind_batch(self, batch_dir: Path):
@@ -92,7 +89,7 @@ class DecisionRecorder:
         # The active call is synchronized incrementally at its two status
         # transitions (IN_FLIGHT, then final), not by recopying every call.
         self.journal.sync_batch_calls(
-            self.session_calls, batch_dir=self.batch_dir, session_id=self.session_id)
+            self.journal.session_calls, batch_dir=self.batch_dir, session_id=self.session_id)
 
     @staticmethod
     def _usage(model):
@@ -105,8 +102,6 @@ class DecisionRecorder:
                 completion if isinstance(completion, int) and not isinstance(completion, bool) else None)
 
     def complete_json(self, task: str, context: dict, knowledge_pack_ref=None) -> dict:
-        self.logs_root.mkdir(parents=True, exist_ok=True)
-        self.global_calls_root.mkdir(parents=True, exist_ok=True)
         if self.session_id is None:
             self.begin_session()
         call_id = uuid4().hex
@@ -154,10 +149,7 @@ class DecisionRecorder:
                 role=selected_role, backend=selected_backend,
                 backend_sha256=backend_digest,
             )
-        global_context = self.global_calls_root / f"{call_id}.context.json"
-        global_response = self.global_calls_root / f"{call_id}.response.json"
-        global_record = self.global_calls_root / f"{call_id}.record.json"
-        atomic_write_json(global_context, context)
+        global_context, global_response, global_record = self.journal.call_paths(call_id)
         record = {"ts": datetime.now().astimezone().isoformat(),
                   "call_id": call_id, "session_id": self.session_id,
                   "research_id": self.research_id,
@@ -172,11 +164,8 @@ class DecisionRecorder:
                   "agent_role": selected_role, "agent_backend": selected_backend,
                   "route_sha256": route_sha,
                   "status": "in_flight"}
-        atomic_write_json(global_record, record)
-        self.journal.sync_batch_calls(
-            [(record, global_context, global_response, global_record)],
-            batch_dir=self.batch_dir, session_id=self.session_id)
-        self.journal.append_event(record)
+        paths = self.journal.persist_intent(
+            record, context, batch_dir=self.batch_dir, session_id=self.session_id)
         started = time.perf_counter()
         response_payload = None
         error = None
@@ -212,23 +201,12 @@ class DecisionRecorder:
             error = exc
             return_value = None
         latency_ms = round((time.perf_counter() - started) * 1000, 3)
-        atomic_write_json(global_response, response_payload)
-        response_sha = hashlib.sha256(_json_bytes(response_payload)).hexdigest()
-        record.update({"response_sha256": response_sha, "token_in": token_in,
-                       "token_out": token_out, "latency_ms": latency_ms,
-                       "status": response_payload["status"]})
-        actual_model = getattr(self.model, "last_model", None)
-        if isinstance(actual_model, str) and actual_model:
-            record["model"] = actual_model
-        codex_thread_id = getattr(self.model, "last_thread_id", None)
-        if isinstance(codex_thread_id, str):
-            record["codex_thread_id"] = codex_thread_id
-        atomic_write_json(global_record, record)
-        self.journal.append_event(record)
-        call = (record, global_context, global_response, global_record)
-        self.session_calls.append(call)
-        self.journal.sync_batch_calls(
-            [call], batch_dir=self.batch_dir, session_id=self.session_id)
+        self.journal.persist_outcome(
+            record, response_payload, paths,
+            batch_dir=self.batch_dir, session_id=self.session_id,
+            token_in=token_in, token_out=token_out, latency_ms=latency_ms,
+            actual_model=getattr(self.model, "last_model", None),
+            thread_id=getattr(self.model, "last_thread_id", None))
         if self.budget is not None:
             self.budget.settle(
                 self.research_id, call_id, success=(error is None),
