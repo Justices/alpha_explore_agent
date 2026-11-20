@@ -142,8 +142,8 @@ class ApprovalReviewTests(unittest.TestCase):
         writes = []
         def injected_write(path, record):
             writes.append(str(path))
-            if len(writes) == 2:
-                raise OSError("injected crash after durable task reservation")
+            if len(writes) == 3:
+                raise OSError("injected crash after canonical ledger and task projection")
             original_write(path, record)
 
         with patch("alpha_research.orchestration.approval_review.atomic_write_json",
@@ -160,6 +160,36 @@ class ApprovalReviewTests(unittest.TestCase):
             with self.assertRaisesRegex(OrchestrationError, "task approval review already reserved"):
                 reserve_review_receipt(
                     self.runner, next_receipt, model_profile_sha256=self.model_hash,
+                    environ=self.env, now=self.now)
+
+    def test_first_write_crash_fences_id_and_task_atomically(self):
+        from alpha_research.orchestration.approval_review import atomic_write_json as original_write
+
+        def crash_after_canonical(path, record):
+            original_write(path, record)
+            if Path(path).name == "reservations.json":
+                raise OSError("crash immediately after canonical ledger commit")
+
+        with patch("alpha_research.orchestration.approval_review.atomic_write_json",
+                   side_effect=crash_after_canonical):
+            with self.assertRaisesRegex(OSError, "canonical ledger"):
+                reserve_review_receipt(
+                    self.runner, self.signed(), model_profile_sha256=self.model_hash,
+                    environ=self.env, now=self.now)
+
+        other_task = self.runner.create(
+            "regular", {"objective": "distinct task", "region": "CHN"})
+        other_proposal = persist_execution_proposal(self.runner, other_task["task_id"])
+        for receipt, expected in (
+                (self.signed(approval_id="2" * 32), "task approval review already reserved"),
+                (self.signed(
+                    task_id=other_task["task_id"],
+                    request_sha256=other_task["request_sha256"],
+                    proposal_sha256=other_proposal["proposal_sha256"]),
+                 "approval review ID already consumed")):
+            with self.assertRaisesRegex(OrchestrationError, expected):
+                reserve_review_receipt(
+                    self.runner, receipt, model_profile_sha256=self.model_hash,
                     environ=self.env, now=self.now)
 
     def test_independent_tasks_have_separate_review_reservations(self):
