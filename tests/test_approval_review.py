@@ -72,6 +72,23 @@ class ApprovalReviewTests(unittest.TestCase):
                 environ=self.env, now=self.now)
         self.assertEqual(self.runner.load(self.task["task_id"]), self.task)
 
+    def test_completed_review_never_unlocks_production_adapter(self):
+        from alpha_research.orchestration.production_adapter import ProductionWorkflowAdapter
+
+        reserve_review_receipt(
+            self.runner, self.signed(), model_profile_sha256=self.model_hash,
+            environ=self.env, now=self.now)
+        fresh_runner = MainOrchestrator(
+            self.temp.name,
+            adapter=ProductionWorkflowAdapter(self.temp.name, {}))
+        result = fresh_runner.execute(self.task["task_id"])
+        self.assertEqual(result["status"], "BLOCKED")
+        self.assertEqual(result["steps"]["validate"], "RUNNING")
+        self.assertEqual(result["steps"]["execute"], "PENDING")
+        self.assertEqual(result["budget"]["used"], 0)
+        self.assertEqual(result["budget"]["reserved"], 0)
+        self.assertIsNone(result["recovery_target"])
+
     def test_reject_tampered_approval_scope_and_model(self):
         receipt = self.signed()
         modified = copy.deepcopy(receipt)
