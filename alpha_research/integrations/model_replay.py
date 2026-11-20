@@ -4,10 +4,11 @@ This module has no model or SDK imports. It cannot retry remote requests.
 Any crash gap, mismatched route, corrupt manifest or unknown outcome blocks.
 """
 import hashlib
-import json
 
 from alpha_research.integrations.model_errors import ModelError
-from alpha_research.integrations.model_evidence import check_trusted_path, trusted_replay_paths
+from alpha_research.integrations.model_evidence import (
+    check_trusted_path, read_trusted_json, trusted_replay_paths,
+)
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.sealed import is_sealed_state
@@ -23,7 +24,7 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
     manifest_path = check_trusted_path(
         batch_dir / "model_call_manifest.json", label="batch manifest")
     try:
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = read_trusted_json(manifest_path, label="batch manifest")
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -43,7 +44,7 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
         paths = trusted_replay_paths(batch_dir, calls_root, row)
         record_path = paths["global_record_ref"]
         try:
-            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record = read_trusted_json(record_path, label="global audit")
         except (OSError, ValueError) as exc:
             raise ModelError("recorded model decision is missing its audit record") from exc
         if not isinstance(record, dict):
@@ -59,8 +60,7 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
                 or record.get("response_ref") != str(paths["global_response_ref"])):
             raise ModelError("recorded model audit identity mismatch; replay blocked")
         try:
-            stored_context = json.loads(
-                paths["global_context_ref"].read_text(encoding="utf-8"))
+            stored_context = read_trusted_json(paths["global_context_ref"], label="global context")
             input_sha = hashlib.sha256(_json_bytes(stored_context)).hexdigest()
         except (OSError, ValueError, TypeError) as exc:
             raise ModelError("recorded model input is unreadable; replay blocked") from exc
@@ -78,7 +78,7 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
         if not response_path.exists():
             response_path = paths["global_response_ref"]
         try:
-            payload = json.loads(response_path.read_text(encoding="utf-8"))
+            payload = read_trusted_json(response_path, label="model response")
         except (OSError, ValueError, KeyError) as exc:
             raise ModelError(
                 "previous model response is missing or unreadable; retry blocked"
