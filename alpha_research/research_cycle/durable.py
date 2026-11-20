@@ -153,8 +153,15 @@ class DurableOfflineResearchRunner:
         key = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
         return self.state_root / "state" / "research_cycle" / (key + ".json")
 
+    @staticmethod
+    def _state_payload(state):
+        return {key: value for key, value in state.items()
+                if key != "state_sha256"}
+
     def _save(self, state):
-        fingerprint(state)
+        # Detect accidental/corrupt state edits. This is an integrity check,
+        # not an HMAC or protection against someone able to rewrite the file.
+        state["state_sha256"] = fingerprint(self._state_payload(state))
         atomic_write_json(self._path(state["request"]["research_id"]), state)
 
     def load(self, research_id):
@@ -162,11 +169,83 @@ class DurableOfflineResearchRunner:
         state = read_json(path)
         if not isinstance(state, dict):
             raise ResearchContractError("no readable durable research state")
-        if (state.get("schema_version") != 1
-                or state.get("request", {}).get("research_id") != research_id
-                or not isinstance(state.get("rounds"), list)):
+        if (not isinstance(state.get("state_sha256"), str)
+                or state["state_sha256"] != fingerprint(self._state_payload(state))):
+            raise ResearchContractError(
+                "durable state checksum invalid or unsealed; explicit migration required")
+        request = state.get("request")
+        rounds = state.get("rounds")
+        if (state.get("schema_version") != 1 or state.get("mode") != "offline_mock"
+                or not isinstance(request, dict)
+                or request.get("research_id") != research_id
+                or not isinstance(rounds, list)
+                or state.get("status") not in {
+                    "CREATED", "RUNNING", "BLOCKED", "COMPLETED", "BUDGET_EXHAUSTED"}
+                or state.get("candidate_qualification") != "NOT_EVALUATED"
+                or state.get("simulation_submitted") is not False
+                or state.get("alpha_submitted") is not False):
             raise ResearchContractError("durable research state is invalid")
+        if (state.get("request_sha256") != fingerprint(request)
+                or type(state.get("used_experiments")) is not int
+                or state["used_experiments"] < 0
+                or len(rounds) > request.get("max_rounds", 0)):
+            raise ResearchContractError("durable request or budget evidence is invalid")
+        observed_ids = set()
+        completed_intents = 0
+        for index, row in enumerate(rounds):
+            if (not isinstance(row, dict) or row.get("index") != index
+                    or row.get("status") not in {"RUNNING", "COMPLETED"}
+                    or not isinstance(row.get("model_calls"), dict)
+                    or not isinstance(row.get("simulations"), dict)):
+                raise ResearchContractError("durable round state is invalid")
+            for experiment_id, intent in row["simulations"].items():
+                if (not isinstance(experiment_id, str) or experiment_id in observed_ids
+                        or not isinstance(intent, dict)
+                        or intent.get("status") not in {"IN_FLIGHT", "UNSETTLED", "COMPLETED"}
+                        or not isinstance(intent.get("experiment"), dict)
+                        or intent.get("experiment_sha256") != fingerprint(intent["experiment"])):
+                    raise ResearchContractError("durable simulation intent is invalid")
+                observed_ids.add(experiment_id)
+                if intent["status"] == "COMPLETED":
+                    completed_intents += 1
+            if row["status"] == "COMPLETED":
+                report = row.get("report")
+                if (not isinstance(report, dict)
+                        or report.get("execution_mode") != "offline_mock"
+                        or report.get("candidate_qualification") != "NOT_EVALUATED"
+                        or report.get("simulation_submitted") is not False
+                        or report.get("alpha_submitted") is not False
+                        or any(intent["status"] != "COMPLETED"
+                               for intent in row["simulations"].values())):
+                    raise ResearchContractError("completed round has unresolved evidence")
+        if (state["used_experiments"] > len(observed_ids)
+                or (state["status"] in {"COMPLETED", "BUDGET_EXHAUSTED"}
+                    and state["used_experiments"] != len(observed_ids))):
+            raise ResearchContractError("durable research budget accounting is invalid")
         return state
+
+    def _settle_completed_round(self, state):
+        """Close a crash gap after a completed round, without another model call."""
+        if not state["rounds"] or state["rounds"][-1]["status"] != "COMPLETED":
+            return
+        report = state["rounds"][-1]["report"]
+        if not isinstance(report, dict) or not isinstance(report.get("decision"), dict):
+            raise ResearchContractError("completed round is missing its decision")
+        action = report["decision"].get("action")
+        if action not in {"OPTIMIZE", "INVESTIGATE", "EXPLORE", "CANDIDATE", "REJECT", "STOP"}:
+            raise ResearchContractError("completed round has invalid decision")
+        state["used_experiments"] = sum(
+            len(row["simulations"]) for row in state["rounds"])
+        if action in self.TERMINAL:
+            state["status"] = "COMPLETED"
+            state["stop_reason"] = action
+        elif (len(state["rounds"]) >= self.max_rounds
+                or state["used_experiments"] >= self.max_total_experiments):
+            state["status"] = "BUDGET_EXHAUSTED"
+            state["stop_reason"] = "research_budget_reached"
+        else:
+            state["status"] = "RUNNING"
+        self._save(state)
 
     def _initialize(self, request):
         path = self._path(request["research_id"])
@@ -201,6 +280,8 @@ class DurableOfflineResearchRunner:
         }
         with SingleWriterLock(self.lock_path):
             state = self._initialize(request)
+            if state["status"] == "RUNNING":
+                self._settle_completed_round(state)
             if state["status"] in {"COMPLETED", "BUDGET_EXHAUSTED"}:
                 return copy.deepcopy(state)
             if state["status"] == "BLOCKED":
@@ -259,16 +340,8 @@ class DurableOfflineResearchRunner:
                     len(r["simulations"]) for r in state["rounds"])
                 state["status"] = "RUNNING"
                 self._save(state)
-                if report["decision"]["action"] in self.TERMINAL:
-                    state["status"] = "COMPLETED"
-                    state["stop_reason"] = report["decision"]["action"]
-                    self._save(state)
-                    break
-                if (len(state["rounds"]) >= self.max_rounds or
-                        state["used_experiments"] >= self.max_total_experiments):
-                    state["status"] = "BUDGET_EXHAUSTED"
-                    state["stop_reason"] = "research_budget_reached"
-                    self._save(state)
+                self._settle_completed_round(state)
+                if state["status"] in {"COMPLETED", "BUDGET_EXHAUSTED"}:
                     break
             return copy.deepcopy(state)
 
