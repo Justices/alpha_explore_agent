@@ -11,7 +11,7 @@ from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.governance import validate_policy
 from alpha_research.agents.registry import (
     bundled_registry_path, describe_registry, load_registry,
-    load_role_profile, select_registered_backends,
+    load_role_profile, select_registered_backends, assert_live_model_routes,
 )
 from alpha_research.state.fingerprint import canonical_json_bytes
 
@@ -73,6 +73,7 @@ def checked_selection(payload, agent_args, root):
                "research_executor": payload["executor"]}
     effective = select_registered_backends(load_role_profile(config), registry,
                                            assignments=mapping)
+    assert_live_model_routes(effective)
     ready = check_registered_roles(effective)
     if ready["status"] != "READY_LOCAL":
         missing = ", ".join(
