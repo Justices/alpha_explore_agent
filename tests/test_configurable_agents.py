@@ -27,6 +27,31 @@ def gateway():
     fixtures = ROOT / "tests" / "fixtures" / "research_cycle_simulations.json"
     return OfflineSimulationGateway(json.loads(fixtures.read_text(encoding="utf-8")))
 
+def api_role_config():
+    """Build protocol fixtures from the canonical role template, no old config file."""
+    cfg = config()
+    cfg["roles"]["research_lead"]["backend"] = "research_lead_api"
+    cfg["roles"]["research_executor"]["backend"] = "research_executor_api"
+    cfg["backends"] = {
+        "research_lead_api": {
+            "provider": "openai_compatible",
+            "url": "https://lead-provider.example.invalid/v1/chat/completions",
+            "model": "<YOUR_LEAD_MODEL_ID>",
+            "api_key_env": "RESEARCH_LEAD_API_KEY",
+            "response_format": "none",
+        },
+        "research_executor_api": {
+            "provider": "anthropic_compatible",
+            "url": "https://executor-provider.example.invalid/v1/messages",
+            "model": "<YOUR_EXECUTOR_MODEL_ID>",
+            "api_key_env": "RESEARCH_EXECUTOR_API_KEY",
+        },
+    }
+    return cfg
+
+
+
+
 
 class TestConfigurableAgents(unittest.TestCase):
     def test_role_inspection_is_offline_and_credential_safe(self):
@@ -58,8 +83,7 @@ class TestConfigurableAgents(unittest.TestCase):
             inspect_roles(cfg, ["attribute_results"])
 
     def test_roles_can_use_different_http_model_families_without_code_change(self):
-        alt_path = ROOT / "tests" / "fixtures" / "provider_swaps.json"
-        cfg = json.loads(alt_path.read_text(encoding="utf-8"))["model"]
+        cfg = api_role_config()
         traces = []
         credentials = {
             "RESEARCH_LEAD_API_KEY": "offline-lead-key",
@@ -95,7 +119,7 @@ class TestConfigurableAgents(unittest.TestCase):
         self.assertEqual(len(traces), 2)
 
         # Exchange models purely through configuration; no task/business code changes.
-        swapped = json.loads(alt_path.read_text(encoding="utf-8"))["model"]
+        swapped = api_role_config()
         swapped["roles"]["research_lead"]["backend"] = "research_executor_api"
         swapped["roles"]["research_executor"]["backend"] = "research_lead_api"
         reversed_router = RoleRoutedModelClient(
@@ -110,8 +134,7 @@ class TestConfigurableAgents(unittest.TestCase):
         self.assertEqual(len(traces), 4)
 
     def test_http_model_configurations_fail_closed(self):
-        cfg = json.loads((ROOT / "tests" / "fixtures" / "provider_swaps.json").read_text(
-            encoding="utf-8"))["model"]
+        cfg = api_role_config()
         cfg["backends"]["research_lead_api"]["url"] = "http://public-server/"
         with self.assertRaises(AgentConfigError):
             build_model_client(cfg)
