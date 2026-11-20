@@ -7,7 +7,7 @@ name = "alpha-research"
 version = "0.1.0"
 description = "Evidence-driven Alpha research workflows for WorldQuant BRAIN"
 requires-python = ">=3.11"
-dependencies = ["requests>=2.28,<3"]
+dependencies = ["requests>=2.28,<3", "openai>=2.0,<4"]
 
 [project.optional-dependencies]
 agy = ["google-antigravity>=0.1.16,<0.2"]
