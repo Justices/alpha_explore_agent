@@ -161,3 +161,75 @@ def verify_identity_bound_review(orchestrator, task_id, model_config,
         orchestrator, receipt,
         model_profile_sha256=identity["model_profile_sha256"],
         environ=environ, now=now)
+
+
+def inspect_domain_research_handoff(orchestrator, task_id, model_config,
+                                    governance_policy):
+    """Read existing domain Research ID and model ledger; never reserve calls.
+
+    Unlike identity preparation, this accepts started/blocked tasks. It checks
+    the saved immutable proposal and profile without creating a new identity.
+    """
+    import re
+    from alpha_research.agents.governance import ModelCallLedger
+
+    task = orchestrator.load(task_id)
+    _refuse_inline_secrets(model_config)
+    RoleRoutingConfig.parse(model_config)
+    policy = validate_policy(governance_policy)
+    path = (orchestrator.state_root / "state" / "research_v1_1"
+            / "execution_identities" / (orchestrator._path(task_id).stem + ".json"))
+    proposal_path = (orchestrator.state_root / "state" / "research_v1_1"
+                     / "execution_proposals" / (task_id + ".json"))
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        proposal = json.loads(proposal_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise OrchestrationError("saved production handoff identity unavailable") from exc
+    identity = record.get("identity") if isinstance(record, dict) else None
+    proposed = proposal.get("proposal") if isinstance(proposal, dict) else None
+    if (not isinstance(identity, dict) or not isinstance(proposed, dict)
+            or record.get("identity_sha256") != fingerprint_json(identity)
+            or proposal.get("proposal_sha256") != fingerprint_json(proposed)
+            or identity.get("task_id") != task_id
+            or identity.get("workflow") != task["workflow"]
+            or identity.get("request_sha256") != task["request_sha256"]
+            or proposed.get("request_sha256") != task["request_sha256"]
+            or proposed.get("task_id") != task_id
+            or identity.get("proposal_sha256") != proposal["proposal_sha256"]
+            or identity.get("model_profile_sha256") != fingerprint_json(model_config)
+            or identity.get("model_governance_policy_sha256") != fingerprint_json(policy)
+            or identity.get("allow_model_call") is not False
+            or identity.get("allow_brain_simulation") is not False):
+        raise OrchestrationError(
+            "saved production handoff identity or policy has drifted")
+    binding = task.get("research_identity")
+    if binding is None:
+        return {"task_id": task_id, "status": "AWAITING_DOMAIN_RESEARCH_ID",
+                "model_profile_sha256": identity["model_profile_sha256"],
+                "provider_invoked": False, "brain_invoked": False}
+    if not isinstance(binding, dict) or binding.get("workflow") != task["workflow"]:
+        raise OrchestrationError("domain Research ID binding is invalid")
+    research_id = binding.get("research_id")
+    prefix = {
+        "regular": "regular:campaign:", "super": "super:",
+        "optimization": "optimization:",
+    }[task["workflow"]]
+    if (not isinstance(research_id, str)
+            or re.fullmatch(re.escape(prefix) + r"[0-9a-f]{32}", research_id) is None):
+        raise OrchestrationError("domain Research ID binding has changed")
+    ledger = ModelCallLedger(orchestrator.state_root, policy)
+    status = ledger.status(research_id)
+    return {
+        "task_id": task_id,
+        "workflow": task["workflow"],
+        "research_id": research_id,
+        "model_profile_sha256": identity["model_profile_sha256"],
+        "model_governance_policy_sha256": identity["model_governance_policy_sha256"],
+        "model_budget": status,
+        "orchestration_budget": copy.deepcopy(task["budget"]),
+        "recovery_required": (task["status"] == "BLOCKED"
+                              or status["unresolved"] > 0 or status["unknown"] > 0),
+        "provider_invoked": False,
+        "brain_invoked": False,
+    }
