@@ -7,9 +7,9 @@ The research gateway separately owns all non-idempotent simulation intents.
 import asyncio
 import json
 import os
-import re
 
 from alpha_research.integrations.model_prompts import instruction_for
+from alpha_research.integrations.model_json import decode_decision
 
 
 class AntigravityAdapterError(RuntimeError):
@@ -17,23 +17,16 @@ class AntigravityAdapterError(RuntimeError):
 
 
 def decode_json_object(message: str) -> dict:
+    """Apply the canonical JSON decision codec to AGY's text response."""
     if not isinstance(message, str):
         raise AntigravityAdapterError("AGY returned a non-text response")
     try:
-        result = json.loads(message)
-    except ValueError:
-        blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", message,
-                            flags=re.IGNORECASE | re.DOTALL)
-        if len(blocks) != 1:
-            raise AntigravityAdapterError("AGY response must be one JSON object")
-        try:
-            result = json.loads(blocks[0])
-        except ValueError as exc:
-            raise AntigravityAdapterError("AGY response is invalid JSON") from exc
+        result = decode_decision(message)
+    except (TypeError, ValueError) as exc:
+        raise AntigravityAdapterError("AGY response is invalid JSON") from exc
     if not isinstance(result, dict):
         raise AntigravityAdapterError("AGY response must be a JSON object")
     return result
-
 
 class AntigravityModelClient:
     def __init__(self, config, environ=None, agent_factory=None):
