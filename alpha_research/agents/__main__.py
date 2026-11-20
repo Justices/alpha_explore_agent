@@ -7,7 +7,7 @@ import argparse
 import json
 from pathlib import Path
 
-from alpha_research.agents.configuration import RoleRoutingConfig
+from alpha_research.agents.configuration import RoleRoutingConfig, backend_kind
 
 
 def inspect_roles(model_config, tasks):
@@ -19,6 +19,7 @@ def inspect_roles(model_config, tasks):
         roles[role] = {
             "backend": name,
             "provider": backend["provider"],
+            "kind": backend_kind(backend["provider"]),
             "model": backend.get("model"),
             "timeout_seconds": backend.get("timeout_seconds", 180),
             "session": backend.get("session") if backend["provider"] == "codex_cli" else None,
@@ -33,6 +34,7 @@ def inspect_roles(model_config, tasks):
             "role": binding.role,
             "backend": binding.backend_name,
             "provider": binding.backend["provider"],
+            "kind": backend_kind(binding.backend["provider"]),
         }
     return {
         "default_role": routing.default_role,
