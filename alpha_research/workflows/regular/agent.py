@@ -73,7 +73,6 @@ class ResearchAgent:
             self.knowledge, self.recorder, self.state_root,
         )
         self.field_plans = FieldPlanWorkflow(self)
-        self.candidate_audit = CandidateAuditService(self)
         if hasattr(gateway, "alpha_lookup"):
             gateway.alpha_lookup = self._lookup_alpha_state
 
@@ -528,19 +527,19 @@ class ResearchAgent:
 
     def _apply_canonical_audit(self, batch_dir, prereg, alpha_ids, readback, gate,
                                contender_ids=None, *, audit_id=None, error_dir=None):
-        return self.candidate_audit.audit(
+        return CandidateAuditService(self).audit(
             batch_dir, prereg, alpha_ids, readback, gate, contender_ids,
             audit_id=audit_id, error_dir=error_dir,
         )
 
     def _refresh_retained_contenders(self, contenders, current_ids, scope, self_limit, batch_dir):
-        return self.candidate_audit.refresh_retained(
+        return CandidateAuditService(self).refresh_retained(
             contenders, current_ids, scope, self_limit, batch_dir,
         )
 
     def _reaudit_retained_candidates(self, contenders, current_ids, prechecks, scope,
                                      batch_dir, unresolved):
-        return self.candidate_audit.reaudit_retained(
+        return CandidateAuditService(self).reaudit_retained(
             contenders, current_ids, prechecks, scope, batch_dir, unresolved,
         )
 
