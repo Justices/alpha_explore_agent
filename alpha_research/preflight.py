@@ -12,6 +12,7 @@ from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.governance import validate_policy
 from alpha_research.agents.registry import (
     load_registry, load_role_profile, select_registered_backends,
+    assert_live_model_routes,
 )
 from alpha_research.state.fingerprint import canonical_json_bytes
 from alpha_research.state.paths import expand_path
@@ -92,6 +93,7 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
                 load_role_profile(cfg), load_registry(registry_path),
                 assignments={"research_lead": lead,
                              "research_executor": executor})
+            assert_live_model_routes(effective)
             ready = check_registered_roles(effective, environ=env)
             result["models"] = ready["status"]
             result["roles"] = ready["roles"]
