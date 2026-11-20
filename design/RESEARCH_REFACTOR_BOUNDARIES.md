@@ -30,6 +30,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
 | `integrations/model_journal.py` | Owns durable call paths, intent/terminal writes, append-only events and batch-manifest/session-index transactions |
 | `integrations/model_sessions.py` | Enforces only the canonical version-2 session index with research ownership and exact per-batch call membership |
+| `integrations/model_evidence.py` | Canonical evidence path derivation and symlink/traversal rejection for local replay and Journal operations |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
 | `agents/configuration.py` | Strict role/task binding and defensively copied route snapshots; delegates backend policy |
@@ -86,6 +87,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
 - `tests/test_model_transaction_boundary.py`:
   cross-file reservation/intent/manifest/response crash gaps, sealed response
   corruption rejection and operator-visible orphan reservation IDs
+- `tests/test_model_evidence_paths.py`:
+  adversarial batch manifest paths, traversal, symlinks, audit/path identity,
+  original input digest and unsettled-budget rejection
 - `tests/test_atomic_store.py`:
   interrupted rename cleanup, complete concurrent JSON publication,
   fsynced files and intact sealed model/research state
@@ -306,3 +310,27 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   cryptographic signatures against an actor able to rewrite and reseal
   local files. No BRAIN execution privilege or live model invocation is
   granted to the recovery code.
+
+## Provider-free replay evidence path trust boundary
+
+- The configured `state_root` and bound `batch_dir` are the only path
+  authorities. `ModelReplay` reconstructs the five manifest evidence refs
+  from those roots and the validated lowercase 32-hex `call_id`.
+  User-editable path strings in a batch manifest are compared for equality
+  and **never used to choose the file to open**. Relative paths, traversal,
+  alternative filenames, symlinked files and symlinked parent directories
+  are rejected before evidence is read.
+- The batch manifest itself, the Session index and the global-call and
+  batch evidence directories are checked before Journal reads/copies/writes.
+  Canonical paths are enforced for each internal Journal evidence copy.
+- The global audit's `session_id`, `research_id`, `batch_ref`,
+  `context_ref`, `response_ref`, task and route digest must match the
+  manifest and trusted roots. The global original input JSON is also
+  rehashed and checked against its recorded context SHA-256. A valid sealed
+  model response is **not** by itself sufficient to settle a budget attempt
+  if original input evidence is missing or altered.
+- Only a validated sealed response and the exact prior budget reservation
+  may be reconciled, with no provider retry on missing or suspect evidence.
+  These path checks protect against malformed or tampered stored references,
+  not a hostile process that can concurrently replace files after validation.
+  Local integrity hashes are not cryptographic signatures.
