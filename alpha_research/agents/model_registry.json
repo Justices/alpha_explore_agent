@@ -38,7 +38,7 @@
       "api_key_env": "ZAI_API_KEY",
       "timeout_seconds": 180,
       "response_format": "none",
-      "base_url": "https://api.z.ai/api/paas/v4"
+      "base_url": "https://open.bigmodel.cn/api/paas/v4"
     },
     "kimi": {
       "kind": "llm_api",
