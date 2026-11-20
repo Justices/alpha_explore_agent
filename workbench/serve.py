@@ -27,6 +27,7 @@ from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.workflows.regular.campaign import (
     campaign_can_resume, delete_saved_campaign, load_saved_campaign,
 )
+from workbench.runtime_models import checked_selection, listed_models
 
 
 COOKIE_NAME = "alpha_workbench_session"
@@ -121,13 +122,15 @@ def handler_for(agent_args, port):
     def launch_stop_flag(launch_id):
         return root / "state" / f"workbench-{launch_id}.stop"
 
-    def run_campaign(args, credentials, log_path):
+    def run_campaign(args, credentials, log_path, selection):
         outcome = {"status": "failed"}
         stop_flag = launch_stop_flag(log_path.stem)
         try:
             write_progress("正在启动研究进程", log_path)
             result = subprocess.run(
-                agent_command(agent_args, [*args, "--brain-credentials-stdin"]),
+                agent_command(agent_args, [
+                    "--lead", selection["lead"], "--executor", selection["executor"],
+                    *args, "--brain-credentials-stdin"]),
                 cwd=PROJECT, env={**agent_env(), PROGRESS_ENV: str(log_path),
                                   "ALPHA_RESEARCH_LAUNCH_STOP": str(stop_flag)},
                 input=json.dumps(credentials, ensure_ascii=False),
@@ -158,13 +161,18 @@ def handler_for(agent_args, port):
                     if campaign_id:
                         atomic_write_json(log_path.with_suffix(".campaign.json"),
                                           {"campaign_id": campaign_id})
+                        if outcome["status"] == "exited":
+                            atomic_write_json(
+                                log_dir / (campaign_id + ".models.json"), {
+                                    "campaign_id": campaign_id, **selection})
                     stop_flag.unlink(missing_ok=True)
                 except OSError:
                     write_progress("无法保存本次启动的索引或清理终止标记", log_path)
 
-    def start_campaign(args, credentials, campaign_id=None):
+    def start_campaign(args, credentials, selection, campaign_id=None):
         launch.clear()
-        launch.update(status="running", launch_id=uuid4().hex)
+        launch.update(status="running", launch_id=uuid4().hex,
+                      lead=selection["lead"], executor=selection["executor"])
         if campaign_id:
             launch["campaign_id"] = campaign_id
         log_path = log_dir / f"{launch['launch_id']}.jsonl"
@@ -172,8 +180,9 @@ def handler_for(agent_args, port):
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=False)
             atomic_write_json(log_path.with_suffix(".launch.json"), {
-                "args": args, "status": "starting"})
-            Thread(target=run_campaign, args=(args, credentials, log_path), daemon=True).start()
+                "args": args, "models": selection, "status": "starting"})
+            Thread(target=run_campaign, args=(args, credentials, log_path, selection),
+                   daemon=True).start()
         except (OSError, RuntimeError):
             launch["status"] = "failed"
             return 503, {"error": "无法启动研究进程"}
@@ -251,7 +260,14 @@ def handler_for(agent_args, port):
                 if self.path == "/api/research":
                     self.research_action(request, credentials)
                     return
-                args = campaign_arguments(request)
+                if not isinstance(request, dict):
+                    raise ValueError("研究启动请求必须是 JSON 对象")
+                selection = checked_selection(
+                    {key: request.get(key) for key in ("lead", "executor")},
+                    agent_args, root)
+                args = campaign_arguments({
+                    key: value for key, value in request.items()
+                    if key not in ("lead", "executor")})
             except (OSError, UnicodeError, json.JSONDecodeError):
                 self.respond_json(400, {"error": "无法读取启动请求"})
                 return
@@ -262,12 +278,16 @@ def handler_for(agent_args, port):
                 if launch["status"] == "running":
                     code, payload = 409, {"error": "已有研究任务正在运行"}
                 else:
-                    code, payload = start_campaign(args, credentials)
+                    code, payload = start_campaign(args, credentials, selection)
             self.respond_json(code, payload)
 
         def research_action(self, request, credentials):
-            if not isinstance(request, dict) or set(request) != {"action", "id"}:
-                raise ValueError("需要研究操作和 ID")
+            if (not isinstance(request, dict) or
+                    not {"action", "id"} <= set(request) or
+                    set(request) - {"action", "id", "lead", "executor"} or
+                    (request.get("action") != "resume"
+                     and set(request) != {"action", "id"})):
+                raise ValueError("需要研究操作、ID 和恢复时的模型选择")
             action, target = request["action"], request["id"]
             with launch_lock:
                 running = launch["status"] == "running"
@@ -291,12 +311,24 @@ def handler_for(agent_args, port):
                     if not campaign_can_resume(saved):
                         code, payload = 409, {"error": "该 Campaign 没有可继续的研究批次"}
                     else:
+                        selected = checked_selection({
+                            "lead": request.get("lead"),
+                            "executor": request.get("executor"),
+                        }, agent_args, root)
+                        pinned_path = log_dir / (target + ".models.json")
+                        if pinned_path.exists():
+                            previous = json.loads(pinned_path.read_text(encoding="utf-8"))
+                            if previous != {"campaign_id": target, **selected}:
+                                raise ValueError(
+                                    "恢复时模型选择或注册配置与原 Campaign 不一致")
                         code, payload = start_campaign(
-                            ["run-campaign", f"--resume-campaign={target}"], credentials, target)
+                            ["run-campaign", f"--resume-campaign={target}"],
+                            credentials, selected, target)
                 else:
                     try:
                         with SingleWriterLock(root / "state" / "agent.lock"):
                             delete_saved_campaign(root, target)
+                            (log_dir / (target + ".models.json")).unlink(missing_ok=True)
                     except (OSError, WriterLockError):
                         code, payload = 409, {"error": "研究状态正在使用或无法保存"}
                     else:
@@ -323,6 +355,12 @@ def handler_for(agent_args, port):
                 return
             if self.path == "/api/credentials":
                 self.respond_json(200, {"configured": self.browser_credentials() is not None})
+                return
+            if self.path == "/api/models":
+                try:
+                    self.respond_json(200, listed_models(agent_args, root))
+                except (OSError, ValueError):
+                    self.respond_json(503, {"error": "模型注册中心不可用"})
                 return
             url = urlsplit(self.path)
             if url.path == "/api/research-summary":
@@ -355,9 +393,10 @@ if __name__ == "__main__":
                         metavar="PORT")
     parser.add_argument("--state-root")
     parser.add_argument("--config")
+    parser.add_argument("--registry")
     args = parser.parse_args()
     agent_args = []
-    for name in ("state_root", "config"):
+    for name in ("state_root", "config", "registry"):
         if value := getattr(args, name):
             agent_args.extend(["--" + name.replace("_", "-"), value])
     with ThreadingHTTPServer(("127.0.0.1", args.port),
