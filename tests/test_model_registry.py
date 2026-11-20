@@ -133,8 +133,8 @@ class ModelRegistryTests(unittest.TestCase):
     def test_explicit_roles_ignore_legacy_business_model_without_calls(self):
         """Explicit registry selection owns routes, not obsolete business model config."""
         from alpha_research.config import DEFAULT_CONFIG
-        with tempfile.TemporaryDirectory() as td, \\
-             patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")), \\
+        with tempfile.TemporaryDirectory() as td, \
+             patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")), \
              patch("subprocess.run", side_effect=AssertionError("Agent called")):
             root = Path(td)
             config = copy.deepcopy(DEFAULT_CONFIG)
