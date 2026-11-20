@@ -231,6 +231,24 @@ class ReplayEvidencePathsTests(unittest.TestCase):
             self.replay_without_binding(model)
         self.assertEqual(model.calls, 0)
 
+    def test_changed_task_or_context_digest_cannot_bypass_replay(self):
+        # All paths remain canonical here. Without a cross-check against the
+        # original audit, these edits make a recorded call look unrelated,
+        # permitting a second paid request for the exact same input.
+        for field, forged in (("task", "different_task"),
+                              ("context_sha256", "f" * 64)):
+            with self.subTest(field=field):
+                previous = self.manifest_path.read_bytes()
+                try:
+                    self.edit_row(**{field: forged})
+                    model = OfflineModel()
+                    with self.assertRaisesRegex(ModelError, "audit identity mismatch"):
+                        self.replay_without_binding(model)
+                    self.assertEqual(model.calls, 0)
+                    self.assertEqual(self.recorder().budget.status("R1")["attempts"], 1)
+                finally:
+                    self.manifest_path.write_bytes(previous)
+
     def test_poisoned_unrelated_row_blocks_new_task_before_provider(self):
         # Recovery cannot treat a manifest with forged, unrelated rows as an
         # empty manifest and authorize a new model operation.
