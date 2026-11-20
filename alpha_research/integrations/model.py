@@ -213,6 +213,7 @@ class DecisionRecorder:
 
         replay = replay_batch_call(
             self.batch_dir, task, context_sha, route_sha,
+            calls_root=self.journal.calls_root,
             append_event=self.journal.append_event,
             on_verified=reconcile_verified if self.budget is not None else None,
             expected_research_id=self.research_id)
