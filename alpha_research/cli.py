@@ -23,7 +23,7 @@ from alpha_research.state.store import StopSignals, update_stop_flag
 from alpha_research.workflows.regular.campaign import campaign_can_resume
 from alpha_research.workflows.regular.scope import ScopeDiscoveryError
 from alpha_research.state.operation_lock import SubmissionGateError
-from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
+from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research, _regular_scope, _constraint
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
@@ -82,6 +82,12 @@ def main(argv=None):
                          required=True)
     prepare.add_argument("--objective", required=True)
     prepare.add_argument("--alpha-id")
+    prepare.add_argument("--region")
+    prepare.add_argument("--delay", type=int)
+    prepare.add_argument("--dataset", action="append")
+    prepare.add_argument("--category")
+    prepare.add_argument("--universe")
+    prepare.add_argument("--ppa", action="store_true")
     handoff = sub.add_parser(
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
@@ -367,12 +373,34 @@ def main(argv=None):
                 runner = MainOrchestrator(root)
                 if args.command == "orchestration-prepare":
                     request = {"objective": args.objective}
-                    if args.workflow == "optimization":
-                        if not args.alpha_id:
-                            raise OrchestrationError("optimization requires Alpha ID")
-                        request["alpha_id"] = args.alpha_id
-                    elif args.alpha_id:
-                        raise OrchestrationError("Alpha ID applies only to optimization")
+                    if args.workflow == "regular":
+                        if args.alpha_id:
+                            raise OrchestrationError("Alpha ID applies only to optimization")
+                        scope = _regular_scope(args, cfg)
+                        if not scope["region"]:
+                            raise OrchestrationError("Region is required")
+                        if scope["delay"] not in (None, 1):
+                            raise OrchestrationError("Regular Campaign requires Delay 1")
+                        request.update(scope)
+                        request["delay"] = 1
+                        request["ppa_profile"] = args.ppa
+                    else:
+                        if args.dataset or args.category or args.universe or args.ppa:
+                            raise OrchestrationError(
+                                "Dataset, Category, Universe and PPA apply only to Regular")
+                        fixed_scope = cfg.get("scope") or {}
+                        request["region"] = _constraint(
+                            args.region, fixed_scope.get("region"), "Region")
+                        request["delay"] = _constraint(
+                            args.delay, fixed_scope.get("delay"), "Delay")
+                        if not request["region"]:
+                            raise OrchestrationError("Region is required")
+                        if args.workflow == "optimization":
+                            if not args.alpha_id:
+                                raise OrchestrationError("optimization requires Alpha ID")
+                            request["alpha_id"] = args.alpha_id
+                        elif args.alpha_id:
+                            raise OrchestrationError("Alpha ID applies only to optimization")
                     task = runner.create(args.workflow, request, budget=1)
                     proposal = persist_execution_proposal(runner, task["task_id"])
                     identity = persist_execution_identity(
