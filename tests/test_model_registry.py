@@ -130,6 +130,36 @@ class ModelRegistryTests(unittest.TestCase):
             with self.assertRaisesRegex(ModelRegistryError, "secrets"):
                 load_registry(path)
 
+    def test_explicit_roles_ignore_legacy_business_model_without_calls(self):
+        """Explicit registry selection owns routes, not obsolete business model config."""
+        from alpha_research.config import DEFAULT_CONFIG
+        with tempfile.TemporaryDirectory() as td, \\
+             patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")), \\
+             patch("subprocess.run", side_effect=AssertionError("Agent called")):
+            root = Path(td)
+            config = copy.deepcopy(DEFAULT_CONFIG)
+            config["model"] = {
+                "provider": "openai_sdk",
+                "base_url": "https://api.deepseek.com",
+                "model": "old-inline-model",
+                "api_key_env": "UNUSED_OLD_KEY",
+            }
+            cfgpath = root / "config" / "nastu_quant.json"
+            cfgpath.parent.mkdir(parents=True)
+            cfgpath.write_text(json.dumps(config), encoding="utf-8")
+            with redirect_stdout(io.StringIO()) as output:
+                rc = research_main([
+                    "--state-root", str(root), "--lead", "deepseek",
+                    "--executor", "deepseek", "models", "inspect",
+                ])
+            self.assertEqual(rc, 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["roles"]["research_lead"]["provider"], "openai_sdk")
+            self.assertEqual(report["roles"]["research_executor"]["provider"], "openai_sdk")
+            self.assertEqual(report["selected_registrations"], {
+                "research_lead": "deepseek", "research_executor": "deepseek",
+            })
+
     def test_cli_list_is_offline_and_does_not_require_config(self):
         with tempfile.TemporaryDirectory() as td, \
              patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")), \
