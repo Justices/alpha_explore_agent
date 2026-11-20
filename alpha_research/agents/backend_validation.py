@@ -17,7 +17,7 @@ class AgentConfigError(ValueError):
 # The historical agy_cli remains explicitly excluded from unattended routing.
 PROVIDERS_BY_KIND = {
     "agent_runtime": frozenset({"codex_cli", "claude_cli", "antigravity_sdk"}),
-    "llm_api": frozenset({"openai_compatible", "anthropic_compatible", "json_http"}),
+    "llm_api": frozenset({"openai_sdk"}),
     "mock": frozenset({"mock"}),
 }
 SUPPORTED_PROVIDERS = frozenset().union(*PROVIDERS_BY_KIND.values())
@@ -91,43 +91,36 @@ def validate_backend(name, spec):
         }
         if set(spec) - allowed:
             raise AgentConfigError("unsupported Antigravity SDK backend option")
-    if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
-        url = spec.get("url")
+    if provider == "openai_sdk":
+        # Only OpenAI Chat Completions compatible HTTPS endpoints can use
+        # this adapter. The SDK appends /chat/completions to base_url.
+        base_url = spec.get("base_url")
         try:
-            parsed_url = urlsplit(url) if isinstance(url, str) else None
+            parsed_url = urlsplit(base_url) if isinstance(base_url, str) else None
             valid_url = bool(
                 parsed_url and parsed_url.scheme == "https"
                 and parsed_url.hostname and parsed_url.username is None
-                and parsed_url.password is None and not parsed_url.fragment
+                and parsed_url.password is None
+                and not parsed_url.fragment and not parsed_url.query
+                and not parsed_url.path.rstrip("/").endswith("/chat/completions")
             )
         except ValueError:
             valid_url = False
         if not valid_url:
-            raise AgentConfigError(
-                "model API backends require an explicit HTTPS URL")
+            raise AgentConfigError("openai_sdk requires an HTTPS API base_url")
         key_env = spec.get("api_key_env")
-        if provider != "json_http" and (
-                not isinstance(key_env, str) or not key_env):
+        if not isinstance(key_env, str) or not key_env.strip():
+            raise AgentConfigError("openai_sdk requires api_key_env")
+        if not isinstance(spec.get("model"), str) or not spec["model"].strip():
+            raise AgentConfigError("openai_sdk requires model")
+        response_format = spec.get("response_format", "json_object")
+        if response_format not in {"json_object", "none"}:
             raise AgentConfigError(
-                f"{provider} requires an API credential environment variable")
-        if key_env is not None and (
-                not isinstance(key_env, str) or not key_env.strip()):
-            raise AgentConfigError("api_key_env must be a nonempty string")
-        if provider != "json_http" and (
-                not isinstance(spec.get("model"), str)
-                or not spec["model"].strip()):
-            raise AgentConfigError(f"{provider} requires a model identifier")
-        allowed = {"provider", "kind", "model", "url", "api_key_env", "timeout_seconds"}
-        if provider == "openai_compatible":
-            allowed.add("response_format")
-            response_format = spec.get("response_format", "json_object")
-            if not isinstance(response_format, str) or response_format not in {
-                    "json_object", "none"}:
-                raise AgentConfigError(
-                    "OpenAI-compatible response_format must be json_object or none")
+                "OpenAI SDK response_format must be json_object or none")
+        allowed = {"provider", "kind", "model", "base_url",
+                   "api_key_env", "timeout_seconds", "response_format"}
         if set(spec) - allowed:
-            raise AgentConfigError(
-                f"unsupported model API configuration keys for {provider}")
+            raise AgentConfigError("unsupported OpenAI SDK backend option")
     if provider == "mock":
         if set(spec) - {"provider", "kind", "responses", "timeout_seconds"}:
             raise AgentConfigError("unsupported mock backend option")
