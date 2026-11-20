@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.fingerprint import fingerprint_json as _canonical_sha256
 
 
 class RecoveryError(ValueError):
@@ -23,12 +24,6 @@ def _now():
 
 def _sha256_bytes(value):
     return hashlib.sha256(value).hexdigest()
-
-
-def _canonical_sha256(value):
-    raw = json.dumps(value, ensure_ascii=False, sort_keys=True,
-                     separators=(",", ":"), allow_nan=False).encode("utf-8")
-    return _sha256_bytes(raw)
 
 
 class RecoveryCoordinator:
