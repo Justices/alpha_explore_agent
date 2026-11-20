@@ -62,6 +62,34 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(route.resolve("attribute_results").backend["model"], "glm-4.6")
         self.assertEqual(original["roles"], profile["roles"])
 
+    def test_default_and_example_configs_have_no_duplicate_role_definitions(self):
+        from alpha_research.config import DEFAULT_CONFIG
+        source = role_profile()
+        self.assertEqual(DEFAULT_CONFIG["model"], source)
+        example = json.loads((ROOT / "config.example.json")
+                             .read_text(encoding="utf-8"))
+        self.assertNotIn("model", example)
+        self.assertFalse((ROOT / "model_registry.example.json").exists())
+        self.assertFalse((ROOT / "alpha_research" / "agents" / "__main__.py").exists())
+
+    def test_business_example_can_resolve_registered_roles_without_model_copy(self):
+        with tempfile.TemporaryDirectory() as td, \
+             patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")):
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = research_main([
+                    "--state-root", td,
+                    "--config", str(ROOT / "config.example.json"),
+                    "--lead", "deepseek", "--executor", "claude-code",
+                    "models", "inspect",
+                ])
+            self.assertEqual(result, 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report["task_routes"]["review_dataset_results"]["role"],
+                             "research_lead")
+            self.assertEqual(report["roles"]["research_executor"]["provider"],
+                             "claude_cli")
+
     def test_same_llm_can_serve_multiple_roles(self):
         cfg = select_registered_backends(role_profile(), registry(), assignments={
             "research_lead": "deepseek", "research_executor": "deepseek",
