@@ -4,10 +4,31 @@ The adapter is intentionally mock-only. It accepts a caller-owned fake gateway
 and fake agent, but rejects the production Gateway type. The underlying V1.1
 executors already perform qualification; this adapter never qualifies twice.
 """
+import copy
 from types import SimpleNamespace
 
 from alpha_research.orchestration.dispatch import dispatch
 from alpha_research.orchestration.engine import OrchestrationError, pool_snapshot
+
+
+class OfflineResearchAdapter:
+    """Explicit fixture adapter; cannot call the platform or submit Alphas."""
+    def __init__(self, fixtures):
+        if not isinstance(fixtures, dict):
+            raise OrchestrationError("fixtures must be an object")
+        self.fixtures = fixtures
+
+    def run(self, workflow, step, request, checkpoints, context=None):
+        key = workflow + "." + step
+        if key not in self.fixtures:
+            raise OrchestrationError("missing offline fixture: " + key)
+        result = self.fixtures[key]
+        if not isinstance(result, dict):
+            raise OrchestrationError("offline fixture must be an object")
+        if step == "collect":
+            result = copy.deepcopy(result)
+            result["qualification"] = checkpoints.get("qualify")
+        return copy.deepcopy(result)
 
 
 class MockWorkflowAdapter:

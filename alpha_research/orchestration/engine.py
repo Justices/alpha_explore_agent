@@ -248,26 +248,6 @@ class MainOrchestrator:
         return self._transition(task, status="RUNNING", failure=None)
 
 
-class OfflineResearchAdapter:
-    """Explicit fixture adapter; cannot call the platform or submit Alphas."""
-    def __init__(self, fixtures):
-        if not isinstance(fixtures, dict):
-            raise OrchestrationError("fixtures must be an object")
-        self.fixtures = fixtures
-
-    def run(self, workflow, step, request, checkpoints, context=None):
-        key = workflow + "." + step
-        if key not in self.fixtures:
-            raise OrchestrationError("missing offline fixture: " + key)
-        result = self.fixtures[key]
-        if not isinstance(result, dict):
-            raise OrchestrationError("offline fixture must be an object")
-        if step == "collect":
-            result = copy.deepcopy(result)
-            result["qualification"] = checkpoints.get("qualify")
-        return copy.deepcopy(result)
-
-
 def pool_snapshot(state_root, config):
     """P3: read-only unified pool projection; never promotes a candidate."""
     return CandidatePool(ResearchRecordStore(state_root)).build_index(

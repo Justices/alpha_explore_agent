@@ -26,7 +26,8 @@ from alpha_research.state.operation_lock import SubmissionGateError
 from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
-from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter, OrchestrationError
+from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
+from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.progress import write_progress

@@ -7,8 +7,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from alpha_research.orchestration.engine import (
-    MainOrchestrator, OfflineResearchAdapter, OrchestrationError, STEPS,
+    MainOrchestrator, OrchestrationError, STEPS,
 )
+from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 
 
 def fixtures(workflow):
