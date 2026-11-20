@@ -85,18 +85,6 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual((report["attempts"], report["successful"],
                               report["unresolved"]), (2, 2, 0))
 
-    def test_persisted_real_provider_error_must_not_be_reinvoked(self):
-        with tempfile.TemporaryDirectory() as d:
-            root = Path(d)
-            self.create_gap(root, fail=True)
-            # Change the saved provider identity to a real provider would
-            # invalidate its ledger reservation. Instead emulate the true
-            # provider in both the initial and resumed model configurations.
-            record_path, = (root / "logs" / "model_calls").glob("*.record.json")
-            record = json.loads(record_path.read_text(encoding="utf-8"))
-            self.assertEqual(record["status"], "error")
-            self.assertEqual(record["provider"], "mock")
-
     def test_error_receipt_from_real_provider_settles_without_retry(self):
         class RealModel(CountingModel):
             config = {"provider": "openai_compatible", "model": "fixture"}
@@ -129,6 +117,28 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual(model.calls, 0)
             self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
             self.assertEqual(replay.budget.status("R2")["attempts"], 0)
+
+    def test_saved_response_repairs_in_flight_audit_and_budget(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.create_gap(root)
+            manifest = json.loads((root / "batch" / "model_call_manifest.json")
+                                  .read_text(encoding="utf-8"))["calls"][0]
+            audit_path = Path(manifest["global_record_ref"])
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit["status"] = "in_flight"
+            audit["response_sha256"] = None
+            audit["token_in"] = None
+            audit["token_out"] = None
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            next_model = CountingModel()
+            recovered = self.make_recorder(root, next_model)
+            self.assertEqual(recovered.complete_json("task", {"step": 1})["step"], 1)
+            self.assertEqual(next_model.calls, 0)
+            self.assertEqual(recovered.budget.status("R1")["successful"], 1)
+            repaired = json.loads(audit_path.read_text(encoding="utf-8"))
+            self.assertEqual(repaired["status"], "ok")
+            self.assertTrue(repaired["response_sha256"])
 
     def test_missing_response_never_settles_ledger_or_reissues_model_call(self):
         with tempfile.TemporaryDirectory() as d:
