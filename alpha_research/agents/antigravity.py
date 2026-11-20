@@ -43,17 +43,16 @@ class AntigravityModelClient:
         self.last_response_text = None
         self.last_thread_id = None
 
-    async def _run(self, prompt, timeout, secret):
+    def build_local_config(self, secret):
+        """Construct read-only SDK configuration without starting an Agent."""
         try:
-            from google.antigravity import Agent, LocalAgentConfig
+            from google.antigravity import LocalAgentConfig, types
+            from google.antigravity.hooks import policy
         except ImportError as exc:
             raise AntigravityAdapterError(
                 "install optional dependency google-antigravity for AGY SDK") from exc
-        # An instruction is NOT a permission boundary. Explicitly disable all
-        # built-in tools except FINISH, disable subagents, and deny all other
-        # tool calls. Real BRAIN mutations belong to the separate gateway.
-        from google.antigravity import types
-        from google.antigravity.hooks import policy
+        # Instructions are not a security boundary; constrain both tool
+        # availability and runtime authorization. No BRAIN gateway is exposed.
         kwargs = {
             "system_instructions": (
                 "You analyze supplied Alpha research evidence. Return one JSON "
@@ -71,7 +70,15 @@ class AntigravityModelClient:
         }
         if self.config.get("model"):
             kwargs["model"] = self.config["model"]
-        agent_config = LocalAgentConfig(**kwargs)
+        return LocalAgentConfig(**kwargs)
+
+    async def _run(self, prompt, timeout, secret):
+        try:
+            from google.antigravity import Agent
+        except ImportError as exc:
+            raise AntigravityAdapterError(
+                "install optional dependency google-antigravity for AGY SDK") from exc
+        agent_config = self.build_local_config(secret)
         factory = self.agent_factory or Agent
 
         async def interact():

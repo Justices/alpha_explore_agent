@@ -48,3 +48,21 @@ jobs:
       - name: Mock research CLI smoke (no network)
         run: |
           python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root .alpha-ci-runtime --durable --max-rounds 1
+
+
+  agy-sdk-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GEMINI_API_KEY: ""
+      BRAIN_USERNAME: ""
+      BRAIN_PASSWORD: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install optional AGY SDK (no auth configured)
+        run: python -m pip install -e ".[agy]"
+      - name: SDK config construction only
+        run: python tests/verify_agy_sdk_contract.py
