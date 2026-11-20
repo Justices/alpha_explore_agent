@@ -8,11 +8,13 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from alpha_research.integrations.model import DecisionRecorder, ModelError
+from alpha_research.integrations.model_journal import ModelCallJournal
 from alpha_research.state.writer_lock import SingleWriterLock
 
 
@@ -182,6 +184,33 @@ class CrossInstanceModelTests(unittest.TestCase):
         record, = (self.root / "logs" / "model_calls").glob("*.record.json")
         self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["status"],
                          "in_flight")
+
+    def test_short_global_audit_append_waits_for_lock_and_writes_once(self):
+        journal = ModelCallJournal(self.root)
+        held = journal.logs_root / "model_log.lock"
+        entered, finished = threading.Event(), threading.Event()
+        failures = []
+
+        def append():
+            entered.set()
+            try:
+                journal.append_event({"call_id": "C1", "status": "ok"})
+            except Exception as exc:
+                failures.append(exc)
+            finally:
+                finished.set()
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            with SingleWriterLock(held):
+                pending = pool.submit(append)
+                self.assertTrue(entered.wait(5))
+                time.sleep(0.05)
+                self.assertFalse(finished.is_set())
+            pending.result(timeout=10)
+        self.assertEqual(failures, [])
+        lines = journal.log_path.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(json.loads(lines[0])["call_id"], "C1")
 
     def test_subprocess_recognizes_batch_lock_across_process_boundary(self):
         batch = self.root / "batch"
