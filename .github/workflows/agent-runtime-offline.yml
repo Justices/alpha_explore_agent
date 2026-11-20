@@ -49,6 +49,8 @@ jobs:
         run: python -m unittest discover -s tests -p 'test_configurable_agents.py' -v
       - name: Model registry offline tests
         run: python -m unittest discover -s tests -p 'test_model_registry.py' -v
+      - name: Model governance and offline doctor tests
+        run: python -m unittest discover -s tests -p 'test_model_governance.py' -v
       - name: Durable research offline tests
         run: python -m unittest discover -s tests -p 'test_durable_research_cycle.py' -v
       - name: Full offline suite
