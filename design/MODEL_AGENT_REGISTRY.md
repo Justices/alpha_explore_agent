@@ -5,8 +5,7 @@ The registry is the only backend-definition source; research config defines task
 
 ## Files
 
-- alpha_research/agents/model_registry.json: editable presets for codex, claude-code, antigravity, deepseek, glm, kimi
-- alpha_research/agents/model_registry.json: shipped default registry
+- alpha_research/agents/model_registry.json: shipped presets for codex, claude-code, antigravity, deepseek, glm, kimi; override through --registry or the state-root config
 - alpha_research/agents/role_profile.json: default research task/role mappings
 - config.example.json: research rules only; roles reside solely in the bundled role_profile.json
 
@@ -61,4 +60,7 @@ Recovery records lock the selected model profile. Changing the Lead or
 Executor while continuing the same study requires new research ID or audited
 migration, never implicit replay or repeated simulation.
 
-Tests and `models` commands use no real API keys or BRAIN credentials.
+Offline tests and `models list`/`inspect`/`doctor` do not call providers or BRAIN.
+`models smoke --allow-model-call` is an **explicit real model API call** and
+uses the configured environment credentials; it does not invoke BRAIN.
+See [Current Design](CURRENT_DESIGN.md) for the tested versus unverified boundaries.
