@@ -14,8 +14,8 @@ from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_evidence import (
-    check_trusted_path, open_trusted_evidence, read_trusted_json,
-    trusted_replay_paths,
+    check_trusted_path, open_trusted_directory, open_trusted_evidence,
+    read_trusted_json, trusted_replay_paths,
 )
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
@@ -95,20 +95,41 @@ class ModelCallJournal:
         destination = Path(destination)
         temporary = destination.with_name(
             destination.name + ".tmp-" + uuid4().hex)
-        try:
-            check_trusted_path(destination.parent, label="batch evidence directory")
-            # Copy from a pinned no-follow descriptor, not from the path
-            # checked earlier (which could have been swapped to a symlink).
-            # File metadata from the global artifact is not part of the
-            # evidence contract; copying it adds unnecessary filesystem I/O.
-            with open_trusted_evidence(source, label="global model evidence") as src:
-                with temporary.open("xb") as target:
-                    shutil.copyfileobj(src, target)
-                    target.flush()
-                    os.fsync(target.fileno())
-            os.replace(temporary, destination)
-        finally:
-            temporary.unlink(missing_ok=True)
+        # Pin the destination directory so a POSIX directory swap cannot
+        # redirect either the temporary write or its final atomic rename.
+        # Windows has no dir_fd/openat support: use verified paths there.
+        with open_trusted_directory(
+                destination.parent, label="batch evidence directory") as directory_fd:
+            try:
+                with open_trusted_evidence(
+                        source, label="global model evidence") as src:
+                    if directory_fd is None:
+                        target = temporary.open("xb")
+                    else:
+                        fd = os.open(
+                            temporary.name, os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                            0o600, dir_fd=directory_fd)
+                        target = os.fdopen(fd, "wb")
+                    with target:
+                        # No copy2 metadata round-trips; evidence content and
+                        # fsync are the only required copy properties.
+                        shutil.copyfileobj(src, target)
+                        target.flush()
+                        os.fsync(target.fileno())
+                if directory_fd is None:
+                    os.replace(temporary, destination)
+                else:
+                    os.replace(
+                        temporary.name, destination.name,
+                        src_dir_fd=directory_fd, dst_dir_fd=directory_fd)
+            finally:
+                if directory_fd is None:
+                    temporary.unlink(missing_ok=True)
+                else:
+                    try:
+                        os.unlink(temporary.name, dir_fd=directory_fd)
+                    except FileNotFoundError:
+                        pass
 
     def append_event(self, record):
         """Append one audit EVENT; .record.json remains the latest-state source.
