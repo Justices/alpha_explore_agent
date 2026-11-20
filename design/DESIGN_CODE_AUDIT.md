@@ -169,6 +169,19 @@ GitHub Actions [44753707015](https://github.com/Justices/alpha_explore_agent/act
 
 **关键边界**：这是运行身份关联，不是生产授权。现有 CLI 的 `state/agent.lock`、Gateway/模型初始化仍由 CLI 负责； `ProductionWorkflowAdapter` 继续无条件拒绝真实运行。真实领域 Session/Simulation Intent 的端到端生产装配需要另行评审已授权的 Gateway/Model 实例和调用成本、恢复行为，不能因为读到身份或审查记录就打开 `execute`。
 
+### P1.9 离线 CLI、运行上下文与域恢复集成验收（2026-11-20）
+
+GitHub Actions [44757236393](https://github.com/Justices/alpha_explore_agent/actions/runs/44757236393) 对应功能代码提交 `3e6cc8d4f3cfcca4bec7fa6181b22f16ffe00645`；两平台原始日志确认：**Linux 650 tests, OK（26.026 秒）**，**Windows 650 tests, OK（121.255 秒）**；AGY SDK 合同检查通过。
+
+本次测试覆盖：
+- 三类实际领域执行入口在最早外部调用前交接各自生成的 Research ID；
+- 统一任务在 Mock Gateway + 原有 Dispatch 路径中同时保存 Research ID 和 Simulation Intent / Regular Batch 恢复目标；
+- 对执行结果未知的 Mock 故障保持 `BLOCKED`、预算 `reserved=1`，拒绝自动重放；
+- 按保存的 Model Profile 与治理 Policy 校验已存在的 `ModelCallLedger`，不新建第二份预算账本、不把 Task ID 当作 Research ID；
+- 新增 CLI `orchestration-prepare`、`orchestration-handoff`：必须显式选择 Lead/Executor，读取有效研究配置并固定 Region/Delay（Regular 固定 Delay 1）、Dataset/Category/Universe/PPA 范围，拒绝冲突；**不创建 Gateway 或模型客户端**。
+
+**P1 离线控制平面验收已满足。** 当前 `ProductionWorkflowAdapter` 仍在 `validate` 明确禁止生产执行。尚未验收的剩余高风险集成包括：独立可信的人类实时执行授权发行与费用上限、CLI 复用已持锁的 Gateway/Model 实例进行生产 Dispatch、真实 Simulation Intent 跨进程故障恢复，以及实际 BRAIN 只读/受控 Simulation 验收。这些属于后续**生产启用门槛**，不能以 P1 离线测试 PASS 替代。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
