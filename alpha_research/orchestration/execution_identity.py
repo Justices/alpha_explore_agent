@@ -218,7 +218,7 @@ def inspect_domain_research_handoff(orchestrator, task_id, model_config,
     if (not isinstance(research_id, str)
             or re.fullmatch(re.escape(prefix) + r"[0-9a-f]{32}", research_id) is None):
         raise OrchestrationError("domain Research ID binding has changed")
-    ledger = ModelCallLedger(orchestrator.state_root, policy)
+    ledger = ModelCallLedger(orchestrator.state_root / "state", policy)
     status = ledger.status(research_id)
     return {
         "task_id": task_id,
