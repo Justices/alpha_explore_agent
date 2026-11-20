@@ -115,6 +115,41 @@ class MainOrchestrator:
         task.update(changes)
         return self._save(task, expected=prior)
 
+    def bind_research_identity(self, task_id, research_id):
+        """Durably associate the domain-owned model-budget identity with a task.
+
+        The workflow, not the CLI or orchestrator, must declare its Research
+        ID before model invocation. A repeated identical binding is safe, but
+        conflicting IDs are never substituted or assigned a fresh budget.
+        """
+        task = self.load(task_id)
+        if (task.get("status") != "RUNNING"
+                or task.get("steps", {}).get("execute") != "RUNNING"):
+            raise OrchestrationError(
+                "research identity can only be bound during execute")
+        if not isinstance(research_id, str):
+            raise OrchestrationError("domain Research ID is required")
+        import re
+        prefix = {
+            "regular": "regular:campaign:",
+            "super": "super:",
+            "optimization": "optimization:",
+        }[task["workflow"]]
+        if re.fullmatch(re.escape(prefix) + r"[0-9a-f]{32}", research_id) is None:
+            raise OrchestrationError(
+                "domain Research ID does not match workflow identity")
+        prior = task.get("research_identity")
+        if prior is not None:
+            if prior.get("research_id") != research_id:
+                raise OrchestrationError(
+                    "different domain Research ID already bound to task")
+            return task
+        return self._transition(task, research_identity={
+            "research_id": research_id,
+            "workflow": task["workflow"],
+            "bound_at": _now(),
+        })
+
     def bind_recovery_target(self, task_id, kind, reference):
         """Persist the exact workflow artifact needed to recover an execute step."""
         task = self.load(task_id)
@@ -177,6 +212,8 @@ class MainOrchestrator:
             try:
                 context = {
                     "task_id": task_id,
+                    "bind_research_identity": lambda research_id:
+                        self.bind_research_identity(task_id, research_id),
                     "bind_recovery_target": lambda kind, reference:
                         self.bind_recovery_target(task_id, kind, reference),
                 }
