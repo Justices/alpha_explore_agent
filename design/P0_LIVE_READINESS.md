@@ -2,8 +2,11 @@
 
 This is an operator runbook for the **existing** Regular/Super/Optimization
 BRAIN workflows, not a claim that live providers have already been verified.
-The current MainOrchestrator still uses a mock-only adapter. No automatic
-Alpha submission or Alpha property mutation is authorized by this runbook.
+The current MainOrchestrator still uses a mock-only adapter. There is no
+Alpha submission capability. Existing Regular workflows **can apply and verify
+research provenance tags after readback**; approval for live execution must
+therefore also account for those platform tag writes. Other Alpha property
+mutations are outside this rollout.
 
 ## Implemented locally (no network)
 
@@ -11,9 +14,10 @@ Alpha submission or Alpha property mutation is authorized by this runbook.
    readback and non-Regular recovery no longer require an unused model client
    or role registry. They still open the BRAIN gateway when invoked.
 2. Real research routes require both `--lead` and `--executor`, selected from
-   the registered Agent/LLM definitions. Registered live routes require
-   `model_governance` with positive attempt and reported-token limits and
-   `failover=manual`.
+   the registered Agent/LLM definitions. Fixture/mock model backends are
+   rejected for live BRAIN research, but remain available for offline tests.
+   Registered live routes require `model_governance` with positive attempt
+   and reported-token limits and `failover=manual`.
 3. The local Workbench lists registered backends through `GET /api/models`
    without exposing API keys. New and resumed Regular Campaigns require
    explicit Lead and Executor selections. Local readiness is checked before
