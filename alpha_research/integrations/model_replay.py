@@ -79,6 +79,10 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
                 and (not isinstance(payload.get("error_type"), str)
                      or not isinstance(payload.get("error"), str))):
             raise ModelError("previous model error evidence is incomplete; retry blocked")
+        if (record.get("status") == "in_flight"
+                and (record.get("token_in") is not None
+                     or record.get("token_out") is not None)):
+            raise ModelError("in-flight model audit has invalid usage; replay blocked")
         if record.get("status") != "in_flight" and (
                 record.get("token_in") != payload.get("token_in")
                 or record.get("token_out") != payload.get("token_out")):
@@ -90,17 +94,19 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
         if record.get("response_sha256"):
             if record["response_sha256"] != response_sha:
                 raise ModelError("recorded model response checksum mismatch")
-        if payload.get("status") in {"ok", "error"} and record.get("status") == "in_flight":
+        # Settle the verified original reservation before repairing the audit
+        # status. If a conflicting or UNKNOWN ledger rejects reconciliation,
+        # no new terminal audit event is written. Both steps are independently
+        # idempotent after a crash in either order.
+        if on_verified is not None:
+            on_verified(row["call_id"], payload)
+        if record.get("status") == "in_flight":
             record["status"] = payload["status"]
-            record["response_sha256"] = hashlib.sha256(_json_bytes(payload)).hexdigest()
+            record["response_sha256"] = response_sha
             record["token_in"] = payload.get("token_in")
             record["token_out"] = payload.get("token_out")
             atomic_write_json(record_path, record)
             append_event(record)
-        # Reconcile only after response/manifest/audit identity and hashes
-        # have been verified. Ledger settlement is idempotent under its lock.
-        if on_verified is not None:
-            on_verified(row["call_id"], payload)
         if payload["status"] == "ok":
             return payload["result"]
         # Offline mock decisions have no network/API side effects. An
