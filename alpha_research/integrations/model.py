@@ -190,7 +190,7 @@ class DecisionRecorder:
             self.batch_dir, task, context_sha, route_sha,
             append_event=self.journal.append_event,
             on_verified=reconcile_verified if self.budget is not None else None,
-            expected_research_id=self.research_id if self.budget is not None else None)
+            expected_research_id=self.research_id)
         if replay is not None:
             return replay
         if self.budget is not None:
