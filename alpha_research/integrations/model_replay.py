@@ -37,15 +37,15 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             or len({row["call_id"] for row in rows}) != len(rows)):
         raise ModelError("existing batch model manifest has invalid call entries")
     for row in rows:
+        # A malformed *other* task must not let this task bypass recovery
+        # guards and dispatch a new provider call. Validate every row first.
+        paths = trusted_replay_paths(batch_dir, calls_root, row)
         if row.get("task") != task or row.get("context_sha256") != context_sha:
             continue
         if row.get("route_sha256") != route_sha:
             raise ModelError(
                 "recorded model role/backend differs from current configuration; "
-                "an explicit research migration is required")
-        # Verify every manifest-supplied path before any file is opened.
-        # Never resolve and read a forged relative, absolute, or symlink path.
-        paths = trusted_replay_paths(batch_dir, calls_root, row)
+                "replay blocked")
         response_path = paths["response_ref"]
         if not response_path.exists():
             response_path = paths["global_response_ref"]
