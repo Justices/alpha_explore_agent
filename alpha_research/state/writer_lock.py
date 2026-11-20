@@ -24,9 +24,10 @@ class SingleWriterLock:
         self.handle = os.fdopen(
             os.open(self.path, os.O_RDWR | os.O_CREAT, 0o600), "r+b")
         try:
-            if self.path.stat().st_size == 0:
-                self.handle.write(b"\0")
-                self.handle.flush()
+            # Windows byte-range locks can cover a byte beyond EOF. Do not
+            # pre-initialize an empty file: another owner may already hold
+            # its first byte, making a pre-lock write fail with EACCES.
+            # All lockfile writes happen only AFTER the OS lock is acquired.
             self.handle.seek(0)
             if self._windows:
                 import msvcrt
