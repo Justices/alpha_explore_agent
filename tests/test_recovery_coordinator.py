@@ -331,6 +331,19 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(agent.calls, 1)
         self.assertEqual(coordinator.journal_for(batch)["status"], "BLOCKED")
 
+    def test_failed_recovery_journal_never_records_external_exception_secret(self):
+        batch = self._regular_target()
+        secret = "sensitive-provider-token-test-only"
+        agent = FakeAgent(error=RuntimeError("upstream rejected " + secret))
+        coordinator = RecoveryCoordinator(self.root)
+        with self.assertRaisesRegex(RecoveryError, "blocked for manual review"):
+            coordinator.recover(batch, gateway=self.gateway, agent=agent)
+        journal = coordinator.journal_for(batch)
+        self.assertEqual(journal["status"], "BLOCKED")
+        self.assertEqual(journal["failure"]["type"], "RuntimeError")
+        self.assertNotIn(secret, json.dumps(journal))
+        self.assertEqual(agent.calls, 1)
+
     def test_target_outside_state_root_is_rejected(self):
         with tempfile.TemporaryDirectory() as outside_root:
             outside = Path(outside_root)
