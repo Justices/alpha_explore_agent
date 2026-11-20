@@ -64,7 +64,9 @@ class ScriptedGateway:
 
 
 class ScriptedRecorder:
-    def __init__(self, model, state_root):
+    def __init__(self, model, state_root, *, governance=None):
+        # This fixture simulates only model decisions. Production budgets are
+        # covered by tests/test_model_governance.py with real DecisionRecorder.
         self.model = model
 
     def begin_session(self, *, research_id):
