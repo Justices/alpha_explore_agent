@@ -15,7 +15,7 @@ from alpha_research.orchestration.approval_review import KEY_ENV, SIGNING_CONTEX
 from alpha_research.state.fingerprint import canonical_json_bytes
 from alpha_research.orchestration.execution_identity import (
     build_execution_identity, persist_execution_identity, inspect_execution_identity,
-    verify_identity_bound_review,
+    verify_identity_bound_review, inspect_domain_research_handoff,
 )
 
 POLICY = {"max_calls": 3, "max_reported_tokens": 2000, "failover": "manual"}
@@ -133,6 +133,42 @@ class ExecutionIdentityTests(unittest.TestCase):
             verify_identity_bound_review(
                 self.runner, self.task["task_id"], different, POLICY,
                 receipt, **args)
+
+    def test_handoff_reads_same_model_ledger_after_domain_identity_binding(self):
+        from alpha_research.agents.governance import ModelCallLedger
+
+        class BindAndAbort:
+            def run(self, workflow, step, request, checkpoints, context=None):
+                if step == "execute":
+                    context["bind_research_identity"]("regular:campaign:" + "a" * 32)
+                    raise RuntimeError("simulated interruption before BRAIN")
+                return {"ok": True}
+
+        persist_execution_identity(
+            self.runner, self.task["task_id"], self.model_config, POLICY)
+        empty = inspect_domain_research_handoff(
+            self.runner, self.task["task_id"], self.model_config, POLICY)
+        self.assertEqual(empty["status"], "AWAITING_DOMAIN_RESEARCH_ID")
+        runner = MainOrchestrator(self.temp.name, adapter=BindAndAbort())
+        blocked = runner.execute(self.task["task_id"])
+        self.assertEqual(blocked["status"], "BLOCKED")
+        research_id = "regular:campaign:" + "a" * 32
+        ledger = ModelCallLedger(self.temp.name, POLICY)
+        ledger.reserve(research_id, "call-1", task="construct_batch",
+                       role="research_lead",
+                       backend="registry:deepseek",
+                       backend_sha256="b" * 64)
+        state = inspect_domain_research_handoff(
+            self.runner, self.task["task_id"], self.model_config, POLICY)
+        self.assertEqual(state["research_id"], research_id)
+        self.assertEqual(state["model_budget"]["unresolved"], 1)
+        self.assertEqual(state["orchestration_budget"]["reserved"], 1)
+        self.assertTrue(state["recovery_required"])
+        with self.assertRaisesRegex(OrchestrationError, "drift"):
+            inspect_domain_research_handoff(
+                self.runner, self.task["task_id"], self.model_config,
+                dict(POLICY, max_calls=4))
+        self.assertEqual(ledger.status(research_id)["attempts"], 1)
 
     def test_preparation_never_unlocks_production_execution(self):
         from alpha_research.orchestration.production_adapter import ProductionWorkflowAdapter
