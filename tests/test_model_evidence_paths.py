@@ -155,8 +155,6 @@ class ReplayEvidencePathsTests(unittest.TestCase):
         self.assertEqual(model.calls, 0)
 
     def test_tampered_original_input_blocks_verified_budget_replay(self):
-        record = Path(self.row["global_record_ref"])
-        context_path = Path(self.row["global_response_ref"]).with_suffix(".json")
         context_path = (self.root / "logs" / "model_calls" /
                         (self.row["call_id"] + ".context.json"))
         context_path.write_text('{"index": 999}', encoding="utf-8")
@@ -168,6 +166,43 @@ class ReplayEvidencePathsTests(unittest.TestCase):
         # Previously settled budget remains exactly one attempt. No replay
         # may silently amend its usage or issue a second reservation.
         self.assertEqual(self.recorder().budget.status("R1")["attempts"], 1)
+
+    def test_corrupt_input_cannot_settle_unresolved_original_budget(self):
+        first = self.recorder(OfflineModel())
+        with patch.object(first.budget, "settle",
+                          side_effect=RuntimeError("before settlement")):
+            with self.assertRaisesRegex(RuntimeError, "before settlement"):
+                first.complete_json("other_task", {"index": 2})
+        rows = self.load_manifest()["calls"]
+        second = next(row for row in rows if row["task"] == "other_task")
+        context = (self.root / "logs" / "model_calls" /
+                   (second["call_id"] + ".context.json"))
+        context.write_text('{"index": 999}', encoding="utf-8")
+        model = OfflineModel()
+        resumed = DecisionRecorder(model, self.root, governance=POLICY)
+        resumed.begin_session(research_id="R1")
+        resumed.batch_dir = self.batch
+        with self.assertRaisesRegex(ModelError, "input checksum mismatch"):
+            resumed.complete_json("other_task", {"index": 2})
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(
+            (resumed.budget.status("R1")["attempts"],
+             resumed.budget.status("R1")["unresolved"]), (2, 1))
+
+    def test_symlinked_global_context_rejected_before_budget_settlement(self):
+        context = (self.root / "logs" / "model_calls" /
+                   (self.row["call_id"] + ".context.json"))
+        outside = self.root / "external-context.json"
+        outside.write_bytes(context.read_bytes())
+        context.unlink()
+        try:
+            os.symlink(outside, context)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink unavailable on this runner: {exc}")
+        model = OfflineModel()
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            self.replay_without_binding(model)
+        self.assertEqual(model.calls, 0)
 
     def test_bogus_audit_internal_paths_rejected(self):
         record_path = Path(self.row["global_record_ref"])
