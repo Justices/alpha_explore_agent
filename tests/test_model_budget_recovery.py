@@ -152,6 +152,43 @@ class BudgetRecoveryTests(unittest.TestCase):
             self.assertEqual(changed_model.calls, 0)
             self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
 
+    def test_ledger_rejection_does_not_rewrite_in_flight_audit(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.create_gap(root)
+            row = json.loads((root / "batch" / "model_call_manifest.json")
+                             .read_text(encoding="utf-8"))["calls"][0]
+            audit_path = Path(row["global_record_ref"])
+            audit = json.loads(audit_path.read_text(encoding="utf-8"))
+            audit.update(status="in_flight", response_sha256=None,
+                         token_in=None, token_out=None)
+            audit_path.write_text(json.dumps(audit), encoding="utf-8")
+            changed_model = CountingModel()
+            changed_model.config = {"provider": "mock", "model": "unexpected"}
+            replay = self.make_recorder(root, changed_model)
+            with self.assertRaisesRegex(ModelBudgetError, "reserved model identity"):
+                replay.complete_json("task", {"step": 1})
+            after = json.loads(audit_path.read_text(encoding="utf-8"))
+            self.assertEqual(after["status"], "in_flight")
+            self.assertEqual(changed_model.calls, 0)
+
+    def test_partial_in_flight_audit_usage_blocks_reconciliation(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            self.create_gap(root)
+            row = json.loads((root / "batch" / "model_call_manifest.json")
+                             .read_text(encoding="utf-8"))["calls"][0]
+            record_path = Path(row["global_record_ref"])
+            record = json.loads(record_path.read_text(encoding="utf-8"))
+            record.update(status="in_flight", response_sha256=None, token_in=3)
+            record_path.write_text(json.dumps(record), encoding="utf-8")
+            next_model = CountingModel()
+            replay = self.make_recorder(root, next_model)
+            with self.assertRaisesRegex(ModelError, "in-flight model audit has invalid usage"):
+                replay.complete_json("task", {"step": 1})
+            self.assertEqual(next_model.calls, 0)
+            self.assertEqual(replay.budget.status("R1")["unresolved"], 1)
+
     def test_missing_response_never_settles_ledger_or_reissues_model_call(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
