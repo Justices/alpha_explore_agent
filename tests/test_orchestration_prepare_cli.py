@@ -56,6 +56,8 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
                 task_id = result["task_id"]
                 task = MainOrchestrator(self.root).load(task_id)
                 self.assertEqual(task["status"], "CREATED")
+                self.assertEqual(task["request"]["region"], "CHN")
+                self.assertEqual(task["request"]["delay"], 1)
                 self.assertEqual(task["budget"]["reserved"], 0)
                 status, output, error = self._call(
                     self.prefix + ["orchestration-handoff", task_id])
@@ -72,6 +74,31 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
             "--workflow", "regular", "--objective", "offline",
         ]
         status, _, _ = self._call(missing_role)
+        self.assertEqual(status, 2)
+        self.assertFalse((self.root / "state" / "research_v1_1" /
+                          "orchestration").exists())
+
+    def test_scope_conflicts_and_missing_region_fail_before_creating_task(self):
+        inconsistent = self.prefix + [
+            "orchestration-prepare", "--workflow", "regular",
+            "--objective", "offline", "--region", "USA",
+        ]
+        status, _, _ = self._call(inconsistent)
+        self.assertEqual(status, 2)
+
+        bad_delay = self.prefix + [
+            "orchestration-prepare", "--workflow", "regular",
+            "--objective", "offline", "--delay", "0",
+        ]
+        status, _, _ = self._call(bad_delay)
+        self.assertEqual(status, 2)
+
+        missing_scope = json.loads(self.config.read_text(encoding="utf-8"))
+        missing_scope["scope"]["region"] = None
+        self.config.write_text(json.dumps(missing_scope), encoding="utf-8")
+        status, _, _ = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline"])
         self.assertEqual(status, 2)
         self.assertFalse((self.root / "state" / "research_v1_1" /
                           "orchestration").exists())
