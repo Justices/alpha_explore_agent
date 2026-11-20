@@ -98,14 +98,27 @@ class OfflineResearchCycle:
         if len(set(signatures)) != len(signatures):
             raise ResearchContractError("duplicate expressions with identical settings")
         prior_signatures = set()
+        prior_ids = set()
         for prior_round in history:
             if not isinstance(prior_round, dict):
                 raise ResearchContractError("invalid historical research record")
-            for prior in prior_round.get("experiments", []):
-                prior_signatures.add(_digest({
-                    "expression": prior["expression"], "region": prior["region"],
-                    "settings": prior["settings"],
-                }))
+            previous = prior_round.get("experiments")
+            if not isinstance(previous, list):
+                raise ResearchContractError("historical experiment list is invalid")
+            for prior in previous:
+                try:
+                    if not isinstance(prior, dict) or not isinstance(
+                            prior["experiment_id"], str):
+                        raise ResearchContractError("historical experiment ID is invalid")
+                    prior_ids.add(prior["experiment_id"])
+                    prior_signatures.add(_digest({
+                        "expression": prior["expression"], "region": prior["region"],
+                        "settings": prior["settings"],
+                    }))
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise ResearchContractError("historical experiment record is malformed") from exc
+        if any(eid in prior_ids for eid in ids):
+            raise ResearchContractError("experiment ID already used in a prior research round")
         if any(signature in prior_signatures for signature in signatures):
             raise ResearchContractError("experiment duplicates a previous research round")
 
@@ -130,6 +143,14 @@ class OfflineResearchCycle:
             raise ResearchContractError("executor requested missing or unauthorized experiments")
         experiments_by_id = {x.experiment_id: x for x in experiments}
         results = {eid: self.gateway.execute(experiments_by_id[eid]) for eid in ordered_ids}
+        # A PENDING/FAILED fixture is an execution outcome, NOT settled Alpha
+        # performance. Do not send it to attribution or the research lead.
+        unsettled = {eid: result.get("status") for eid, result in results.items()
+                     if not isinstance(result, dict) or result.get("status") != "COMPLETED"}
+        if unsettled:
+            raise ResearchContractError(
+                "unsettled simulation results require reconciliation before attribution: "
+                + ", ".join(sorted(unsettled)))
         feedback_context = {
             "research_id": research_id,
             "round_index": round_index,

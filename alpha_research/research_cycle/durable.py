@@ -111,7 +111,9 @@ class _JournaledSimulationGateway:
         result = self.runner.gateway.execute(experiment)
         fingerprint(result)
         row["simulations"][key]["result"] = copy.deepcopy(result)
-        row["simulations"][key]["status"] = "COMPLETED"
+        row["simulations"][key]["status"] = (
+            "COMPLETED" if result.get("status") == "COMPLETED" else "UNSETTLED"
+        )
         self.runner._save(self.state)
         return result
 
@@ -205,7 +207,7 @@ class DurableOfflineResearchRunner:
                 if resume_blocked is not True:
                     raise ResearchContractError("blocked task requires explicit resume")
                 for round_record in state["rounds"]:
-                    if any(item["status"] == "IN_FLIGHT"
+                    if any(item["status"] != "COMPLETED"
                            for item in round_record["simulations"].values()):
                         raise ResearchContractError(
                             "unresolved simulation intent requires explicit reconciliation")
@@ -293,7 +295,7 @@ class DurableOfflineResearchRunner:
             if row["status"] != "RUNNING" or task not in row["model_calls"]:
                 raise ResearchContractError("checkpoint was not recorded in the blocked round")
             sims = row["simulations"]
-            if any(x["status"] == "IN_FLIGHT" for x in sims.values()):
+            if any(x["status"] != "COMPLETED" for x in sims.values()):
                 raise ResearchContractError("cannot replace model output with unresolved simulation intent")
             if task in {"plan_experiments", "prepare_execution"} and sims:
                 raise ResearchContractError("cannot change experiment plan after simulation started")
@@ -323,7 +325,7 @@ class DurableOfflineResearchRunner:
             pending = []
             for row in state["rounds"]:
                 item = row["simulations"].get(experiment_id)
-                if item and item["status"] == "IN_FLIGHT":
+                if item and item["status"] in {"IN_FLIGHT", "UNSETTLED"}:
                     pending.append(item)
             if len(pending) != 1:
                 raise ResearchContractError("must identify one unresolved offline experiment")
@@ -338,6 +340,9 @@ class DurableOfflineResearchRunner:
             verified = OfflineSimulationGateway({experiment_id: fixture}).execute(
                 Experiment.from_dict(item["experiment"], region=state["request"]["region"]))
             fingerprint(verified)
+            if verified["status"] != "COMPLETED":
+                raise ResearchContractError(
+                    "reconciliation requires a completed offline fixture readback")
             item["result"] = copy.deepcopy(verified)
             item["status"] = "COMPLETED"
             state["reconciliation"] = {
