@@ -5,10 +5,10 @@ that all workflows are implemented. This document records the confirmed
 decisions. It does not set numeric thresholds. For research-scope conflicts
 with older files, this document takes precedence as stated in the
 [agent contract](../AGENTS.md). The
-[README](../README.md) describes the current implementation. The earlier
-[requirements](AGENT_REQUIREMENTS.md), [design](AGENT_DESIGN.md), and
-[knowledge design](AGENT_KNOWLEDGE_DESIGN.md) include historical assumptions;
-their status notes and the agent contract must be read before using them.
+[README](../README.md) describes the current implementation. Current implementation, architecture boundaries and supporting design references
+are indexed in [Current Design](CURRENT_DESIGN.md). Superseded requirements,
+original design and original knowledge design remain available in Git history,
+not as active policy documents.
 
 ## 1. Product purpose and workflows
 
