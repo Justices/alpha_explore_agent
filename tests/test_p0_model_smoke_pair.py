@@ -3,6 +3,7 @@ import json
 import os
 import tempfile
 import unittest
+from types import SimpleNamespace
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
@@ -104,27 +105,43 @@ class ModelSmokePairTests(unittest.TestCase):
 
     def test_model_probe_caps_output_tokens_without_affecting_research_tasks(self):
         envelopes = []
+        options = []
+        class OfflineSDK:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def __init__(self):
+                self.chat = SimpleNamespace(completions=SimpleNamespace(
+                    create=self.create))
+            def create(self, **payload):
+                envelopes.append(payload)
+                return SimpleNamespace(
+                    model="offline-sdk", usage=SimpleNamespace(
+                        prompt_tokens=20, completion_tokens=11),
+                    choices=[SimpleNamespace(message=SimpleNamespace(
+                        content='{"ready":true,"contract":"model_probe_v1"}'))])
 
-        def no_network(url, headers, payload):
-            envelopes.append(payload)
-            return {"choices": [{"message": {"content":
-                '{"ready":true,"contract":"model_probe_v1"}'}}],
-                "usage": {"prompt_tokens": 20, "completion_tokens": 11}}
+        def factory(**kwargs):
+            options.append(kwargs)
+            return OfflineSDK()
 
         config = {
-            "provider": "openai_compatible",
-            "url": "https://example.invalid/chat/completions",
+            "provider": "openai_sdk",
+            "base_url": "https://example.invalid",
             "api_key_env": "FIXTURE_MODEL_KEY",
             "model": "fixture",
             "response_format": "none",
         }
         client = ConfiguredModelClient(
-            config, transport=no_network, environ={"FIXTURE_MODEL_KEY": "secret"})
+            config, sdk_factory=factory,
+            environ={"FIXTURE_MODEL_KEY": "secret"})
         response = client.complete_json("model_probe", {"no_tools": True})
         self.assertEqual(response,
                          {"ready": True, "contract": "model_probe_v1"})
         self.assertEqual(envelopes[0]["max_tokens"], 512)
         self.assertNotIn("tools", envelopes[0])
+        self.assertEqual(options[0]["max_retries"], 0)
         client.complete_json("attribute_results", {})
         self.assertNotIn("max_tokens", envelopes[1])
 
