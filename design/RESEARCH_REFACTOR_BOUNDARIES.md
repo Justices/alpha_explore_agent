@@ -21,7 +21,10 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `state/fingerprint.py` | Canonical JSON digest |
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
 | `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
-| `integrations/model.py` | Model transport and durable DecisionRecorder; consumes prompts without defining them |
+| `integrations/model.py` | Model transport and DecisionRecorder call coordinator; routes model calls without owning audit storage or replay |
+| `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
+| `integrations/model_journal.py` | Durable append-only model-call events, incremental batch copies, manifest/session indices |
+| `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
 | `agents/configuration.py` | Strict role/task binding and immutable snapshot routing; delegates backend policy |
 
@@ -67,6 +70,16 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   persistent model budgets, crash intent and corruption handling
 - `tests/test_model_prompt_boundaries.py`:
   prompt consistency, SDK mock-only parity and malformed routing inputs
+- `tests/test_model_journal_replay.py`:
+  durable pre-call intents, unchanged manifests, crash/missing evidence and replay identity
 
 Run `python -m unittest discover -s tests -v` without BRAIN credentials.
 Never enable real Simulation or Alpha submission merely to validate a refactor.
+
+## Model call recovery invariants
+
+- Before contacting any configured Provider, DecisionRecorder reserves the attempt (when governance is enabled), persists the input and an in-flight audit record, then creates the batch manifest.
+- `ModelCallJournal` owns only local durable metadata and never receives provider credentials or permission to use BRAIN.
+- `model_replay` accepts only previously recorded successful JSON decisions bound to the task, context digest and exact role/backend route digest. Invalid manifests and missing or tampered responses must block rather than trigger automatic real-provider retries.
+- The persisted file names, manifest structure and event status vocabulary remain unchanged by this refactor; a separate versioned migration would be necessary to modify persisted semantics.
+- The model budget ledger remains the authority for call reservations and settlements; a crash during a real provider call is not classified as a safely retriable failure.
