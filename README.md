@@ -485,6 +485,24 @@ read-only handoff inspection reports the **existing**
 in-flight attempts. A Regular Campaign may reuse a deterministic Research ID
 across tasks; that budget is governed per Research ID, not per task.
 
+Use the read-only P2 recovery preflight to inspect a blocked task
+without repeating any Simulation or querying BRAIN:
+
+```sh
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-recovery-check <TASK_ID>
+```
+
+It distinguishes a missing Intent, an unsubmitted `PREPARED` Intent,
+unresolved model calls, and recoverable platform reconciliation. All outcomes
+have `automatic_replay_allowed=false`. This command does **not** issue a
+RecoveryCoordinator receipt or settle an unknown model call.
+
+P2 controlled integration can execute the same control-plane steps only
+with a project `MockWorkflowAdapter` backed by offline Mock Gateway and
+Mock Model. A normal `ProductionWorkflowAdapter` still rejects every live
+execution before budget reservation; no CLI command enables a real dispatch.
+
 **This is not a live execution command.** `ProductionWorkflowAdapter`
 continues to reject unapproved research at validation. CLI-owned Gateway
 authentication, the `state/agent.lock` process lock, domain Simulation
