@@ -1,4 +1,4 @@
-"""Explicit configuration (AGENT_DESIGN.md §8, NFR-05).
+"""Effective research configuration governed by AGENTS.md and RESEARCH_SCOPE.md.
 
 One JSON config file inside the state root's config/ dir, plus a
 human-readable change log. Scope-class changes require user approval;
