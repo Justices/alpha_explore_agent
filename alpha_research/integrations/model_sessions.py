@@ -27,13 +27,17 @@ def _ids(items):
     return sorted(items)
 
 
-def merge_index(existing, session_id, batch_ref, call_ids):
+def merge_index(existing, session_id, batch_ref, call_ids, *,
+                research_id=None):
     """Return one deterministic index; never discard prior batch relationships.
 
     Legacy three-field records are upgraded in place only when a batch is
     rebound. Broken new-schema histories fail closed rather than being reset.
     """
     incoming = _ids(call_ids)
+    if research_id is not None and (
+            not isinstance(research_id, str) or not research_id.strip()):
+        raise ModelError("model session research ID is invalid")
     if existing is None:
         primary = batch_ref
         entries = {}
@@ -43,6 +47,15 @@ def merge_index(existing, session_id, batch_ref, call_ids):
                 or not isinstance(existing.get("batch_ref"), str)
                 or not existing["batch_ref"]):
             raise ModelError("model session index identity is invalid")
+        prior_research = existing.get("research_id")
+        if (prior_research is not None and
+                (not isinstance(prior_research, str) or not prior_research.strip())):
+            raise ModelError("model session index research identity is invalid")
+        if (research_id is not None and prior_research is not None
+                and research_id != prior_research):
+            raise ModelError("model session ID belongs to a different research")
+        if research_id is None:
+            research_id = prior_research
         primary = existing["batch_ref"]
         legacy_ids = _ids(existing.get("call_ids"))
         existing_batches = existing.get("batches")
@@ -64,10 +77,13 @@ def merge_index(existing, session_id, batch_ref, call_ids):
                 raise ModelError("model session index conflicts with batch membership")
     entries[batch_ref] = incoming
     aggregate = sorted({call for ids in entries.values() for call in ids})
-    return {
+    result = {
         "session_id": session_id,
         "batch_ref": primary,
         "call_ids": aggregate,
         "batches": [{"batch_ref": ref, "call_ids": entries[ref]}
                     for ref in sorted(entries)],
     }
+    if research_id is not None:
+        result["research_id"] = research_id
+    return result
