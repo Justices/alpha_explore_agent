@@ -45,6 +45,26 @@ class SessionIndexTests(unittest.TestCase):
     def index(self):
         return json.loads(self.index_path.read_text(encoding="utf-8"))
 
+    def test_batch_binding_before_explicit_session_start_keeps_index(self):
+        model = CountingModel()
+        recorder = DecisionRecorder(model, self.root)
+        batch = self.root / "initial-batch"
+        self.assertIsNone(recorder.session_id)
+        recorder.bind_batch(batch)
+        generated = recorder.session_id
+        self.assertIsInstance(generated, str)
+        self.assertEqual(len(generated), 32)
+        self.assertEqual(recorder.batch_dir, batch.resolve())
+        self.assertEqual(recorder.complete_json("first", {"round": 1}),
+                         {"task": "first", "round": 1})
+        self.assertEqual(recorder.session_id, generated)
+        index_path = self.root / "logs" / "model_sessions" / (generated + ".json")
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertEqual(index["research_id"], generated)
+        self.assertEqual(len(index["call_ids"]), 1)
+        self.assertEqual(index["batch_ref"], str(batch.resolve()))
+        self.assertEqual(model.calls, 1)
+
     def test_one_session_keeps_distinct_batch_memberships(self):
         r = self.recorder()
         a, b = self.root / "a", self.root / "b"
