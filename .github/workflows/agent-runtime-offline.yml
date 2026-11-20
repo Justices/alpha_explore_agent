@@ -21,6 +21,12 @@ jobs:
       BRAIN_PASSWORD: ""
       BRAIN_API_TOKEN: ""
       GEMINI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      ZAI_API_KEY: ""
+      MOONSHOT_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      BRAIN_CREDENTIALS_FILE: ""
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,6 +62,12 @@ jobs:
     timeout-minutes: 15
     env:
       GEMINI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      ZAI_API_KEY: ""
+      MOONSHOT_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      BRAIN_CREDENTIALS_FILE: ""
       BRAIN_USERNAME: ""
       BRAIN_PASSWORD: ""
     steps:
