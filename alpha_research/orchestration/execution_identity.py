@@ -39,10 +39,10 @@ def build_execution_identity(orchestrator, task_id, model_config, governance_pol
     """Create a read-only identity/ledger handoff snapshot; no model calls."""
     proposal_record = inspect_execution_proposal(orchestrator, task_id)
     task = orchestrator.load(task_id)
+    _refuse_inline_secrets(model_config)
     routing = RoleRoutingConfig.parse(model_config)
     if not ROLE_NAMES.issubset(routing.roles):
         raise OrchestrationError("Lead and Executor roles must be registered")
-    _refuse_inline_secrets(model_config)
     policy = validate_policy(governance_policy)
     bindings = {}
     for role in sorted(ROLE_NAMES):
