@@ -40,6 +40,17 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertNotIn('"api_key":', json.dumps(items))
         self.assertEqual(registry()["entries"]["claude-code"]["provider"], "claude_cli")
 
+    def test_glm_uses_bigmodel_mainland_openai_sdk_endpoint(self):
+        entries = registry()["entries"]
+        self.assertEqual(entries["glm"]["provider"], "openai_sdk")
+        self.assertEqual(entries["glm"]["base_url"],
+                         "https://open.bigmodel.cn/api/paas/v4")
+        self.assertEqual(entries["glm"]["api_key_env"], "ZAI_API_KEY")
+        self.assertEqual(entries["deepseek"]["provider"], "openai_sdk")
+        self.assertEqual(entries["kimi"]["provider"], "openai_sdk")
+        for registration in ("glm", "deepseek", "kimi"):
+            self.assertNotIn("url", entries[registration])
+
     def test_compile_roles_from_registered_backends_only(self):
         profile = role_profile()
         original = copy.deepcopy(profile)
