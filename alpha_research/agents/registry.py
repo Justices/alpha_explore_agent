@@ -76,32 +76,36 @@ def describe_registry(registry):
 
 
 def select_registered_backends(model_config, registry, *, assignments):
-    """Return an isolated validated role-router config, never mutate inputs.
+    """Compile a role profile and selected registry IDs into a runnable model config.
 
-    Example: assignments={"research_lead":"codex", "research_executor":"deepseek"}.
-    A registration may be selected by multiple roles; each role remains
-    logically isolated in research and audit metadata.
+    The registry is the SINGLE source of backend definitions. Any old backend
+    declarations inside the model profile are discarded, not merged or copied.
+    Both required roles must be selected explicitly; no silent provider fallback.
     """
     if not isinstance(model_config, dict) or model_config.get("provider") != "role_router":
-        raise ModelRegistryError("role selection requires a role_router model configuration")
+        raise ModelRegistryError("role selection requires a role_router profile")
     if not isinstance(registry, dict) or registry.get("schema_version") != 1:
         raise ModelRegistryError("invalid registry")
     entries = registry.get("entries")
     _validate_entries(entries)
-    if not isinstance(assignments, dict) or not assignments:
-        raise ModelRegistryError("role assignments are required")
-    selected = copy.deepcopy(model_config)
-    selected.setdefault("roles", {})
-    selected.setdefault("backends", {})
-    for role, registration in assignments.items():
-        if not isinstance(role, str) or role not in selected["roles"]:
-            raise ModelRegistryError(f"unknown research role: {role}")
+    roles = model_config.get("roles")
+    if not isinstance(roles, dict) or not roles:
+        raise ModelRegistryError("role profile requires roles")
+    if not isinstance(assignments, dict) or set(assignments) != set(roles):
+        raise ModelRegistryError("every configured role requires one registered backend selection")
+    effective = copy.deepcopy(model_config)
+    effective["backends"] = {}
+    for role in sorted(roles):
+        registration = assignments[role]
         if not isinstance(registration, str) or registration not in entries:
-            raise ModelRegistryError(f"unregistered backend: {registration}")
-        # Never overwrite a legacy project backend of the same identifier:
-        # role bindings get an isolated registry namespace.
+            raise ModelRegistryError(f"unregistered backend for {role}: {registration}")
         key = "registry:" + registration
-        selected["backends"][key] = copy.deepcopy(entries[registration])
-        selected["roles"][role]["backend"] = key
-    RoleRoutingConfig.parse(selected)
-    return selected
+        effective["backends"][key] = copy.deepcopy(entries[registration])
+        effective["roles"][role]["backend"] = key
+    RoleRoutingConfig.parse(effective)
+    return effective
+
+
+def bundled_registry_path():
+    """Bundled fallback; operators may override with --registry."""
+    return Path(__file__).resolve().parent / "model_registry.json"

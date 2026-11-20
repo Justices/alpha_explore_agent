@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "entries": {
+    "codex": {
+      "kind": "agent_runtime",
+      "provider": "codex_cli",
+      "executable": "codex",
+      "sandbox": "read-only",
+      "session": "research",
+      "timeout_seconds": 240
+    },
+    "claude-code": {
+      "kind": "agent_runtime",
+      "provider": "claude_cli",
+      "executable": "claude",
+      "session": "ephemeral",
+      "timeout_seconds": 240
+    },
+    "antigravity": {
+      "kind": "agent_runtime",
+      "provider": "antigravity_sdk",
+      "api_key_env": "GEMINI_API_KEY",
+      "timeout_seconds": 180
+    },
+    "deepseek": {
+      "kind": "llm_api",
+      "provider": "openai_compatible",
+      "url": "https://api.deepseek.com/chat/completions",
+      "model": "deepseek-flash",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "timeout_seconds": 180,
+      "response_format": "none"
+    },
+    "glm": {
+      "kind": "llm_api",
+      "provider": "openai_compatible",
+      "url": "https://api.z.ai/api/paas/v4/chat/completions",
+      "model": "glm-4.6",
+      "api_key_env": "ZAI_API_KEY",
+      "timeout_seconds": 180,
+      "response_format": "none"
+    },
+    "kimi": {
+      "kind": "llm_api",
+      "provider": "openai_compatible",
+      "url": "https://api.moonshot.cn/v1/chat/completions",
+      "model": "kimi-k2.5",
+      "api_key_env": "MOONSHOT_API_KEY",
+      "timeout_seconds": 180,
+      "response_format": "none"
+    }
+  }
+}

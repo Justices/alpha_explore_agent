@@ -64,26 +64,10 @@
     },
     "roles": {
       "research_lead": {
-        "backend": "codex",
         "description": "Research hypothesis, expression construction, reflection"
       },
       "research_executor": {
-        "backend": "agy",
         "description": "Read-only attribution; simulation handled by the BRAIN gateway"
-      }
-    },
-    "backends": {
-      "codex": {
-        "provider": "codex_cli",
-        "executable": "codex",
-        "timeout_seconds": 240,
-        "session": "research",
-        "sandbox": "read-only"
-      },
-      "agy": {
-        "provider": "antigravity_sdk",
-        "api_key_env": "GEMINI_API_KEY",
-        "timeout_seconds": 180
       }
     }
   }
