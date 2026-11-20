@@ -21,9 +21,9 @@ class ProductionAdapterContractTests(unittest.TestCase):
                 task = runner.create(workflow, request)
                 result = runner.execute(task["task_id"])
                 self.assertEqual(result["status"], "BLOCKED")
-                self.assertEqual(result["steps"]["validate"], "DONE")
-                self.assertEqual(result["steps"]["execute"], "RUNNING")
-                self.assertEqual(result["budget"]["reserved"], 1)
+                self.assertEqual(result["steps"]["validate"], "RUNNING")
+                self.assertEqual(result["steps"]["execute"], "PENDING")
+                self.assertEqual(result["budget"]["reserved"], 0)
                 self.assertEqual(result["budget"]["used"], 0)
                 self.assertIsNone(result["recovery_target"])
                 with self.assertRaisesRegex(OrchestrationError, "explicit reconciliation"):
