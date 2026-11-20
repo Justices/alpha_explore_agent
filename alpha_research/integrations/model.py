@@ -111,7 +111,7 @@ class DecisionRecorder:
                             if call[0].get("batch_ref") in permitted]
                 self.journal.sync_batch_calls(
                     relevant, batch_dir=target,
-                    session_id=self.session_id)
+                    session_id=self.session_id, research_id=self.research_id)
         except WriterLockError as exc:
             raise ModelError("another model call is active for this batch") from exc
         self.batch_dir = target
