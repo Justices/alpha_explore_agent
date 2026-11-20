@@ -20,6 +20,9 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `orchestration/offline_adapter.py` | Both explicitly offline adapters; never the live BRAIN gateway |
 | `state/fingerprint.py` | Canonical JSON digest |
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
+| `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
+| `integrations/model.py` | Model transport and durable DecisionRecorder; consumes prompts without defining them |
+| `agents/configuration.py` | Fail-closed, snapshot-isolated role/backend routing configuration |
 
 ## Execution authority
 
@@ -61,6 +64,8 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   MainOrchestrator state machine and offline adapter
 - `tests/test_model_governance.py`, `tests/test_sealed_state.py`:
   persistent model budgets, crash intent and corruption handling
+- `tests/test_model_prompt_boundaries.py`:
+  prompt consistency, SDK mock-only parity and malformed routing inputs
 
 Run `python -m unittest discover -s tests -v` without BRAIN credentials.
 Never enable real Simulation or Alpha submission merely to validate a refactor.
