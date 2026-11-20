@@ -25,8 +25,11 @@ class ProductionWorkflowAdapter:
 
     def run(self, workflow, step, request, checkpoints, context=None):
         if step == "validate":
-            return {**validate_workflow_request(workflow, request),
-                    "mode": "production_not_authorized"}
+            validate_workflow_request(workflow, request)
+            # Refuse before execute enters RUNNING or reserves its budget.
+            raise OrchestrationError(
+                "production orchestration is not authorized; "
+                "no external operation was attempted")
         if step == "execute":
             raise OrchestrationError(
                 "production orchestration execution requires separately "
