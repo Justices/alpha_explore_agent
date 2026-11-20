@@ -50,6 +50,23 @@ class RoleRoutingConfig:
             provider = spec.get("provider")
             if provider not in SUPPORTED_PROVIDERS:
                 raise AgentConfigError(f"unsupported unattended backend provider: {provider}")
+            # Never store credentials directly in a checked-in model profile.
+            if {"api_key", "access_token", "password", "client_secret", "credentials"} & set(spec):
+                raise AgentConfigError("model secrets must be provided through environment variables")
+            model = spec.get("model")
+            if model is not None and (
+                    not isinstance(model, str) or not model.strip()):
+                raise AgentConfigError(f"invalid model name for backend {name}")
+            if provider == "codex_cli":
+                # The CLI adapter enforces sandbox=read-only and approval=never;
+                # unsupported overrides must fail, not be silently ignored.
+                allowed = {
+                    "provider", "executable", "model", "timeout_seconds",
+                    "sandbox", "session",
+                }
+                if set(spec) - allowed or spec.get("sandbox", "read-only") != "read-only":
+                    raise AgentConfigError(
+                        "Codex research backend accepts only read-only CLI options")
             timeout = spec.get("timeout_seconds", 180)
             if (type(timeout) not in (int, float) or
                     not isfinite(timeout) or timeout <= 0):
@@ -58,8 +75,15 @@ class RoleRoutingConfig:
                 key_env = spec.get("api_key_env")
                 if not isinstance(key_env, str) or not key_env:
                     raise AgentConfigError("antigravity_sdk requires api_key_env")
-                if spec.get("tools") or spec.get("mcp_servers") or spec.get("allow_write"):
+                if (spec.get("tools") or spec.get("mcp_servers")
+                        or spec.get("skills_paths") or spec.get("allow_write")):
                     raise AgentConfigError("unattended antigravity_sdk tools are disabled in P0")
+                allowed = {
+                    "provider", "model", "timeout_seconds", "api_key_env",
+                    "tools", "mcp_servers", "skills_paths", "allow_write",
+                }
+                if set(spec) - allowed:
+                    raise AgentConfigError("unsupported Antigravity SDK backend option")
             if provider == "mock":
                 responses = spec.get("responses", {})
                 if not isinstance(responses, dict) or any(
