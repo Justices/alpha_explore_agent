@@ -60,7 +60,9 @@
       "review_candidate": "research_lead",
       "attribute_results": "research_executor",
       "diagnose_failures": "research_executor",
-      "prepare_execution": "research_executor"
+      "prepare_execution": "research_executor",
+      "plan_experiments": "research_lead",
+      "research_decide": "research_lead"
     },
     "roles": {
       "research_lead": {

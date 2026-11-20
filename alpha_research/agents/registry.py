@@ -34,11 +34,15 @@ def _validate_entries(entries):
             raise ModelRegistryError(f"registry entry {name} has invalid kind for {provider}")
         # Reuse the authoritative provider validation, including tool privilege
         # restrictions and credential environment variable checks.
-        RoleRoutingConfig.parse({
-            "provider": "role_router", "default_role": "registered",
-            "roles": {"registered": {"backend": name}},
-            "backends": {name: spec},
-        })
+        try:
+            RoleRoutingConfig.parse({
+                "provider": "role_router", "default_role": "registered",
+                "roles": {"registered": {"backend": name}},
+                "backends": {name: spec},
+            })
+        except AgentConfigError as exc:
+            raise ModelRegistryError(
+                f"invalid registry backend {name}: {exc}") from exc
 
 
 def load_registry(path):

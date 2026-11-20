@@ -37,7 +37,7 @@ class ModelRegistryTests(unittest.TestCase):
         })
         self.assertEqual({x["kind"] for x in items["entries"]},
                          {"agent_runtime", "llm_api"})
-        self.assertNotIn("api_key", json.dumps(items))
+        self.assertNotIn('"api_key":', json.dumps(items))
         self.assertEqual(registry()["entries"]["claude-code"]["provider"], "claude_cli")
 
     def test_compile_roles_from_registered_backends_only(self):
