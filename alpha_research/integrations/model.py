@@ -6,7 +6,6 @@ import json
 import hashlib
 import os
 import re
-import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -16,16 +15,14 @@ from uuid import uuid4
 from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, LocalCliModelTool
 from alpha_research.progress import write_progress
 from alpha_research.state.store import atomic_write_json
-from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
+from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_journal import ModelCallJournal
+from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
     FIELD_EVIDENCE_KEYS, REQUIRED_FIELD_DIMENSIONS, TASK_INSTRUCTIONS,
     KNOWLEDGE_POLICY, instruction_for,
 )
-
-
-class ModelError(RuntimeError):
-    pass
 
 
 def _post_json(url: str, headers: dict, payload: dict, *, timeout_seconds=120) -> dict:
@@ -165,12 +162,12 @@ class DecisionRecorder:
         self.model = model
         self.state_root = Path(state_root).resolve()
         self.logs_root = self.state_root / "logs"
+        self.journal = ModelCallJournal(self.state_root)
         self.budget = None
         if governance is not None:
             from alpha_research.agents.governance import ModelCallLedger
             self.budget = ModelCallLedger(self.state_root, governance)
         self.global_calls_root = self.logs_root / "model_calls"
-        self.log_path = self.logs_root / "model_log.jsonl"
         self.session_id = None
         self.research_id = None
         self.batch_dir = None
@@ -188,154 +185,8 @@ class DecisionRecorder:
         # Only historical calls need copying when a batch is first bound.
         # The active call is synchronized incrementally at its two status
         # transitions (IN_FLIGHT, then final), not by recopying every call.
-        self._sync_batch_calls(self.session_calls)
-
-    def _write_log_record(self, record):
-        """Append one audit EVENT; .record.json remains the latest-state source.
-
-        Unlike rewriting the full JSONL file for every status transition,
-        append-only events have bounded work per model call and preserve both
-        the in-flight and terminal transitions for forensics.
-        """
-        self.logs_root.mkdir(parents=True, exist_ok=True)
-        line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-        with SingleWriterLock(self.logs_root / "model_log.lock"):
-            with self.log_path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line)
-                handle.flush()
-                os.fsync(handle.fileno())
-
-    def _sync_batch_calls(self, calls):
-        """One source of truth for batch model-call manifests.
-
-        Rebinding a completed call is idempotent. It does not recopy its
-        context, response or audit record, even as the session grows.
-        """
-        if self.batch_dir is None:
-            return
-        target = self.batch_dir / "model_calls"
-        target.mkdir(parents=True, exist_ok=True)
-        manifest_path = self.batch_dir / "model_call_manifest.json"
-        try:
-            previous = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            previous = {}
-        except (OSError, ValueError) as exc:
-            raise ModelError("batch model call manifest is unreadable") from exc
-        if not isinstance(previous, dict) or not isinstance(previous.get("calls", []), list):
-            raise ModelError("batch model call manifest has invalid schema")
-        entries = {row.get("call_id"): row for row in previous.get("calls", [])
-                   if isinstance(row, dict) and row.get("call_id")}
-        changed = not manifest_path.exists()
-        for record, context_path, response_path, record_path in calls:
-            copied_context = target / context_path.name
-            copied_response = target / response_path.name
-            copied_record = target / record_path.name
-            entry = {
-                "call_id": record["call_id"], "task": record["task"],
-                "session_id": record.get("session_id"),
-                "context_sha256": record["context_sha256"],
-                "route_sha256": record.get("route_sha256"),
-                "response_sha256": record.get("response_sha256"),
-                "context_ref": str(copied_context),
-                "response_ref": str(copied_response),
-                "global_response_ref": str(response_path),
-                "record_ref": str(copied_record),
-                "global_record_ref": str(record_path),
-            }
-            old = entries.get(record["call_id"])
-            valid_copy = (old == entry and copied_context.is_file()
-                          and copied_record.is_file()
-                          and (not response_path.exists() or copied_response.is_file()))
-            if valid_copy:
-                continue
-            if not copied_context.exists():
-                shutil.copy2(context_path, copied_context)
-            shutil.copy2(record_path, copied_record)
-            if response_path.exists():
-                shutil.copy2(response_path, copied_response)
-            entries[record["call_id"]] = entry
-            changed = True
-        if changed:
-            atomic_write_json(manifest_path, {
-                "session_ids": sorted({row.get("session_id") for row in entries.values()
-                                       if row.get("session_id")}),
-                "calls": sorted(entries.values(), key=lambda row: row["call_id"]),
-            })
-        if self.session_id:
-            sessions_root = self.logs_root / "model_sessions"
-            sessions_root.mkdir(parents=True, exist_ok=True)
-            index_path = sessions_root / f"{self.session_id}.json"
-            session_index = {
-                "session_id": self.session_id,
-                "batch_ref": str(self.batch_dir),
-                "call_ids": sorted(row["call_id"] for row in entries.values()
-                                   if row.get("session_id") == self.session_id),
-            }
-            if (not index_path.exists() or
-                    json.loads(index_path.read_text(encoding="utf-8")) != session_index):
-                atomic_write_json(index_path, session_index)
-
-    def _replay_batch_call(self, task, context_sha, route_sha=None):
-        if self.batch_dir is None:
-            return None
-        manifest_path = self.batch_dir / "model_call_manifest.json"
-        try:
-            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except FileNotFoundError:
-            return None
-        except (OSError, ValueError) as exc:
-            raise ModelError("existing batch model manifest is unreadable; replay blocked") from exc
-        if not isinstance(manifest, dict) or not isinstance(manifest.get("calls"), list):
-            raise ModelError("existing batch model manifest schema is invalid")
-        for row in manifest["calls"]:
-            if row.get("task") != task or row.get("context_sha256") != context_sha:
-                continue
-            if row.get("route_sha256") != route_sha:
-                raise ModelError(
-                    "recorded model role/backend differs from current configuration; "
-                    "an explicit research migration is required")
-            response_path = Path(row.get("response_ref", ""))
-            if not response_path.exists() and row.get("global_response_ref"):
-                response_path = Path(row["global_response_ref"])
-            try:
-                payload = json.loads(response_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError, KeyError) as exc:
-                raise ModelError(
-                    "previous model response is missing or unreadable; retry blocked"
-                ) from exc
-            record_path = Path(row.get("global_record_ref") or "")
-            try:
-                record = json.loads(record_path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                record = None
-            if not isinstance(record, dict):
-                raise ModelError("recorded model decision is missing its audit record")
-            response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
-            if isinstance(record, dict) and record.get("response_sha256"):
-                if record["response_sha256"] != response_sha:
-                    raise ModelError("recorded model response checksum mismatch")
-            if payload.get("status") in {"ok", "error"} and isinstance(record, dict) and record.get("status") == "in_flight":
-                record["status"] = payload["status"]
-                record["response_sha256"] = hashlib.sha256(_json_bytes(payload)).hexdigest()
-                record["token_in"] = payload.get("token_in")
-                record["token_out"] = payload.get("token_out")
-                atomic_write_json(record_path, record)
-                self._write_log_record(record)
-            if payload.get("status") == "ok" and isinstance(payload.get("result"), dict):
-                return payload["result"]
-            # Offline mock decisions have no network/API side effects. An
-            # explicitly logged, terminal model error can be retried during
-            # fixture recovery. A real provider's failure is not proof that
-            # the request was not processed and must stay blocked.
-            if (payload.get("status") == "error"
-                    and record.get("status") == "error"
-                    and record.get("provider") in {None, "mock"}):
-                continue
-            raise ModelError(
-                "previous model decision is not a verified successful result; "
-                "an explicit state reconciliation is required")
-        return None
+        self.journal.sync_batch_calls(
+            self.session_calls, batch_dir=self.batch_dir, session_id=self.session_id)
 
     @staticmethod
     def _usage(model):
@@ -371,7 +222,9 @@ class DecisionRecorder:
                 "knowledge_policy": KNOWLEDGE_POLICY,
             }
             route_sha = hashlib.sha256(_json_bytes(identity)).hexdigest()
-        replay = self._replay_batch_call(task, context_sha, route_sha)
+        replay = replay_batch_call(
+            self.batch_dir, task, context_sha, route_sha,
+            append_event=self.journal.append_event)
         if replay is not None:
             return replay
         if self.budget is not None:
@@ -399,8 +252,10 @@ class DecisionRecorder:
                   "route_sha256": route_sha,
                   "status": "in_flight"}
         atomic_write_json(global_record, record)
-        self._sync_batch_calls([(record, global_context, global_response, global_record)])
-        self._write_log_record(record)
+        self.journal.sync_batch_calls(
+            [(record, global_context, global_response, global_record)],
+            batch_dir=self.batch_dir, session_id=self.session_id)
+        self.journal.append_event(record)
         started = time.perf_counter()
         response_payload = None
         error = None
@@ -446,10 +301,11 @@ class DecisionRecorder:
         if isinstance(codex_thread_id, str):
             record["codex_thread_id"] = codex_thread_id
         atomic_write_json(global_record, record)
-        self._write_log_record(record)
+        self.journal.append_event(record)
         call = (record, global_context, global_response, global_record)
         self.session_calls.append(call)
-        self._sync_batch_calls([call])
+        self.journal.sync_batch_calls(
+            [call], batch_dir=self.batch_dir, session_id=self.session_id)
         if self.budget is not None:
             self.budget.settle(
                 self.research_id, call_id, success=(error is None),
