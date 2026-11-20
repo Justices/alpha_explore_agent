@@ -45,7 +45,7 @@ def _validate_directory(directory, state_root):
     return path
 
 
-def _batch_evidence(agent, dataset_id, receipt):
+def _single_batch_evidence(agent, dataset_id, receipt):
     path = Path(receipt["batch_dir"]).resolve()
     if not path.is_relative_to(Path(agent.runs_root).resolve()):
         raise DatasetReviewError("Dataset batch receipt is outside research runs")
@@ -98,6 +98,68 @@ def _batch_evidence(agent, dataset_id, receipt):
         }
     return {"batch_ref": str(path), "alpha_ids": list(alpha_ids),
             "summary": attribution["summary"], "attribution": attribution}, measured, None
+
+
+def _batch_evidence(agent, dataset_id, receipt):
+    """Verify either a simple production batch or a multi-child field-plan batch.
+
+    Each child owns a separate immutable simulation intent and readback.
+    Never assume the parent aggregate has its own simulation intent.
+    """
+    root = Path(agent.runs_root).resolve()
+    path = Path(receipt["batch_dir"]).resolve()
+    if not path.is_relative_to(root):
+        raise DatasetReviewError("Dataset batch is outside the research runs")
+    parent = _read_required(path / "results.json")
+    children = parent.get("child_batches")
+    if children is None:
+        return _single_batch_evidence(agent, dataset_id, receipt)
+    if not isinstance(children, list) or not children:
+        raise DatasetReviewError("field research parent has no verified child receipts")
+    collected = []
+    measured = {}
+    all_ids = []
+    pending = False
+    for child in children:
+        if (not isinstance(child, dict)
+                or not isinstance(child.get("batch_dir"), str)
+                or not isinstance(child.get("alpha_ids"), list)):
+            raise DatasetReviewError("field research child receipt is malformed")
+        child_path = Path(child["batch_dir"]).resolve()
+        if not child_path.is_relative_to(path / "execution"):
+            raise DatasetReviewError("field research child escaped its parent directory")
+        group, sources, unresolved = _single_batch_evidence(agent, dataset_id, child)
+        child["attribution_status"] = "unresolved" if unresolved else "complete"
+        if unresolved:
+            pending = True
+            continue
+        collected.append(group)
+        all_ids.extend(group["alpha_ids"])
+        if any(identifier in measured for identifier in sources):
+            raise DatasetReviewError("duplicate Alpha ID across field research children")
+        measured.update(sources)
+    parent_ids = parent.get("alpha_ids")
+    if not isinstance(parent_ids, list):
+        raise DatasetReviewError("parent aggregate Alpha IDs are missing")
+    if not pending and parent_ids != all_ids:
+        raise DatasetReviewError("parent aggregate and child Alpha IDs differ")
+    parent["child_batches"] = children
+    parent["attribution_status"] = "unresolved" if pending else "complete"
+    if not pending:
+        parent["attribution"] = {
+            "summary": "\n\n".join(group["summary"] for group in collected)
+        }
+    atomic_write_json(path / "results.json", parent)
+    receipt["attribution_status"] = parent["attribution_status"]
+    if pending:
+        return None, None, "attribution_pending"
+    return {
+        "batch_ref": str(path),
+        "alpha_ids": list(parent_ids),
+        "summary": parent["attribution"]["summary"],
+        "attribution": parent["attribution"],
+        "child_batches": collected,
+    }, measured, None
 
 
 def review_dataset(agent, gateway, state_root, directory, request,
