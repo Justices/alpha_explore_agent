@@ -429,6 +429,10 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             raise ValueError("saved Campaign ID does not match its request")
         campaign_id = resume_campaign_id
     research_id = f"regular:campaign:{campaign_id}"
+    if execution_context is not None:
+        bind_identity = execution_context.get("bind_research_identity")
+        if callable(bind_identity):
+            bind_identity(research_id)
     state_root = Path(agent.runs_root).resolve().parent
     path = (state_root / "state" /
             "research_v1_1" / "campaign_runs" / f"{campaign_id}.json")
