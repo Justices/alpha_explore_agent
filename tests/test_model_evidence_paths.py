@@ -231,6 +231,20 @@ class ReplayEvidencePathsTests(unittest.TestCase):
             self.replay_without_binding(model)
         self.assertEqual(model.calls, 0)
 
+    def test_nonmatching_forged_manifest_row_is_rejected_during_binding(self):
+        # Another task's forged evidence must not poison the session index.
+        previous = self.load_manifest()
+        other = dict(previous["calls"][0])
+        other["call_id"] = "f" * 32
+        other["task"] = "other_task"
+        other["global_record_ref"] = str(self.root / "outside.json")
+        previous["calls"].append(other)
+        self.manifest_path.write_text(json.dumps(previous), encoding="utf-8")
+        model = OfflineModel()
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            self.recorder(model)
+        self.assertEqual(model.calls, 0)
+
     def test_symlinked_manifest_is_rejected_during_batch_binding(self):
         outside = self.root / "external-manifest.json"
         outside.write_bytes(self.manifest_path.read_bytes())
