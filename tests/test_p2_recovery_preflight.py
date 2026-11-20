@@ -86,7 +86,7 @@ class RecoveryPreflightTests(unittest.TestCase):
 
     def test_unknown_model_attempt_blocks_platform_readiness(self):
         runner, task_id, adapter = self._blocked()
-        ledger = ModelCallLedger(self.root, POLICY)
+        ledger = ModelCallLedger(self.root / "state", POLICY)
         ledger.reserve("super:" + "a" * 32, "test-call", task="construct_super",
                        role="research_lead", backend="registry:deepseek",
                        backend_sha256="b"*64)
