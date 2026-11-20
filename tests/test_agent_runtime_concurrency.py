@@ -4,6 +4,7 @@ import tempfile
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -214,17 +215,32 @@ class AgentRuntimeConcurrencyTests(unittest.TestCase):
         usage["input_tokens"] = 999
         self.assertEqual(router.last_usage["input_tokens"], 3)
 
-    def test_direct_http_client_metadata_is_invocation_local(self):
-        def transport(url, headers, payload):
-            marker = payload["context"]["marker"]
-            return {
-                "result": {"marker": marker},
-                "usage": {"input_tokens": marker, "output_tokens": marker + 1},
-            }
+    def test_direct_sdk_client_metadata_is_invocation_local(self):
+        class OfflineSDK:
+            def __init__(self):
+                self.chat = SimpleNamespace(
+                    completions=SimpleNamespace(create=self.create))
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def create(self, **request):
+                marker = json.loads(
+                    request["messages"][0]["content"])["context"]["marker"]
+                return SimpleNamespace(
+                    model="sdk-" + str(marker),
+                    usage=SimpleNamespace(
+                        prompt_tokens=marker,
+                        completion_tokens=marker + 1),
+                    choices=[SimpleNamespace(message=SimpleNamespace(
+                        content=json.dumps({"marker": marker})))])
 
         client = ConfiguredModelClient(
-            {"provider": "json_http", "url": "https://api.example.invalid"},
-            transport=transport, environ={})
+            {"provider": "openai_sdk",
+             "base_url": "https://api.example.invalid/v1",
+             "model": "offline", "api_key_env": "TEST_MODEL_KEY"},
+            sdk_factory=lambda **kwargs: OfflineSDK(),
+            environ={"TEST_MODEL_KEY": "fixture"})
         first_finished = threading.Event()
         second_finished = threading.Event()
 
@@ -245,10 +261,10 @@ class AgentRuntimeConcurrencyTests(unittest.TestCase):
             b = pool.submit(second)
             old, new = a.result(timeout=10), b.result(timeout=10)
         self.assertEqual(old, (
-            {"marker": 9}, {"input_tokens": 9, "output_tokens": 10}))
+            {"marker": 9}, {"prompt_tokens": 9, "completion_tokens": 10}))
         self.assertEqual(new, (
-            {"marker": 5}, {"input_tokens": 5, "output_tokens": 6}))
-        self.assertIsNone(client.last_usage)  # owner thread did not invoke
+            {"marker": 5}, {"prompt_tokens": 5, "completion_tokens": 6}))
+        self.assertIsNone(client.last_usage)  # owner thread never invoked
 
     def test_direct_antigravity_client_isolates_metadata_and_invalid_call(self):
         class OfflineAntigravity(AntigravityModelClient):
