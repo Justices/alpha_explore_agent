@@ -90,6 +90,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
 - `tests/test_model_evidence_paths.py`:
   adversarial batch manifest paths, traversal, symlinks, audit/path identity,
   original input digest and unsettled-budget rejection
+- `tests/test_model_evidence_toctou.py`:
+  deterministic path-to-symlink swaps at audit, context, copy source and
+  destination, pinned POSIX inode reads, and no-op batch bind I/O
 - `tests/test_atomic_store.py`:
   interrupted rename cleanup, complete concurrent JSON publication,
   fsynced files and intact sealed model/research state
@@ -337,6 +340,18 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   if original input evidence is missing or altered.
 - Only a validated sealed response and the exact prior budget reservation
   may be reconciled, with no provider retry on missing or suspect evidence.
-  These path checks protect against malformed or tampered stored references,
-  not a hostile process that can concurrently replace files after validation.
-  Local integrity hashes are not cryptographic signatures.
+  On POSIX, evidence reads walk directories with pinned `dir_fd` handles and
+  `O_NOFOLLOW`; batch evidence copies also pin both source and destination
+  directory handles and atomically rename within that destination directory.
+  This blocks symlink substitutions between pathname validation and file
+  opening. Windows rechecks canonical paths and opened file identities,
+  but remains **best-effort against an adversarial concurrent replacement**:
+  Python's portable file API lacks the equivalent of POSIX `openat`.
+  Neither these checks nor content hashes are digital signatures.
+- I/O policy: per-manifest evidence ancestry is resolved once per batch and
+  global parent, then child filenames are checked lexically and with
+  `is_symlink`. Descriptors recheck provenance when files are opened.
+  Streaming evidence copies avoid `copy2` metadata I/O, while retaining
+  content `fsync` and atomic publication. Unchanged batch rebinds must
+  avoid evidence copies and JSON rewrites. Model-call and budget `fsync`
+  guarantees are **not** traded away for throughput.
