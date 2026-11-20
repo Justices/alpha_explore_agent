@@ -154,6 +154,12 @@ GitHub Actions [44751916696](https://github.com/Justices/alpha_explore_agent/act
 
 **未完成的生产步骤**：在现有 CLI 的授权命令路径中取得 Gateway/模型身份、真实 Research ID 和既有调用账本的关联，明确 Simulation Intent 与成本上限，并完成跨流程恢复；当前 `ProductionWorkflowAdapter` 仍在 `validate` 阶段拒绝运行。身份准备不是执行许可，也不是生产端到端测试。
 
+### P1.8 双平台离线验收（2026-11-20）
+
+GitHub Actions [44753707015](https://github.com/Justices/alpha_explore_agent/actions/runs/44753707015)，对应代码及审计更新提交 `a602bddc8ca23dc2655ca97d4738af690419595e`；已读取完整运行日志：**Linux 638 tests, OK（19.964 秒）**，**Windows 638 tests, OK（142.553 秒）**；AGY SDK 契约检查通过。测试覆盖真实预设注册项选路、身份持久化、预算策略/角色映射变更阻断、审查收据与固定 Model Profile 一致性、以及生产适配器继续关闭。
+
+此验收不包含 BRAIN 凭证/会话、真实领域 Research ID、模型计费请求、Simulation Intent、真实 Dispatch 执行或跨系统恢复；上述事项仍属于生产统一入口的待开发边界。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
