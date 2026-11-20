@@ -610,6 +610,7 @@ class DecisionRecorder:
             self.budget.reserve(
                 self.research_id, call_id, task=task,
                 role=selected_role, backend=selected_backend,
+                backend_sha256=hashlib.sha256(_json_bytes(config)).hexdigest(),
             )
         global_context = self.global_calls_root / f"{call_id}.context.json"
         global_response = self.global_calls_root / f"{call_id}.response.json"

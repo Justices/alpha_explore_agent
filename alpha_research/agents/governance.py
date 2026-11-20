@@ -93,10 +93,11 @@ class ModelCallLedger:
         for item in state["calls"]:
             if (not isinstance(item, dict) or not isinstance(item.get("call_id"), str)
                     or item["call_id"] in seen
-                    or item.get("status") not in {"IN_FLIGHT", "OK", "ERROR"}
+                    or item.get("status") not in {"IN_FLIGHT", "OK", "ERROR", "UNKNOWN"}
                     or not isinstance(item.get("task"), str)
                     or not isinstance(item.get("role"), (str, type(None)))
-                    or not isinstance(item.get("backend"), (str, type(None)))):
+                    or not isinstance(item.get("backend"), (str, type(None)))
+                    or not isinstance(item.get("backend_sha256"), (str, type(None)))):
                 raise ModelBudgetError("model budget attempt ledger is invalid")
             seen.add(item["call_id"])
             for field in ("token_in", "token_out"):
@@ -120,6 +121,7 @@ class ModelCallLedger:
             "attempts": len(calls),
             "successful": sum(row["status"] == "OK" for row in calls),
             "failed": sum(row["status"] == "ERROR" for row in calls),
+            "unknown": sum(row["status"] == "UNKNOWN" for row in calls),
             "unresolved": sum(row["status"] == "IN_FLIGHT" for row in calls),
             "reported_tokens": known,
             "unknown_usage_attempts": sum(
@@ -129,11 +131,15 @@ class ModelCallLedger:
             ),
         }
 
-    def reserve(self, research_id, call_id, *, task, role=None, backend=None):
+    def reserve(self, research_id, call_id, *, task, role=None, backend=None,
+                backend_sha256=None):
         if not isinstance(call_id, str) or not call_id.strip():
             raise ModelBudgetError("model call_id required")
         if not isinstance(task, str) or not task.strip():
             raise ModelBudgetError("model task required")
+        if backend_sha256 is not None and (
+                not isinstance(backend_sha256, str) or len(backend_sha256) != 64):
+            raise ModelBudgetError("invalid model backend profile digest")
         path, lock = self._paths(research_id)
         with SingleWriterLock(lock):
             state = self._load(path, research_id)
@@ -141,6 +147,15 @@ class ModelCallLedger:
             if usage["unresolved"]:
                 raise ModelBudgetError(
                     "unresolved model call intent; explicit reconciliation required")
+            if usage["unknown"]:
+                raise ModelBudgetError(
+                    "unknown model outcome blocks this research; start a new research ID")
+            for prior in state["calls"]:
+                if role is not None and prior["role"] == role and (
+                        prior.get("backend") != backend
+                        or prior.get("backend_sha256") != backend_sha256):
+                    raise ModelBudgetError(
+                        "model backend changed within research; use a new research ID")
             if usage["attempts"] >= self.policy["max_calls"]:
                 raise ModelBudgetError("model call attempt budget exhausted")
             if usage["reported_tokens"] >= self.policy["max_reported_tokens"]:
@@ -149,7 +164,8 @@ class ModelCallLedger:
                 raise ModelBudgetError("duplicate model call ID")
             state["calls"].append({
                 "call_id": call_id, "task": task, "role": role,
-                "backend": backend, "status": "IN_FLIGHT",
+                "backend": backend, "backend_sha256": backend_sha256,
+                "status": "IN_FLIGHT",
                 "token_in": None, "token_out": None,
             })
             self._write(path, state)
@@ -174,6 +190,26 @@ class ModelCallLedger:
             self._write(path, state)
             return self._summarize(state)
 
+    def acknowledge_unknown(self, research_id, call_id, *, reason):
+        """Operator-only decision: close an unresolved intent WITHOUT claiming failure.
+
+        This permanently seals the research as blocked: a new research ID is
+        needed for further model work. It is not a remote-provider reconciliation
+        nor evidence that the call failed.
+        """
+        if not isinstance(reason, str) or len(reason.strip()) < 8:
+            raise ModelBudgetError("explicit reason (at least 8 characters) required")
+        path, lock = self._paths(research_id)
+        with SingleWriterLock(lock):
+            state = self._load(path, research_id)
+            rows = [row for row in state["calls"] if row["call_id"] == call_id]
+            if len(rows) != 1 or rows[0]["status"] != "IN_FLIGHT":
+                raise ModelBudgetError("unresolved model call ID not found")
+            rows[0]["status"] = "UNKNOWN"
+            rows[0]["operator_reason"] = reason.strip()[:500]
+            self._write(path, state)
+            return self._summarize(state)
+
     def status(self, research_id):
         path, lock = self._paths(research_id)
         with SingleWriterLock(lock):
@@ -184,7 +220,7 @@ class ModelCallLedger:
             "policy": dict(self.policy),
             **summary,
             "blocked": bool(
-                summary["unresolved"] or
+                summary["unresolved"] or summary["unknown"] or
                 summary["attempts"] >= self.policy["max_calls"] or
                 summary["reported_tokens"] >= self.policy["max_reported_tokens"]
             ),
