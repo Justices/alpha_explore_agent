@@ -45,7 +45,6 @@ class RoleRoutedModelClient:
         self.environ = environ
         self.instances = {}
         self.active = None
-        self.active_binding = None
 
     def _make_backend(self, binding):
         if self.backend_factory is not None:
@@ -59,20 +58,24 @@ class RoleRoutedModelClient:
         from alpha_research.integrations.model import ConfiguredModelClient
         return ConfiguredModelClient(binding.backend, environ=self.environ)
 
+    def route_for(self, task):
+        """One validated snapshot of role, backend identity and provider spec."""
+        return self.routing.resolve(task)
+
     def _backend(self, task):
-        binding = self.routing.resolve(task)
+        binding = self.route_for(task)
         if binding.backend_name not in self.instances:
             self.instances[binding.backend_name] = self._make_backend(binding)
         return binding, self.instances[binding.backend_name]
 
     def config_for(self, task):
-        return self.routing.resolve(task).backend
+        return self.route_for(task).backend
 
     def role_for(self, task):
-        return self.routing.resolve(task).role
+        return self.route_for(task).role
 
     def backend_name_for(self, task):
-        return self.routing.resolve(task).backend_name
+        return self.route_for(task).backend_name
 
     @property
     def last_usage(self):
@@ -91,7 +94,9 @@ class RoleRoutedModelClient:
         return getattr(self.active, "last_thread_id", None)
 
     def complete_json(self, task, context, *, thread_path=None):
-        binding, backend = self._backend(task)
+        # A rejected new route must never expose the previous backend's usage
+        # or model identity through last_* during an error audit.
+        self.active = None
+        _, backend = self._backend(task)
         self.active = backend
-        self.active_binding = binding
         return backend.complete_json(task, context, thread_path=thread_path)
