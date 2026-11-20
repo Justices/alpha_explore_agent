@@ -130,6 +130,12 @@ GitHub Actions [44750223262](https://github.com/Justices/alpha_explore_agent/act
 
 **运行约束**：这仍是审查消费账本，不是实际 Simulation Intent，不是受信任的真人授权，也没有暴露可运行的生产 Dispatch。权威账本不使用 MAC 抵御能改写本地状态的恶意主体，部署时仍需专用权限和外部可信审批服务。跨进程验证结果以对应提交的 CI 日志为准，未验证时不得标记为通过。
 
+### P1.7 双平台跨进程验收（2026-11-20）
+
+GitHub Actions [44751916696](https://github.com/Justices/alpha_explore_agent/actions/runs/44751916696)，对应代码提交 `a0953f748b8c5fd98b308c033c9bc278b31e8f2f`：读取 Job 日志确认 **Linux 633 tests, OK（20.876 秒）**，**Windows 633 tests, OK（174.583 秒）**，AGY SDK 合同检查通过。包含两个独立进程争抢任务、进程 `os._exit` 强制中断、双键权威账本、崩溃后另一任务拒绝重复使用 Approval ID，以及投影缺失的只读人工协调判定。
+
+此验收仅覆盖离线审查/编排前置状态，非真实 BRAIN 调用权限。生产 Adapter 仍在 `validate` 拒绝执行，实际 CLI 运行入口、可信人工授权发行、模型/Brain 身份与费用预算复用以及 Simulation Intent 全链路尚未验收。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
