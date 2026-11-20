@@ -207,7 +207,7 @@ def inspect_domain_research_handoff(orchestrator, task_id, model_config,
     if binding is None:
         return {"task_id": task_id, "status": "AWAITING_DOMAIN_RESEARCH_ID",
                 "model_profile_sha256": identity["model_profile_sha256"],
-                "provider_invoked": False, "brain_invoked": False}
+                "inspection_provider_invoked": False, "inspection_brain_invoked": False}
     if not isinstance(binding, dict) or binding.get("workflow") != task["workflow"]:
         raise OrchestrationError("domain Research ID binding is invalid")
     research_id = binding.get("research_id")
@@ -230,6 +230,6 @@ def inspect_domain_research_handoff(orchestrator, task_id, model_config,
         "orchestration_budget": copy.deepcopy(task["budget"]),
         "recovery_required": (task["status"] == "BLOCKED"
                               or status["unresolved"] > 0 or status["unknown"] > 0),
-        "provider_invoked": False,
-        "brain_invoked": False,
+        "inspection_provider_invoked": False,
+        "inspection_brain_invoked": False,
     }
