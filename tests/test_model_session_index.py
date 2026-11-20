@@ -291,6 +291,19 @@ class SessionIndexTests(unittest.TestCase):
         with self.assertRaisesRegex(ModelError, "another batch"):
             merge_index(existing, self.session_id, "R1", "/b", [left, right])
 
+    def test_persisted_duplicate_call_owner_is_rejected_even_if_union_matches(self):
+        shared = "a" * 32
+        corrupt = {
+            "schema_version": 2, "session_id": self.session_id,
+            "research_id": "R1", "call_ids": [shared],
+            "batches": [
+                {"batch_ref": "/a", "call_ids": [shared]},
+                {"batch_ref": "/b", "call_ids": [shared]},
+            ],
+        }
+        with self.assertRaisesRegex(ModelError, "belongs to another batch"):
+            merge_index(corrupt, self.session_id, "R1", "/c", [])
+
     def test_pure_index_merge_rejects_conflicting_aggregate(self):
         index = {
             "schema_version": 2, "session_id": self.session_id,
