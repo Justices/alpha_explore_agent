@@ -35,6 +35,7 @@ import json
 
 
 from alpha_research.workflows.regular.errors import ResearchError
+from alpha_research.workflows.regular.decisions import ResearchDecisionSession
 from alpha_research.workflows.regular.settings_validation import _duration_parts, _duration_difference_bounds, _validate_test_period
 from alpha_research.workflows.regular.field_catalog import (
     _rows, _field_summaries, _admissible_field_rows, _catalog,
@@ -66,57 +67,23 @@ class ResearchAgent:
                                                      self._platform_settings)
         except BacktestCacheError as exc:
             raise ResearchError(f"backtest cache initialization failed: {exc}") from exc
-        self._session_packs = []
+        self._decisions = ResearchDecisionSession(
+            self.knowledge, self.recorder, self.state_root,
+        )
         if hasattr(gateway, "alpha_lookup"):
             gateway.alpha_lookup = self._lookup_alpha_state
 
     def _begin_session(self, research_id=None):
-        session_id = self.recorder.begin_session(research_id=research_id)
-        self._session_packs = []
-        return session_id
+        return self._decisions.begin_session(research_id=research_id)
 
     def _save_knowledge_pack(self, pack, batch_dir=None):
-        raw = json.dumps(pack, ensure_ascii=False, sort_keys=True,
-                         separators=(",", ":")).encode("utf-8")
-        digest = hashlib.sha256(raw).hexdigest()
-        pack_id = digest[:20]
-        path = self.state_root / "logs" / "knowledge_packs" / f"{pack_id}.json"
-        if not path.exists():
-            atomic_write_json(path, pack)
-        ref = {"pack_id": pack_id, "sha256": digest, "source_ref": str(path),
-               "session_id": self.recorder.session_id}
-        self._session_packs.append(ref)
-        if batch_dir is not None:
-            self._write_batch_knowledge_packs(batch_dir)
-        return ref
+        return self._decisions.save_knowledge_pack(pack, batch_dir)
 
     def _write_batch_knowledge_packs(self, batch_dir):
-        batch_dir = Path(batch_dir)
-        batch_dir.mkdir(parents=True, exist_ok=True)
-        existing = (json.loads((batch_dir / "knowledge_pack.json").read_text(encoding="utf-8"))
-                    if (batch_dir / "knowledge_pack.json").exists() else {})
-        packs_by_id = {row.get("pack_id"): row for row in existing.get("packs", [])
-                       if isinstance(row, dict) and row.get("pack_id")}
-        for ref in self._session_packs:
-            try:
-                pack = json.loads(Path(ref["source_ref"]).read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise ResearchError("knowledge pack reference is unreadable") from exc
-            packs_by_id.setdefault(ref["pack_id"], {**ref, "pack": pack})
-        atomic_write_json(batch_dir / "knowledge_pack.json", {
-            "schema_version": 1,
-            "session_ids": sorted({row.get("session_id") for row in packs_by_id.values()
-                                   if row.get("session_id")}),
-            "packs": list(packs_by_id.values())})
+        return self._decisions.write_batch_knowledge_packs(batch_dir)
 
     def _decide(self, task, context, batch_dir=None):
-        pack = self.knowledge.build_pack(task, context)
-        ref = self._save_knowledge_pack(pack, batch_dir)
-        if batch_dir is not None:
-            self.recorder.bind_batch(batch_dir)
-        enriched = {**context, "knowledge_pack": pack}
-        return self.recorder.complete_json(task, enriched,
-                                           knowledge_pack_ref=ref["source_ref"])
+        return self._decisions.decide(task, context, batch_dir)
 
     def _lookup_alpha_state(self, alpha_id):
         path = self.runs_root / "alpha_states.json"
