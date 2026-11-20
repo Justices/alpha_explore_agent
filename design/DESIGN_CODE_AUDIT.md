@@ -121,6 +121,15 @@ GitHub Actions [44750223262](https://github.com/Justices/alpha_explore_agent/act
 
 此结果确认的是离线状态一致性和 fail-closed 行为。跨进程强制终止与真正的授权发行/生产执行仍未完成，不能推论真实 BRAIN 调用安全已验收。
 
+### P1.7 跨进程审查账本与强制终止恢复
+
+- 新增 `tests/test_approval_cross_process.py`，以两个独立 Python 进程争抢相同任务及不同 Approval ID，并在独立子进程写入后调用 `os._exit`，验证 OS 文件锁和跨进程持久化行为（Linux/Windows）。
+- 修复 P1.6 的双文件原子性漏洞：仅先写 Task 文件再写 Approval ID 文件时，进程崩溃后同一 Approval ID 可能被另一个 Task 重用。现在 `approval_reviews/reservations.json` 是受同一个 `reviews.lock` 保护的**权威单文件事务**，一次原子保存同时固定 Task ID 与 Approval ID；原有 Task、Approval ID JSON 仅为审计投影。写入投影失败不得撤销、重放或自动修复权威消费。
+- 新增 `inspect_review_reservation` 只读核查接口，区分 `NOT_RESERVED`、`RESERVED_REVIEW_ONLY`、`RECONCILIATION_REQUIRED` 及历史状态 `LEGACY_UNVERIFIED`，所有结果都明确 `simulation_authorized=false`。
+- 测试覆盖同任务不同 Approval ID 的跨进程争抢、权威账本刚落盘就强制退出、同 Approval ID 跨任务复用拒绝、缺失投影的人工协调以及保守的重复消费阻断。
+
+**运行约束**：这仍是审查消费账本，不是实际 Simulation Intent，不是受信任的真人授权，也没有暴露可运行的生产 Dispatch。权威账本不使用 MAC 抵御能改写本地状态的恶意主体，部署时仍需专用权限和外部可信审批服务。跨进程验证结果以对应提交的 CI 日志为准，未验证时不得标记为通过。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
