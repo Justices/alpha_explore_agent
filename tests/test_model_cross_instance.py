@@ -4,6 +4,7 @@ Every backend is an in-memory offline fixture. No BRAIN or remote provider
 is ever contacted. Both research and batch identities must remain durable.
 """
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -12,6 +13,7 @@ import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 
 from alpha_research.integrations.model import DecisionRecorder, ModelError
 from alpha_research.integrations.model_journal import ModelCallJournal
@@ -211,6 +213,37 @@ class CrossInstanceModelTests(unittest.TestCase):
         lines = journal.log_path.read_text(encoding="utf-8").splitlines()
         self.assertEqual(len(lines), 1)
         self.assertEqual(json.loads(lines[0])["call_id"], "C1")
+
+    def test_crash_during_response_copy_leaves_no_partial_final_file(self):
+        batch = self.root / "batch"
+        first_model = LocalModel()
+        first = recorder(self.root, "R1", batch, first_model)
+        original = shutil.copy2
+
+        def interrupt(source, destination, *args, **kwargs):
+            dest = Path(destination)
+            if ".response.json.tmp-" in dest.name:
+                dest.write_text("{\\\"status\\\":", encoding="utf-8")
+                raise RuntimeError("synthetic crash halfway through batch copy")
+            return original(source, destination, *args, **kwargs)
+
+        with patch("alpha_research.integrations.model_journal.shutil.copy2",
+                   side_effect=interrupt):
+            with self.assertRaisesRegex(RuntimeError, "halfway"):
+                first.complete_json("task", {"seq": 1})
+        self.assertEqual(first_model.calls, 1)
+        manifest = json.loads((batch / "model_call_manifest.json")
+                              .read_text(encoding="utf-8"))["calls"][0]
+        self.assertIsNone(manifest["response_sha256"])
+        self.assertFalse(Path(manifest["response_ref"]).exists())
+        self.assertFalse(list((batch / "model_calls").glob("*.tmp-*")))
+        self.assertTrue(Path(manifest["global_response_ref"]).exists())
+
+        resumed_model = LocalModel()
+        second = recorder(self.root, "R1", batch, resumed_model)
+        self.assertEqual(second.complete_json("task", {"seq": 1}),
+                         {"task": "task", "seq": 1})
+        self.assertEqual(resumed_model.calls, 0)
 
     def test_subprocess_recognizes_batch_lock_across_process_boundary(self):
         batch = self.root / "batch"
