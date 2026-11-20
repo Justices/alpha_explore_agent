@@ -27,7 +27,8 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_json.py` | Shared JSON decision decoder for CLI, HTTPS and Antigravity SDK; adapters retain their own error contracts |
 | `integrations/model_metadata.py` | Context-scoped `last_usage`, model name, raw response and thread binding for direct HTTP/SDK clients and role routers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
-| `integrations/model_journal.py` | Single owner of session call history, durable call paths, intent/terminal writes, append-only events, batch manifests and session indices |
+| `integrations/model_journal.py` | Owns durable call paths, intent/terminal writes, append-only events and batch-manifest/session-index transactions |
+| `integrations/model_sessions.py` | Validates and merges session index membership across batches, including research ownership and legacy index migration |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
 | `agents/configuration.py` | Strict role/task binding and defensively copied route snapshots; delegates backend policy |
@@ -82,6 +83,10 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 - `tests/test_agent_runtime_boundaries.py`:
   deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
+- `tests/test_model_session_index.py`:
+  cross-batch session membership, historical ownership filtering,
+  concurrent index merges, legacy audit-verification, corrupt references and
+  manifest-to-index crash-gap repair
 - `tests/test_model_cross_instance.py`:
   shared-batch deduplication, research/batch lock contention, independent
   research parallelism, multi-session manifest merging, hard-interrupt
@@ -216,3 +221,32 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   replayed without a verified response. The protected filesystem scope is
   local to the configured state directory and shared batch; distributed
   filesystems and multi-host lock semantics are not asserted.
+
+## Multi-batch session index consistency
+
+- `model_sessions/<session_id>.json` retains historical `session_id`,
+  `batch_ref` and `call_ids` fields. `batch_ref` now points to the
+  **first associated batch**, and `call_ids` is the deduplicated union across
+  all associated batches. The additive `batches` list records each batch's
+  exact call IDs, and `research_id` binds one Session to one research.
+- The session index uses an OS lock keyed by `session_id`. The lock order is
+  **batch manifest -> session index**, held only during local evidence/manifest
+  and index synchronization, never while requesting a model. A bounded wait
+  serializes index writes from distinct batches of the same Session.
+- Calls already attributed to batch A are never silently copied into batch B
+  merely because the recorder was rebound. Historical calls made **before any
+  batch binding** retain their ability to be attached later to a batch.
+- Batch manifests are published before their corresponding session index.
+  A crash between those two atomic writes leaves the existing index intact;
+  rebinding that batch recomputes its membership from the durable manifest
+  without provider invocation. A corrupt index or unauditable legacy
+  research identity blocks instead of being overwritten.
+- Existing three-field indices are migrated on access; their previous
+  batch membership is preserved, and the ownership of recorded call IDs is
+  checked against their global audit records before adding `research_id`.
+  Earlier overwritten, undiscoverable batch relations **cannot** be inferred
+  from a legacy index alone; rebind the original batch to repair its entry.
+- User-supplied `session_id` values must be 32-character lowercase hex IDs.
+  This prevents session-index path traversal or ambiguous filename aliases.
+  Older persisted model-call, batch-manifest and budget-ledger formats are
+  unchanged. The Session index receives additive fields only.
