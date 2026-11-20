@@ -216,6 +216,18 @@ GitHub Actions [44757236393](https://github.com/Justices/alpha_explore_agent/act
 
 **验收依据必须以对应代码提交的双平台 GitHub Actions 日志为准。** 不得把此前 P1 的 650 tests PASS 转用为新 P2 代码的验收结论。
 
+### P2.1–P2.4 离线验收实证（2026-11-20）
+
+GitHub Actions [44760371380](https://github.com/Justices/alpha_explore_agent/actions/runs/44760371380) 对应功能分支提交 `b16fe6808d1bccfa30fb8452d41bd4dea4063188`；三个 Job 全部 **success**。读取完整原始日志确认：
+
+| 环境 | 完整 unittest | 其他 |
+| --- | --- | --- |
+| Ubuntu / Python 3.11 | **663 tests, OK（23.117 秒）** | 编译、Registry / offline smoke / Mock CLI 通过 |
+| Windows / Python 3.11 | **663 tests, OK（154.821 秒）** | 编译、Registry / offline smoke / Mock CLI 通过 |
+| AGY SDK 合同 | PASS | 不调用真实模型或 BRAIN |
+
+本测试实际覆盖新 P2 共享模型装配、已持全局锁的 CLI Gateway/Agent 引用传递、三个领域 Mock Dispatch、未知 Simulation Intent 状态保留、只读恢复预检及正确 `state/logs/model_budget` 路径。没有真实外部写入、付费模型探测或 Simulation；**通过的是离线合同，不是生产平台可用性**。记录此结果的后续文档提交需要独立 CI 状态，不能复用作为新代码的执行证明。
+
 ### P2.5：真实平台验证——独立授权阻断
 
 当前阶段**尚未执行**真实 BRAIN 只读预检、Simulation、Alpha 属性更新或提交。未建立可信真人签发的*真实执行*授权收据（现有 `approval_review.py` 仅签名审查，不能授权外部调用），也未将已持锁且已认证的真实 Gateway/Model 注入可执行生产 Adapter。
