@@ -2,17 +2,15 @@
 
 The agent depends only on ``complete_json(task, context)``.
 """
-import json
 import hashlib
 import os
-import re
 import time
 from datetime import datetime
 from pathlib import Path
-from urllib.request import Request, urlopen
 from uuid import uuid4
 
-from alpha_research.integrations.model_cli import CLI_COMMANDS, CliModelError, LocalCliModelTool
+from alpha_research.integrations.model_cli import CLI_COMMANDS, complete_cli
+from alpha_research.integrations.model_http import complete_http, post_json
 from alpha_research.progress import write_progress
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
@@ -21,33 +19,16 @@ from alpha_research.integrations.model_journal import ModelCallJournal
 from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
     FIELD_EVIDENCE_KEYS, REQUIRED_FIELD_DIMENSIONS, TASK_INSTRUCTIONS,
-    KNOWLEDGE_POLICY, instruction_for,
+    KNOWLEDGE_POLICY,
 )
 
 
-def _post_json(url: str, headers: dict, payload: dict, *, timeout_seconds=120) -> dict:
-    request = Request(url, data=json.dumps(payload).encode("utf-8"),
-                      headers={"Content-Type": "application/json", **headers},
-                      method="POST")
-    with urlopen(request, timeout=timeout_seconds) as response:
-        return json.load(response)
-
-
-def _decision_from_text(message):
-    try:
-        return json.loads(message)
-    except json.JSONDecodeError:
-        blocks = re.findall(r"```(?:json)?\s*(.*?)\s*```", message,
-                            flags=re.IGNORECASE | re.DOTALL)
-        if len(blocks) != 1:
-            raise
-        return json.loads(blocks[0])
-
-
 class ConfiguredModelClient:
+    """Route one model decision to its transport-specific adapter."""
+
     def __init__(self, config: dict, transport=None, environ=None):
         self.config = config
-        self.transport = transport or _post_json
+        self.transport = transport or post_json
         self.environ = os.environ if environ is None else environ
         self.last_usage = None
         self.last_response_text = None
@@ -61,89 +42,12 @@ class ConfiguredModelClient:
         self.last_thread_id = None
         provider = self.config.get("provider")
         if provider in CLI_COMMANDS:
-            prompt = json.dumps({
-                "task": task, "context": context,
-                "instruction": instruction_for(task, forbid_tools=True),
-            }, ensure_ascii=False)
-            try:
-                message, self.last_usage, self.last_model, self.last_thread_id = (
-                    LocalCliModelTool(self.config, self.environ).invoke(prompt, thread_path=thread_path))
-                if isinstance(message, str):
-                    self.last_response_text = message
-                result = _decision_from_text(message)
-            except CliModelError as exc:
-                raise ModelError(str(exc)) from exc
-            except (TypeError, ValueError) as exc:
-                raise ModelError("local CLI returned an invalid JSON decision") from exc
-            if not isinstance(result, dict):
-                raise ModelError("model decision must be a JSON object")
-            return result
-        url = self.config.get("url")
-        if not isinstance(url, str) or not url.startswith("https://"):
-            raise ModelError("model service requires an HTTPS url")
-        headers = {}
-        key_env = self.config.get("api_key_env")
-        if key_env:
-            key = self.environ.get(key_env)
-            if not key:
-                raise ModelError(f"model credential environment variable unavailable: {key_env}")
-            if provider == "anthropic_compatible":
-                headers["x-api-key"] = key
-                headers["anthropic-version"] = "2023-06-01"
-            else:
-                headers["Authorization"] = f"Bearer {key}"
-        elif provider in {"openai_compatible", "anthropic_compatible"}:
-            raise ModelError(f"{provider} service requires api_key_env")
-
-        if provider in {"openai_compatible", "anthropic_compatible"}:
-            model = self.config.get("model")
-            if not model:
-                raise ModelError("model name is required")
-            payload = {
-                "model": model,
-                "messages": [{"role": "user", "content": json.dumps(
-                    {"task": task, "context": context,
-                     "instruction": instruction_for(task)},
-                    ensure_ascii=False)}],
-            }
-            if provider == "openai_compatible":
-                if self.config.get("response_format", "json_object") == "json_object":
-                    payload["response_format"] = {"type": "json_object"}
-            else:
-                payload["max_tokens"] = 8192
-                if not url.rstrip("/").endswith("/v1/messages"):
-                    url = url.rstrip("/") + "/v1/messages"
-        elif provider == "json_http":
-            payload = {"task": task, "context": context,
-                       "instruction": instruction_for(task)}
-        else:
-            raise ModelError(f"unsupported model provider: {provider}")
-
-        try:
-            if self.transport is _post_json:
-                response = self.transport(
-                    url, headers, payload,
-                    timeout_seconds=self.config.get("timeout_seconds", 120))
-            else:
-                # Injected fake/custom transport follows the established
-                # three-argument API; never call the actual provider in tests.
-                response = self.transport(url, headers, payload)
-            self.last_usage = (response.get("usage") if isinstance(response, dict) else None)
-            if provider == "openai_compatible":
-                result = json.loads(response["choices"][0]["message"]["content"])
-            elif provider == "anthropic_compatible":
-                content = response["content"]
-                message = "".join(block["text"] for block in content
-                                  if block.get("type") == "text")
-                self.last_response_text = message
-                result = _decision_from_text(message)
-            else:
-                result = response["result"]
-        except (KeyError, IndexError, ValueError, TypeError) as exc:
-            raise ModelError("model service returned an invalid JSON decision") from exc
-        if not isinstance(result, dict):
-            raise ModelError("model decision must be a JSON object")
-        return result
+            return complete_cli(self, task, context, thread_path=thread_path)
+        if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
+            if thread_path is not None:
+                raise ModelError("HTTP model API cannot use a CLI research thread")
+            return complete_http(self, task, context)
+        raise ModelError(f"unsupported model provider: {provider}")
 
 
 def build_model_client(config):
