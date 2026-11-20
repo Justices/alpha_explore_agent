@@ -10,7 +10,8 @@ from unittest.mock import Mock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
-from alpha_research.orchestration.engine import MainOrchestrator, OfflineResearchAdapter
+from alpha_research.orchestration.engine import MainOrchestrator
+from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.integrations.brain.gateway import GatewayError
 from alpha_research.workflows.regular.campaign import (
     _key, _persist_record, _reconcile_active, run_regular_campaign,
