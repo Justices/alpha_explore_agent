@@ -9,9 +9,11 @@ import shutil
 import time
 from uuid import uuid4
 import hashlib
+from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
+from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
@@ -111,6 +113,31 @@ class ModelCallJournal:
                     raise ModelError("model audit event writer remained busy") from exc
                 time.sleep(0.01)
 
+    @contextmanager
+    def _session_index_guard(self, session_id):
+        """Acquire the per-session OS lock while holding the batch lock.
+
+        Batch -> session is the only lock order. A bounded wait permits two
+        independent batches of one session to merge without lost updates.
+        """
+        target = index_path(self.logs_root, session_id)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        deadline = time.monotonic() + 2.0
+        while True:
+            guard = SingleWriterLock(target.with_suffix(".lock"))
+            try:
+                guard.__enter__()
+            except WriterLockError as exc:
+                if time.monotonic() >= deadline:
+                    raise ModelError("model session index writer remained busy") from exc
+                time.sleep(0.01)
+            else:
+                break
+        try:
+            yield target
+        finally:
+            guard.__exit__(None, None, None)
+
     def sync_batch_calls(self, calls, *, batch_dir, session_id):
         """Atomically merge session entries into the shared batch manifest."""
         if batch_dir is None:
@@ -120,13 +147,20 @@ class ModelCallJournal:
         # Provider calls never hold this *manifest* lock.
         try:
             with SingleWriterLock(batch_dir / "model_call_manifest.lock"):
+                if session_id is not None:
+                    with self._session_index_guard(session_id) as session_path:
+                        return self._sync_batch_calls_locked(
+                            calls, batch_dir=batch_dir, session_id=session_id,
+                            session_path=session_path)
                 return self._sync_batch_calls_locked(
-                    calls, batch_dir=batch_dir, session_id=session_id)
+                    calls, batch_dir=batch_dir, session_id=None,
+                    session_path=None)
         except WriterLockError as exc:
             raise ModelError(
                 "another writer is updating this batch model manifest") from exc
 
-    def _sync_batch_calls_locked(self, calls, *, batch_dir, session_id):
+    def _sync_batch_calls_locked(self, calls, *, batch_dir, session_id,
+                                 session_path):
         """Rebinding completed calls is idempotent; never re-copy unchanged rows."""
         target = batch_dir / "model_calls"
         target.mkdir(parents=True, exist_ok=True)
@@ -176,23 +210,25 @@ class ModelCallJournal:
                 self._copy_batch_evidence(response_path, copied_response)
             entries[record["call_id"]] = entry
             changed = True
+        if session_path is not None:
+            try:
+                previous_index = json.loads(session_path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                previous_index = None
+            except (OSError, ValueError) as exc:
+                raise ModelError("model session index is unreadable") from exc
+            merged_index = merge_index(
+                previous_index, session_id, str(batch_dir),
+                [row["call_id"] for row in entries.values()
+                 if row.get("session_id") == session_id])
+            if merged_index != previous_index:
+                atomic_write_json(session_path, merged_index)
+
         if changed:
             atomic_write_json(manifest_path, {
                 "session_ids": sorted({row.get("session_id") for row in entries.values()
                                        if row.get("session_id")}),
                 "calls": sorted(entries.values(), key=lambda row: row["call_id"]),
             })
-        if session_id:
-            sessions_root = self.logs_root / "model_sessions"
-            sessions_root.mkdir(parents=True, exist_ok=True)
-            index_path = sessions_root / f"{session_id}.json"
-            session_index = {
-                "session_id": session_id,
-                "batch_ref": str(batch_dir),
-                "call_ids": sorted(row["call_id"] for row in entries.values()
-                                   if row.get("session_id") == session_id),
-            }
-            if (not index_path.exists() or
-                    json.loads(index_path.read_text(encoding="utf-8")) != session_index):
-                atomic_write_json(index_path, session_index)
-
+        if session_path is not None and merged_index != previous_index:
+            atomic_write_json(session_path, merged_index)
