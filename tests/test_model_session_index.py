@@ -168,7 +168,7 @@ class SessionIndexTests(unittest.TestCase):
         r.bind_batch(self.root / "a")
         self.index_path.write_text(
             json.dumps({"session_id": self.session_id, "batch_ref": "old",
-                        "call_ids": ["x"], "batches": []}), encoding="utf-8")
+                        "call_ids": ["a" * 32], "batches": []}), encoding="utf-8")
         next_model = CountingModel()
         contender = self.recorder(model=next_model)
         with self.assertRaisesRegex(ModelError, "conflicts with batch membership"):
@@ -230,11 +230,24 @@ class SessionIndexTests(unittest.TestCase):
             resumed.bind_batch(self.root / "b")
         self.assertIsNone(resumed.batch_dir)
 
+    def test_legacy_index_rejects_unsafe_audit_reference(self):
+        first = self.recorder()
+        first.bind_batch(self.root / "a")
+        index = self.index()
+        index.pop("research_id")
+        index.pop("batches")
+        index["call_ids"] = ["../../outside"]
+        self.index_path.write_text(json.dumps(index), encoding="utf-8")
+        second = self.recorder()
+        with self.assertRaisesRegex(ModelError, "invalid call IDs"):
+            second.bind_batch(self.root / "b")
+        self.assertIsNone(second.batch_dir)
+
     def test_pure_index_merge_rejects_conflicting_aggregate(self):
         index = {
             "session_id": self.session_id, "batch_ref": "/a",
-            "call_ids": ["c1", "forged"],
-            "batches": [{"batch_ref": "/a", "call_ids": ["c1"]}],
+            "call_ids": ["a" * 32, "b" * 32],
+            "batches": [{"batch_ref": "/a", "call_ids": ["a" * 32]}],
         }
         with self.assertRaisesRegex(ModelError, "conflicts with batch membership"):
             merge_index(index, self.session_id, "/b", [])
