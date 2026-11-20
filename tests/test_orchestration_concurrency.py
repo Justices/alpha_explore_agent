@@ -102,13 +102,13 @@ class OrchestrationConcurrencyTests(unittest.TestCase):
         task_id = runner.create("super", {"objective": "OS lock fixture"})["task_id"]
         lock_path = runner._execution_lock_path(task_id)
         script = (
-            "import sys\\n"
-            "from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError\\n"
-            "try:\\n"
-            "    with SingleWriterLock(sys.argv[1]):\\n"
-            "        print('ACQUIRED')\\n"
-            "except WriterLockError:\\n"
-            "    print('BUSY')\\n"
+            "import sys\n"
+            "from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError\n"
+            "try:\n"
+            "    with SingleWriterLock(sys.argv[1]):\n"
+            "        print('ACQUIRED')\n"
+            "except WriterLockError:\n"
+            "    print('BUSY')\n"
         )
         def probe():
             return subprocess.run(
