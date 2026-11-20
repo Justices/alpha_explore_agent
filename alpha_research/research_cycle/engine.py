@@ -145,7 +145,8 @@ class OfflineResearchCycle:
         results = {eid: self.gateway.execute(experiments_by_id[eid]) for eid in ordered_ids}
         # A PENDING/FAILED fixture is an execution outcome, NOT settled Alpha
         # performance. Do not send it to attribution or the research lead.
-        unsettled = {eid: result.get("status") for eid, result in results.items()
+        unsettled = {eid: result.get("status") if isinstance(result, dict) else None
+                     for eid, result in results.items()
                      if not isinstance(result, dict) or result.get("status") != "COMPLETED"}
         if unsettled:
             raise ResearchContractError(

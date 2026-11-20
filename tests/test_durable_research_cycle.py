@@ -224,6 +224,120 @@ class TestDurableResearchCycle(unittest.TestCase):
             self.assertEqual(runner.load("R1")["rounds"][0]["simulations"]["E1"]["status"],
                              "IN_FLIGHT")
 
+    def test_unsettled_result_requires_explicit_readback(self):
+        with tempfile.TemporaryDirectory() as root:
+            gw = OfflineSimulationGateway({
+                "E1": {"source": "offline_fixture", "status": "PENDING"},
+            })
+            runner = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), gw, root, max_rounds=1,
+            )
+            with self.assertRaisesRegex(ResearchContractError, "unsettled simulation"):
+                runner.run(research_id="R1", objective="pending", region="CHN")
+            state = runner.load("R1")
+            self.assertEqual(state["status"], "BLOCKED")
+            self.assertEqual(state["rounds"][0]["simulations"]["E1"]["status"], "UNSETTLED")
+            self.assertNotIn("attribute_results", state["rounds"][0]["model_calls"])
+            self.assertNotIn("research_decide", state["rounds"][0]["model_calls"])
+            with self.assertRaisesRegex(ResearchContractError, "reconciliation"):
+                runner.run(research_id="R1", objective="pending", region="CHN",
+                           resume_blocked=True)
+            self.assertEqual(gw.invocations, ["E1"])
+            with self.assertRaisesRegex(ResearchContractError, "completed"):
+                runner.reconcile_offline_fixture("R1", "E1")
+            gw.fixtures["E1"] = {
+                "source": "offline_fixture", "status": "COMPLETED",
+                "metrics": {"sharpe": 0.1},
+            }
+            runner.reconcile_offline_fixture("R1", "E1")
+            result = runner.run(research_id="R1", objective="pending", region="CHN",
+                                resume_blocked=True)
+            self.assertEqual(result["status"], "BUDGET_EXHAUSTED")
+            self.assertEqual(gw.invocations, ["E1"])
+
+    def test_cross_round_experiment_identity_is_unique(self):
+        with tempfile.TemporaryDirectory() as root:
+            cfg = two_round_config()
+            cfg["backends"]["codex_mock"]["responses"]["plan_experiments"][1]["experiments"][0]["experiment_id"] = "E1"
+            cfg["backends"]["agy_mock"]["responses"]["prepare_execution"][1]["experiment_ids"] = ["E1"]
+            gw = simulated_gateway()
+            runner = DurableOfflineResearchRunner(
+                build_model_client(cfg), gw, root,
+                max_rounds=3, max_total_experiments=3, max_per_round=1,
+            )
+            with self.assertRaisesRegex(ResearchContractError, "ID already used"):
+                runner.run(research_id="R1", objective="duplicate ID", region="CHN")
+            self.assertEqual(runner.load("R1")["status"], "BLOCKED")
+            self.assertEqual(gw.invocations, ["E1"])
+
+    def test_completed_round_crash_gap_does_not_run_next_round(self):
+        with tempfile.TemporaryDirectory() as root:
+            cfg = fixture_config()
+            cfg["backends"]["codex_mock"]["responses"]["research_decide"] = {
+                "action": "STOP", "reason": "Mock objective done",
+                "evidence_refs": ["offline:R1:E1"],
+            }
+            gw = simulated_gateway()
+            runner = DurableOfflineResearchRunner(
+                build_model_client(cfg), gw, root, max_rounds=3,
+                max_total_experiments=3, max_per_round=1,
+            )
+            state = runner.run(research_id="R1", objective="stop", region="CHN")
+            self.assertEqual(state["status"], "COMPLETED")
+            state["status"] = "RUNNING"  # simulate crash after round completion
+            state.pop("stop_reason", None)
+            runner._save(state)
+            recovered = runner.run(research_id="R1", objective="stop", region="CHN")
+            self.assertEqual(recovered["status"], "COMPLETED")
+            self.assertEqual(recovered["stop_reason"], "STOP")
+            self.assertEqual(gw.invocations, ["E1"])
+            self.assertEqual(len(recovered["rounds"]), 1)
+
+    def test_budget_boundary_crash_gap_is_settled(self):
+        with tempfile.TemporaryDirectory() as root:
+            gw = simulated_gateway()
+            runner = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), gw, root, max_rounds=1,
+                max_total_experiments=1, max_per_round=1,
+            )
+            state = runner.run(research_id="R1", objective="budget", region="CHN")
+            self.assertEqual(state["status"], "BUDGET_EXHAUSTED")
+            state["status"] = "RUNNING"
+            state.pop("stop_reason", None)
+            runner._save(state)
+            recovered = runner.run(research_id="R1", objective="budget", region="CHN")
+            self.assertEqual(recovered["status"], "BUDGET_EXHAUSTED")
+            self.assertEqual(recovered["used_experiments"], 1)
+            self.assertEqual(gw.invocations, ["E1"])
+
+    def test_tampered_result_is_rejected_before_resume(self):
+        with tempfile.TemporaryDirectory() as root:
+            runner = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), simulated_gateway(), root,
+                max_rounds=1,
+            )
+            runner.run(research_id="R1", objective="tamper", region="CHN")
+            state_path = runner._path("R1")
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+            raw["rounds"][0]["report"]["simulation_results"]["E1"]["metrics"]["sharpe"] = 99
+            state_path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ResearchContractError, "checksum"):
+                runner.run(research_id="R1", objective="tamper", region="CHN")
+
+    def test_unsealed_state_cannot_be_recovered_silently(self):
+        with tempfile.TemporaryDirectory() as root:
+            runner = DurableOfflineResearchRunner(
+                build_model_client(fixture_config()), simulated_gateway(), root,
+                max_rounds=1,
+            )
+            runner.run(research_id="R1", objective="unsealed", region="CHN")
+            state_path = runner._path("R1")
+            raw = json.loads(state_path.read_text(encoding="utf-8"))
+            raw.pop("state_sha256")
+            state_path.write_text(json.dumps(raw), encoding="utf-8")
+            with self.assertRaisesRegex(ResearchContractError, "unsealed"):
+                runner.load("R1")
+
     def test_reject_non_offline_runner_gateway(self):
 
         class Imposter:
