@@ -12,7 +12,8 @@ from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
 
 
-def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *, append_event):
+def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
+                      append_event, on_verified=None, expected_research_id=None):
     if batch_dir is None:
         return None
     manifest_path = batch_dir / "model_call_manifest.json"
@@ -59,6 +60,8 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *, append_ev
         if not isinstance(record, dict):
             raise ModelError("recorded model decision is missing its audit record")
         if (record.get("call_id") != row["call_id"]
+                or (expected_research_id is not None
+                    and record.get("research_id") != expected_research_id)
                 or record.get("task") != task
                 or record.get("context_sha256") != context_sha
                 or record.get("route_sha256") != route_sha):
@@ -68,6 +71,10 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *, append_ev
         response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
         if row.get("response_sha256") is not None and row["response_sha256"] != response_sha:
             raise ModelError("recorded model manifest checksum mismatch")
+        if payload.get("status") not in {"ok", "error"}:
+            raise ModelError("previous model response has invalid status; retry blocked")
+        if payload["status"] == "ok" and not isinstance(payload.get("result"), dict):
+            raise ModelError("previous model decision must be a JSON object")
         if record.get("status") not in {"in_flight", payload.get("status")}:
             raise ModelError("recorded model status mismatch; replay blocked")
         if record.get("status") != "in_flight" and not record.get("response_sha256"):
@@ -82,7 +89,11 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *, append_ev
             record["token_out"] = payload.get("token_out")
             atomic_write_json(record_path, record)
             append_event(record)
-        if payload.get("status") == "ok" and isinstance(payload.get("result"), dict):
+        # Reconcile only after response/manifest/audit identity and hashes
+        # have been verified. Ledger settlement is idempotent under its lock.
+        if on_verified is not None:
+            on_verified(row["call_id"], payload)
+        if payload["status"] == "ok":
             return payload["result"]
         # Offline mock decisions have no network/API side effects. An
         # explicitly logged, terminal model error can be retried during
