@@ -1,7 +1,9 @@
 """Validate the role -> backend -> transport configuration before any model call."""
+import copy
 from dataclasses import dataclass
 from math import isfinite
 from typing import Mapping
+from urllib.parse import urlsplit
 
 
 class AgentConfigError(ValueError):
@@ -22,7 +24,7 @@ SUPPORTED_PROVIDERS = frozenset().union(*PROVIDERS_BY_KIND.values())
 
 def backend_kind(provider):
     for kind, providers in PROVIDERS_BY_KIND.items():
-        if provider in providers:
+        if isinstance(provider, str) and provider in providers:
             return kind
     raise AgentConfigError(f"unsupported backend provider: {provider}")
 
@@ -60,7 +62,7 @@ class RoleRoutingConfig:
             if not isinstance(name, str) or not name or not isinstance(spec, dict):
                 raise AgentConfigError("backend names and definitions must be objects")
             provider = spec.get("provider")
-            if provider not in SUPPORTED_PROVIDERS:
+            if not isinstance(provider, str) or provider not in SUPPORTED_PROVIDERS:
                 raise AgentConfigError(f"unsupported unattended backend provider: {provider}")
             inferred_kind = backend_kind(provider)
             if spec.get("kind", inferred_kind) != inferred_kind:
@@ -73,6 +75,11 @@ class RoleRoutingConfig:
             if model is not None and (
                     not isinstance(model, str) or not model.strip()):
                 raise AgentConfigError(f"invalid model name for backend {name}")
+            if provider in {"codex_cli", "claude_cli"}:
+                executable = spec.get("executable")
+                if executable is not None and (
+                        not isinstance(executable, str) or not executable.strip()):
+                    raise AgentConfigError(f"invalid CLI executable for backend {name}")
             if provider == "codex_cli":
                 # The CLI adapter enforces sandbox=read-only and approval=never;
                 # unsupported overrides must fail, not be silently ignored.
@@ -100,7 +107,7 @@ class RoleRoutingConfig:
                 raise AgentConfigError(f"invalid timeout for backend {name}")
             if provider == "antigravity_sdk":
                 key_env = spec.get("api_key_env")
-                if not isinstance(key_env, str) or not key_env:
+                if not isinstance(key_env, str) or not key_env.strip():
                     raise AgentConfigError("antigravity_sdk requires api_key_env")
                 if (spec.get("tools") or spec.get("mcp_servers")
                         or spec.get("skills_paths") or spec.get("allow_write")):
@@ -113,7 +120,16 @@ class RoleRoutingConfig:
                     raise AgentConfigError("unsupported Antigravity SDK backend option")
             if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
                 url = spec.get("url")
-                if not isinstance(url, str) or not url.startswith("https://"):
+                try:
+                    parsed_url = urlsplit(url) if isinstance(url, str) else None
+                    valid_url = bool(
+                        parsed_url and parsed_url.scheme == "https"
+                        and parsed_url.hostname and parsed_url.username is None
+                        and parsed_url.password is None and not parsed_url.fragment
+                    )
+                except ValueError:
+                    valid_url = False
+                if not valid_url:
                     raise AgentConfigError(
                         "model API backends require an explicit HTTPS URL")
                 key_env = spec.get("api_key_env")
@@ -131,7 +147,8 @@ class RoleRoutingConfig:
                 allowed = {"provider", "kind", "model", "url", "api_key_env", "timeout_seconds"}
                 if provider == "openai_compatible":
                     allowed.add("response_format")
-                    if spec.get("response_format", "json_object") not in {
+                    response_format = spec.get("response_format", "json_object")
+                    if not isinstance(response_format, str) or response_format not in {
                             "json_object", "none"}:
                         raise AgentConfigError(
                             "OpenAI-compatible response_format must be json_object or none")
@@ -153,12 +170,14 @@ class RoleRoutingConfig:
             if not isinstance(role, str) or not role or not isinstance(definition, dict):
                 raise AgentConfigError("every role needs an object definition")
             name = definition.get("backend")
-            if name not in backends:
+            if not isinstance(name, str) or name not in backends:
                 raise AgentConfigError(f"role {role} references undefined backend {name}")
         for task, role in task_roles.items():
-            if not isinstance(task, str) or not task or role not in roles:
+            if (not isinstance(task, str) or not task
+                    or not isinstance(role, str) or role not in roles):
                 raise AgentConfigError("task_roles must map tasks to defined roles")
-        return cls(default, dict(task_roles), dict(roles), dict(backends))
+        return cls(default, copy.deepcopy(task_roles), copy.deepcopy(roles),
+                   copy.deepcopy(backends))
 
     def resolve(self, task: str) -> RoleBinding:
         if not isinstance(task, str) or not task:
