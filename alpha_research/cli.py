@@ -29,6 +29,7 @@ from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
+from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
 from alpha_research.orchestration.execution_identity import (
     persist_execution_identity, inspect_domain_research_handoff,
@@ -93,6 +94,10 @@ def main(argv=None):
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
     handoff.add_argument("task_id")
+    recovery_check = sub.add_parser(
+        "orchestration-recovery-check",
+        help="read blocked task, Intent and model budget; never call BRAIN")
+    recovery_check.add_argument("task_id")
     orchestration_status = sub.add_parser("orchestration-status", help="read a persisted orchestration task")
     orchestration_status.add_argument("task_id")
     run = sub.add_parser("run-once", help="execute one admitted research batch")
@@ -356,7 +361,8 @@ def main(argv=None):
             return 1
         print(json.dumps({"stopped": args.command == "stop"}))
         return 0
-    if args.command in {"orchestration-prepare", "orchestration-handoff"}:
+    if args.command in {"orchestration-prepare", "orchestration-handoff",
+                        "orchestration-recovery-check"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
                 raise OrchestrationError(
@@ -413,8 +419,11 @@ def main(argv=None):
                         "model_call_authorized": False,
                         "brain_invoked": False,
                     }
-                else:
+                elif args.command == "orchestration-handoff":
                     result = inspect_domain_research_handoff(
+                        runner, args.task_id, effective, policy)
+                else:
+                    result = inspect_task_recovery_preflight(
                         runner, args.task_id, effective, policy)
         except (OSError, ValueError, TypeError, KeyError, WriterLockError) as exc:
             # Avoid exposing raw model/provider configuration or secret values.
