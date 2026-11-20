@@ -108,6 +108,57 @@ class OfflineModelOrchestrationTests(unittest.TestCase):
             self.assertEqual(saved["checkpoints"]["qualify"]["analysis"], "synthetic-only")
             self.assertEqual(set(router.instances), {"offline-lead", "offline-executor"})
 
+    def test_mock_workflow_adapter_wraps_existing_domain_dispatch_once(self):
+        from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
+        calls = []
+
+        class FakeGateway:
+            is_offline_mock = True
+
+        class FakeAgent:
+            model = object()
+
+        def fake_dispatch(command, args, config, root, gateway, agent):
+            calls.append((command, args, config, root))
+            if command == "run-campaign":
+                return {"status": "completed", "completed": [{
+                    "alpha_ids": ["synthetic-alpha"],
+                    "candidate_status": {"synthetic-alpha": "CANDIDATE"},
+                }]}
+            return {
+                "status": "completed",
+                "candidate_id": "synthetic-alpha",
+                "candidate_status": "CANDIDATE",
+                "preferred_status": "NOT_PREFERRED",
+                "candidate_ref": "candidate-record",
+                "preferred_ref": "preferred-record",
+            }
+
+        expected_commands = {
+            "regular": "run-campaign",
+            "super": "run-super",
+            "optimization": "run-optimization",
+        }
+        for workflow, command in expected_commands.items():
+            with self.subTest(workflow=workflow), tempfile.TemporaryDirectory() as td:
+                calls.clear()
+                adapter = MockWorkflowAdapter(
+                    td, {}, FakeGateway(), FakeAgent(), dispatcher=fake_dispatch)
+                runner = MainOrchestrator(td, adapter=adapter)
+                request = {"objective": "mock domain dispatch"}
+                if workflow == "optimization":
+                    request["alpha_id"] = "source-alpha"
+                created = runner.create(workflow, request, budget=1)
+                result = runner.execute(created["task_id"])
+                self.assertEqual(result["status"], "COMPLETED")
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(calls[0][0], command)
+                self.assertEqual(result["checkpoints"]["qualify"]["status"], "completed")
+                self.assertEqual(result["checkpoints"]["collect"]["qualification"],
+                                 result["checkpoints"]["qualify"])
+                self.assertEqual(result["budget"]["used"], 1)
+                self.assertEqual(result["budget"]["reserved"], 0)
+
     def test_missing_execute_fixture_blocks_without_automatic_replay(self):
         with tempfile.TemporaryDirectory() as td:
             adapter = OfflineResearchAdapter({
