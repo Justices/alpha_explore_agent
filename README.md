@@ -10,6 +10,8 @@ blindly reposting it. It has no Alpha submission or property mutation command.
 
 The project's behavior contract is in [`AGENTS.md`](AGENTS.md), and the
 approved research scope is in [`design/RESEARCH_SCOPE.md`](design/RESEARCH_SCOPE.md).
+For the current architecture, implementation status, and design-document index,
+start with [`design/CURRENT_DESIGN.md`](design/CURRENT_DESIGN.md).
 Older files in `design/` are historical design references. The brain-flow
 workflow and scripts are development references only: this agent does not
 import, execute, or require that repository at runtime.
