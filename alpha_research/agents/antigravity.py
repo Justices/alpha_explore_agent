@@ -9,6 +9,8 @@ import json
 import os
 import re
 
+from alpha_research.integrations.model_prompts import instruction_for
+
 
 class AntigravityAdapterError(RuntimeError):
     pass
@@ -101,10 +103,7 @@ class AntigravityModelClient:
             raise AntigravityAdapterError("AGY SDK timeout must be positive")
         prompt = json.dumps({
             "task": task, "context": context,
-            "instruction": (
-                "Return exactly one JSON object. Analyze provided evidence only. "
-                "Never call tools or claim to have performed simulations."
-            ),
+            "instruction": instruction_for(task, forbid_tools=True),
         }, ensure_ascii=False, allow_nan=False)
         self.last_usage = None
         self.last_thread_id = None
