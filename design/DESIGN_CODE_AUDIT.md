@@ -36,7 +36,7 @@
 - `qualify`：提取领域工作流已经生成的资格证据，**不重复执行 CandidateQualificationService**。
 - `collect`：采集资格摘要和只读 Candidate Pool 快照。
 
-已新增 `test_mock_workflow_adapter_wraps_existing_domain_dispatch_once`，验证三类工作流的命令映射、单次 dispatch、资格证据检查点和预算结算。该测试使用 fake dispatcher 与 fake gateway，证明的是控制平面适配合同，不证明真实领域代码或 BRAIN Gateway 已通过端到端验证。
+已有 `tests/test_workflow_adapter.py` 覆盖三类工作流的命令映射、单次 dispatch、资格证据检查点和预算结算；`tests/test_orchestrator.py` 覆盖通用状态机和失败阻断。本轮移除了重复新增的测试，仅保留 `tests/test_offline_model_orchestration.py` 中两个独有的模型角色路由和 Lead → Executor 持久检查点交接用例。所有这些测试都属于离线契约验证，不能代替真实领域代码与 BRAIN Gateway 的端到端验收。
 
 ### 生产 Adapter 的边界（尚未实现）
 
@@ -67,7 +67,7 @@
 
 **本轮新增修复（回归仍待运行）：**
 - `recovery.py` 不再把未经信任的异常消息复制到持久失败日志，改为记录异常类型和固定原因；新增含模拟敏感信息的负例测试。
-- 修正 `tests/test_offline_model_orchestration.py` 中错误的跨工作流资格输出断言：Regular 的投影有 `status`，Super/Optimization 的投影有 `candidate_status`，不能混用。
+- 对新增离线测试做了去重；按工作流区分资格投影结构的断言由既有 `tests/test_workflow_adapter.py` 维护。
 
 **剩余验收门槛：** 需要在项目 Python 环境实际运行 `tests.test_recovery_coordinator`、`tests.test_workflow_adapter`、`tests.test_orchestrator` 和新加的离线编排测试；并以进程终止/重启方式验证跨进程锁、未完成 journal、Intent 与收据持久性。未取得这些结果前，不宣称恢复机制端到端已验证。
 
