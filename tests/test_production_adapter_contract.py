@@ -54,7 +54,7 @@ class ProductionAdapterContractTests(unittest.TestCase):
     def test_qualification_projection_does_not_requalify_or_synthesize_success(self):
         with self.assertRaisesRegex(OrchestrationError, "missing execution checkpoint"):
             project_existing_qualification("super", {})
-        with self.assertRaisesRegex(OrchestrationError, "no completed batch"):
+        with self.assertRaisesRegex(OrchestrationError, "lacks completed records"):
             project_existing_qualification("regular", {"execute": {"completed": []}})
         with self.assertRaisesRegex(OrchestrationError, "unavailable"):
             project_existing_qualification("super", {
