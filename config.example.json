@@ -72,5 +72,10 @@
         "description": "Read-only attribution; simulation handled by the BRAIN gateway"
       }
     }
+  },
+  "model_governance": {
+    "max_calls": 80,
+    "max_reported_tokens": 250000,
+    "failover": "manual"
   }
 }

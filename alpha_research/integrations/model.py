@@ -402,10 +402,14 @@ def _json_bytes(value):
 class DecisionRecorder:
     """Record each model input/output and append a hash-indexed audit line."""
 
-    def __init__(self, model, state_root: Path):
+    def __init__(self, model, state_root: Path, *, governance=None):
         self.model = model
         self.state_root = Path(state_root).resolve()
         self.logs_root = self.state_root / "logs"
+        self.budget = None
+        if governance is not None:
+            from alpha_research.agents.governance import ModelCallLedger
+            self.budget = ModelCallLedger(self.state_root, governance)
         self.global_calls_root = self.logs_root / "model_calls"
         self.log_path = self.logs_root / "model_log.jsonl"
         self.session_id = None
@@ -602,6 +606,11 @@ class DecisionRecorder:
         replay = self._replay_batch_call(task, context_sha, route_sha)
         if replay is not None:
             return replay
+        if self.budget is not None:
+            self.budget.reserve(
+                self.research_id, call_id, task=task,
+                role=selected_role, backend=selected_backend,
+            )
         global_context = self.global_calls_root / f"{call_id}.context.json"
         global_response = self.global_calls_root / f"{call_id}.response.json"
         global_record = self.global_calls_root / f"{call_id}.record.json"
@@ -672,6 +681,11 @@ class DecisionRecorder:
         self.session_calls.append((record, global_context, global_response, global_record))
         if self.batch_dir is not None:
             self.bind_batch(self.batch_dir)
+        if self.budget is not None:
+            self.budget.settle(
+                self.research_id, call_id, success=(error is None),
+                token_in=token_in, token_out=token_out,
+            )
         if error is not None:
             write_progress(f"模型调用失败 · {task_label}")
             raise error

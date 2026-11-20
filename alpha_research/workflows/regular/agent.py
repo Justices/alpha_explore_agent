@@ -182,7 +182,9 @@ class ResearchAgent:
         self.stop_flag = (stop_flag if isinstance(stop_flag, StopSignals)
                           else Path(stop_flag) if stop_flag else None)
         self.knowledge = KnowledgeService(self.state_root, self.runs_root, config)
-        self.recorder = DecisionRecorder(model, self.state_root)
+        self.recorder = DecisionRecorder(
+            model, self.state_root, governance=config.get("model_governance")
+        )
         self.campaigns = CampaignStore(self.state_root)
         cache_path = self.runs_root / "backtest_cache.cache"
         cache_missing = not cache_path.exists()
