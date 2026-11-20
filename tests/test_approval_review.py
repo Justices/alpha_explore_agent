@@ -192,6 +192,28 @@ class ApprovalReviewTests(unittest.TestCase):
                     self.runner, receipt, model_profile_sha256=self.model_hash,
                     environ=self.env, now=self.now)
 
+    def test_review_inspector_distinguishes_complete_and_incomplete_projections(self):
+        from alpha_research.orchestration.approval_review import inspect_review_reservation
+
+        self.assertEqual(
+            inspect_review_reservation(self.runner, self.task["task_id"])["status"],
+            "NOT_RESERVED")
+        reserve_review_receipt(
+            self.runner, self.signed(), model_profile_sha256=self.model_hash,
+            environ=self.env, now=self.now)
+        self.assertEqual(
+            inspect_review_reservation(self.runner, self.task["task_id"])["status"],
+            "RESERVED_REVIEW_ONLY")
+        root = Path(self.temp.name) / "state" / "research_v1_1" / "approval_reviews"
+        (root / ("1" * 32 + ".json")).unlink()
+        state = inspect_review_reservation(self.runner, self.task["task_id"])
+        self.assertEqual(state["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(state["simulation_authorized"])
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            reserve_review_receipt(
+                self.runner, self.signed(approval_id="2"*32),
+                model_profile_sha256=self.model_hash, environ=self.env, now=self.now)
+
     def test_independent_tasks_have_separate_review_reservations(self):
         other_task = self.runner.create(
             "regular", {"objective": "different offline task", "region": "CHN"})
