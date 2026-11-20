@@ -28,7 +28,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `integrations/model_metadata.py` | Context-scoped `last_usage`, model name, raw response and thread binding for direct HTTP/SDK clients and role routers |
 | `integrations/model_errors.py` | Canonical ModelError shared by adapters, journal and replay |
 | `integrations/model_journal.py` | Owns durable call paths, intent/terminal writes, append-only events and batch-manifest/session-index transactions |
-| `integrations/model_sessions.py` | Validates and merges session index membership across batches, including research ownership and legacy index migration |
+| `integrations/model_sessions.py` | Enforces only the canonical version-2 session index with research ownership and exact per-batch call membership |
 | `integrations/model_replay.py` | Validated batch response replay, route/audit identity checks, corruption and unknown-outcome rejection |
 | `agents/backend_validation.py` | Provider families, backend safety admission and transport-specific privileges; never invokes providers |
 | `agents/configuration.py` | Strict role/task binding and defensively copied route snapshots; delegates backend policy |
@@ -73,6 +73,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   MainOrchestrator state machine and offline adapter
 - `tests/test_model_governance.py`, `tests/test_sealed_state.py`:
   persistent model budgets, crash intent and corruption handling
+- `tests/test_model_budget_concurrency.py`:
+  cross-process budget transaction locks, concurrent reservations, idempotent
+  verified settlement, bounded contention and atomic write crash gaps
 - `tests/test_model_prompt_boundaries.py`:
   prompt consistency, SDK mock-only parity and malformed routing inputs
 - `tests/test_model_journal_replay.py`:
@@ -84,8 +87,8 @@ no implicit fallback or repost of an unknown Simulation is permitted.
 - `tests/test_agent_runtime_boundaries.py`:
   deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
 - `tests/test_model_session_index.py`:
-  cross-batch session membership, historical ownership filtering,
-  concurrent index merges, legacy audit-verification, corrupt references and
+  strict v2 contract, cross-batch membership, unbound-call ownership,
+  concurrent index merges, invalid-version rejection, corrupt references and
   manifest-to-index crash-gap repair
 - `tests/test_model_cross_instance.py`:
   shared-batch deduplication, research/batch lock contention, independent
@@ -108,13 +111,13 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - Before contacting any configured Provider, DecisionRecorder reserves the attempt (when governance is enabled), persists the input and an in-flight audit record, then creates the batch manifest.
 - `ModelCallJournal` owns only local durable metadata and never receives provider credentials or permission to use BRAIN.
 - `model_replay` accepts only previously recorded successful JSON decisions bound to the task, context digest and exact role/backend route digest. Invalid manifests and missing or tampered responses must block rather than trigger automatic real-provider retries.
-- The persisted file names, manifest structure and event status vocabulary remain unchanged by this refactor; a separate versioned migration would be necessary to modify persisted semantics.
+- Model-call and budget-ledger durable protocols retain their current schema. Session indices use only the canonical v2 schema; older session-index layouts are rejected, not migrated.
 - The model budget ledger remains the authority for call reservations and settlements; a crash during a real provider call is not classified as a safely retriable failure.
 - `DecisionRecorder` owns the execution order, task route and call budget coordination. `ModelCallJournal` exclusively owns its per-session call history and persistence paths; starting a new session clears only the in-memory history, never audit files.
-- When a batch contains a persisted response, `model_replay` first checks the task/context digest, exact route, audit identity, response checksum, status, and reported usage. If governance is enabled, it additionally pins the research ID. Only then does it reconcile the original budget attempt by call ID without creating a new reservation.
+- When a batch contains a persisted response, `model_replay` first checks the task/context digest, exact route, research identity, audit identity, response checksum, status, and reported usage. If governance is enabled, it additionally reconciles the original budget attempt by call ID without creating a new reservation.
 - `ModelCallLedger.reconcile_verified_response` is a locked, idempotent transition: `IN_FLIGHT -> OK/ERROR`; an already matching terminal state stays unchanged, while `UNKNOWN`, a changed backend or mismatched token usage blocks. The UNKNOWN operator acknowledgement cannot be undone by replay.
 - A successfully verified response may be returned without a second provider request. A persisted real-provider error is accounted for but still blocks automatic retry. Missing/malformed audit or response evidence, or a call without a durable bound batch, cannot trigger automatic reconciliation and remains operator-blocked.
-- The model-call file schema, ledger schema version and recorded route digest structure remain unchanged; changes to these require a dedicated migration and crash-gap fixtures.
+- The model-call audit, ledger and route digest contracts retain their strict integrity checks. No automatic conversion or legacy fallback is provided.
 
 
 ## Routing and recovery trust boundaries
@@ -222,33 +225,46 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   local to the configured state directory and shared batch; distributed
   filesystems and multi-host lock semantics are not asserted.
 
-## Multi-batch session index consistency
+## Current-only multi-batch Session contract
 
-- `model_sessions/<session_id>.json` retains historical `session_id`,
-  `batch_ref` and `call_ids` fields. `batch_ref` now points to the
-  **first associated batch**, and `call_ids` is the deduplicated union across
-  all associated batches. The additive `batches` list records each batch's
-  exact call IDs, and `research_id` binds one Session to one research.
-- The session index uses an OS lock keyed by `session_id`. The lock order is
-  **batch manifest -> session index**, held only during local evidence/manifest
-  and index synchronization, never while requesting a model. A bounded wait
-  serializes index writes from distinct batches of the same Session.
-- Calls already attributed to batch A are never silently copied into batch B
-  merely because the recorder was rebound. Historical calls made **before any
-  batch binding** retain their ability to be attached later to a batch.
-  Calling `bind_batch` before `begin_session` now initializes the Session
-  first, rather than silently dropping its batch binding on the first call.
-- Batch manifests are published before their corresponding session index.
-  A crash between those two atomic writes leaves the existing index intact;
-  rebinding that batch recomputes its membership from the durable manifest
-  without provider invocation. A corrupt index or unauditable legacy
-  research identity blocks instead of being overwritten.
-- Existing three-field indices are migrated on access; their previous
-  batch membership is preserved, and the ownership of recorded call IDs is
-  checked against their global audit records before adding `research_id`.
-  Earlier overwritten, undiscoverable batch relations **cannot** be inferred
-  from a legacy index alone; rebind the original batch to repair its entry.
-- User-supplied `session_id` values must be 32-character lowercase hex IDs.
-  This prevents session-index path traversal or ambiguous filename aliases.
-  Older persisted model-call, batch-manifest and budget-ledger formats are
-  unchanged. The Session index receives additive fields only.
+- `model_sessions/<session_id>.json` is **v2 only** with exactly
+  `schema_version=2`, `session_id`, `research_id`, `call_ids` and
+  `batches`. Each `batches[]` item contains `batch_ref` and its
+  `call_ids`. The top-level `call_ids` is the deduplicated union.
+  The redundant top-level primary `batch_ref` was deleted.
+- Earlier three-field Session index layouts, absent research identity and
+  unsupported schema versions are rejected immediately. No migration,
+  implicit upgrade, invented history or destructive rewrite is performed.
+  Operators must use a freshly initialized research state for this contract;
+  old stored data is **not** deleted by the application.
+- The Session index uses a filesystem lock keyed by `session_id`.
+  The order is batch manifest lock -> Session index lock, held only for
+  filesystem transactions and never across an external model invocation.
+- Calls made before the first batch binding may be associated with one
+  batch. Once attached, they cannot be copied again into another batch.
+  Existing batch-owned calls are never transferred on a later rebind.
+- Batch manifests are published before Session index updates. If an index
+  write fails, rebind from an intact current-version index/manifest may
+  repair the missing membership without requesting a model. Invalid v2
+  content fails closed rather than being replaced with guessed records.
+- User-supplied Session IDs and referenced call IDs must be lowercase
+  32-character hex identifiers. Session IDs are bound to exactly one
+  research ID. The model-call audit, replay and budget integrity policies
+  are separate and continue to reject unknown outcomes.
+
+## Model budget concurrency
+
+- `ModelCallLedger` alone owns `reserve`, `settle`,
+  `reconcile_verified_response`, `acknowledge_unknown` and `status`.
+  All five perform read/validate/update under a per-research OS file lock.
+- These short local transactions use bounded lock acquisition (up to two
+  seconds) to tolerate overlapping writers. Contention does **not** cause
+  another model invocation, retry a failed provider or allow a second
+  `IN_FLIGHT` reservation; a persisted unresolved or UNKNOWN attempt
+  remains blocking.
+- The ledger uses atomic sealed writes. A hard interruption before the
+  state replacement preserves the last valid attempt list. Verified
+  duplicate reconciliation is idempotent; an ordinary duplicate settlement
+  is rejected. Different research IDs use distinct lock files.
+- All guarantees are for processes using the same local filesystem lock
+  semantics, not multi-host distributed locking.
