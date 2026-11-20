@@ -55,8 +55,7 @@ class RoleRoutedModelClient:
             return MockModelClient(binding.backend)
         if provider == "antigravity_sdk":
             return AntigravityModelClient(binding.backend, environ=self.environ)
-        # Late import avoids a circular dependency with the legacy-compatible
-        # ConfiguredModelClient and keeps the older provider contracts intact.
+        # Lazy import avoids a circular dependency with the provider adapters.
         from alpha_research.integrations.model import ConfiguredModelClient
         return ConfiguredModelClient(binding.backend, environ=self.environ)
 

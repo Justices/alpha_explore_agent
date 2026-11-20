@@ -3,7 +3,7 @@
 > start-time model selection is now registry-backed: --lead and --executor.
 > Old embedded model backend examples are no longer the supported user workflow.
 
-# Codex Research Lead / AGY Executor — Configurable Runtime P0
+# Configurable Agent / LLM Runtime — Offline Contract
 
 Status: feature-branch implementation; not live BRAIN research authorization.
 
@@ -14,14 +14,15 @@ CandidateQualificationService or simulation recovery policies.
 ## Boundary and adapters
 
 A research task maps to a logical role; a role maps to a backend.
-The RoleRoutedModelClient preserves the complete_json(task, context)
-interface and the previous build_model_client factory. Legacy model router
-configurations remain supported.
+RoleRoutedModelClient provides the complete_json(task, context) contract.
+Only the role_router startup configuration is supported; the former
+router/routes backend selection has been removed.
 
-- research_lead: Codex CLI, read-only research planning and reflection.
-- research_executor: official Antigravity SDK with a Gemini developer API key,
-  prepares an authorized experiment execution order and attributes returned
-  results. It has no direct BRAIN credentials or tools in P0.
+- research_lead: any registered Agent runtime or LLM API, responsible for
+  economic hypotheses, planning and reflection.
+- research_executor: any registered Agent runtime or LLM API, responsible
+  for evidence attribution and experiment preparation. The model has no
+  direct BRAIN credentials or live Simulation tools.
 - mock: deterministic fixture-backed model for offline cycle tests.
 - OfflineSimulationGateway: synthetic results only; never calls BRAIN.
 - Existing production BRAIN Gateway: remains outside P0.
@@ -41,11 +42,11 @@ MCP servers or skills, and denies all other tool calls. That is separate
 from BRAIN's existing simulation-intent, authorization and recovery gates.
 
 The orchestrator validates the execution plan against the complete list of
-Codex-authorized experiment IDs before invoking the offline gateway. Any
+Research Lead-authorized experiment IDs before invoking the offline gateway. Any
 unknown or missing ID blocks all execution.
 
-The former agy_cli integration has been removed,
-but is intentionally rejected inside new unattended role-router definitions.
+The former agy_cli integration has been removed; unsupported providers
+are rejected at validation.
 No consumer Google account is silently scripted as a model backend.
 
 To install the optional official SDK dependency:
@@ -72,7 +73,7 @@ may determine an actual Candidate after complete authoritative evidence.
 ## Required verification before production enablement
 
 1. Static compilation and tests/test_configurable_agents.py.
-2. Legacy model client, recorder and model CLI tests.
+2. Model adapters, recorder and CLI contract tests.
 3. Full existing offline orchestration and research workflow tests.
 4. A separate manually authorized AGY SDK smoke test with a developer API key.
 5. A separate authorized Codex CLI read-only smoke test.
