@@ -1,7 +1,10 @@
 """Offline contract tests; no provider SDK or BRAIN service is called."""
 import json
+import sys
 import tempfile
 import unittest
+from subprocess import CompletedProcess
+from unittest.mock import patch
 from pathlib import Path
 
 from alpha_research.agents.antigravity import (
@@ -86,6 +89,92 @@ class TestConfigurableAgents(unittest.TestCase):
             row = json.loads(records[0].read_text(encoding="utf-8"))
             self.assertEqual(row["agent_role"], "research_executor")
             self.assertEqual(row["provider"], "mock")
+
+    def test_cli_config_rejects_silent_privilege_expansion(self):
+        cfg = config()
+        cfg["backends"]["codex_mock"] = {
+            "provider": "codex_cli", "sandbox": "workspace-write"
+        }
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg["backends"]["codex_mock"]["sandbox"] = "read-only"
+        cfg["backends"]["codex_mock"]["session"] = "unsupported"
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg["backends"]["codex_mock"]["session"] = "ephemeral"
+        cfg["backends"]["codex_mock"]["extra_args"] = ["dangerous"]
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+
+    def test_unsafe_agy_skills_and_inline_secrets_are_rejected(self):
+        cfg = config()
+        cfg["backends"]["agy_mock"] = {
+            "provider": "antigravity_sdk", "api_key_env": "GEMINI_API_KEY",
+            "skills_paths": ["/external/skills"],
+        }
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+        cfg = config()
+        cfg["backends"]["codex_mock"]["api_key"] = "plaintext-secret"
+        with self.assertRaises(AgentConfigError):
+            build_model_client(cfg)
+
+    def test_codex_ephemeral_session_does_not_create_thread_binding(self):
+        cfg = config()
+        cfg["backends"]["codex_mock"] = {
+            "provider": "codex_cli", "sandbox": "read-only",
+            "session": "ephemeral",
+        }
+        stdout = "\n".join(json.dumps(x) for x in [
+            {"type": "item.completed",
+             "item": {"type": "agent_message", "text": '{"ok":true}'}},
+            {"type": "turn.completed", "usage": {"input_tokens": 1}},
+        ])
+        with tempfile.TemporaryDirectory() as root, \
+             patch("shutil.which", return_value=sys.executable), \
+             patch("subprocess.run", return_value=CompletedProcess([], 0, stdout, "")) as run:
+            recorder = DecisionRecorder(build_model_client(cfg), Path(root))
+            recorder.begin_session(research_id="R1")
+            self.assertEqual(recorder.complete_json("plan_experiments", {}), {"ok": True})
+            self.assertIn("--ephemeral", run.call_args.args[0])
+            self.assertFalse((Path(root) / "codex_threads").exists())
+
+    def test_codex_research_roles_have_isolated_threads(self):
+        cfg = config()
+        cfg["backends"]["codex_mock"] = {
+            "provider": "codex_cli", "sandbox": "read-only",
+            "session": "research",
+        }
+        cfg["roles"]["research_executor"]["backend"] = "codex_mock"
+        threads = iter([
+            "00000000-0000-4000-8000-000000000001",
+            "00000000-0000-4000-8000-000000000002",
+        ])
+        commands = []
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            events = [
+                {"type": "thread.started", "thread_id": next(threads)},
+                {"type": "item.completed", "item": {
+                    "type": "agent_message", "text": '{"ok":true}'}},
+                {"type": "turn.completed", "usage": {"input_tokens": 1}},
+            ]
+            return CompletedProcess(command, 0, "\n".join(map(json.dumps, events)), "")
+        with tempfile.TemporaryDirectory() as root, \
+             patch("shutil.which", return_value=sys.executable), \
+             patch("subprocess.run", side_effect=fake_run):
+            recorder = DecisionRecorder(build_model_client(cfg), Path(root))
+            recorder.begin_session(research_id="R1")
+            self.assertEqual(recorder.complete_json("plan_experiments", {}), {"ok": True})
+            self.assertEqual(recorder.complete_json("attribute_results", {}), {"ok": True})
+            bindings = list((Path(root) / "codex_threads").glob("*/thread.json"))
+            self.assertEqual(len(bindings), 2)
+            self.assertEqual(
+                {json.loads(p.read_text(encoding="utf-8"))["thread_id"] for p in bindings},
+                {"00000000-0000-4000-8000-000000000001",
+                 "00000000-0000-4000-8000-000000000002"})
+            self.assertEqual(len(commands), 2)
+            self.assertNotIn("resume", commands[1])
 
     def test_batch_replay_is_bound_to_exact_role_and_backend(self):
         with tempfile.TemporaryDirectory() as td:
