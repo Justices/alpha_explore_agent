@@ -12,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from alpha_research import cli as entry
+from alpha_research.preflight import local_preflight
 from workbench.runtime_models import (
     checked_selection, listed_models, registry_path, research_config_path,
 )
@@ -188,6 +189,21 @@ class P0PreflightTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(json.loads(output.getvalue())["brain_credentials"],
                          "BLOCKED")
+
+    def test_workbench_and_cli_preflight_share_the_same_role_profile_digest(self):
+        environment = {"ZAI_API_KEY": "offline-key", "MOONSHOT_API_KEY": "offline-key"}
+        with patch.dict(os.environ, environment):
+            workbench = checked_selection(
+                {"lead": "glm", "executor": "kimi"}, self.arguments, self.root)
+        cli_report = local_preflight(
+            self.cfg, registry_path(self.arguments, self.root),
+            lead="glm", executor="kimi", region="CHN",
+            environment=environment)
+        self.assertEqual(workbench["profile_sha256"],
+                         cli_report["profile_sha256"])
+        self.assertEqual(cli_report["models"], "READY_LOCAL")
+        self.assertFalse(cli_report["model_invoked"])
+        self.assertFalse(cli_report["brain_invoked"])
 
     def test_mock_model_registration_cannot_start_real_brain_research(self):
         registry = json.loads(
