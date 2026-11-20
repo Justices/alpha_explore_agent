@@ -325,5 +325,30 @@ class TestConfiguredModelClient(unittest.TestCase):
                                       .glob("*.record.json"))), 1)
 
 
+    def test_real_provider_timeout_does_not_implicitly_retry_on_recovery(self):
+        with tempfile.TemporaryDirectory() as root:
+            batch = Path(root) / "batch"
+            calls = []
+            def uncertain(*args):
+                calls.append("POSTED")
+                raise TimeoutError("response lost after model provider POST")
+            provider = ConfiguredModelClient({
+                "provider": "openai_compatible",
+                "url": "https://model.example/v1/chat/completions",
+                "model": "remote-model", "api_key_env": "RESEARCH_KEY",
+            }, transport=uncertain, environ={"RESEARCH_KEY": "fixture"})
+            before = DecisionRecorder(provider, Path(root))
+            before.begin_session(research_id="remote:R1")
+            before.bind_batch(batch)
+            with self.assertRaises(TimeoutError):
+                before.complete_json("attribute_results", {"batch": 1})
+            resumed = DecisionRecorder(provider, Path(root))
+            resumed.begin_session(research_id="remote:R1")
+            resumed.bind_batch(batch)
+            with self.assertRaisesRegex(ModelError, "explicit state reconciliation"):
+                resumed.complete_json("attribute_results", {"batch": 1})
+            self.assertEqual(calls, ["POSTED"])
+
+
 if __name__ == "__main__":
     unittest.main()
