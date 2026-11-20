@@ -295,6 +295,14 @@ class ModelCallLedger:
             "research_id": research_id,
             "policy": dict(self.policy),
             **summary,
+            # Operator acknowledgement requires the exact durable call ID.
+            # Expose IDs, not input prompts, credentials or provider output.
+            "unresolved_call_ids": sorted(
+                row["call_id"] for row in state["calls"]
+                if row["status"] == "IN_FLIGHT"),
+            "unknown_call_ids": sorted(
+                row["call_id"] for row in state["calls"]
+                if row["status"] == "UNKNOWN"),
             "blocked": bool(
                 summary["unresolved"] or summary["unknown"] or
                 summary["attempts"] >= self.policy["max_calls"] or
