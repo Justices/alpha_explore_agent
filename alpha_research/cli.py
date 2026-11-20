@@ -555,18 +555,29 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        cfg["model"] = load_role_profile(cfg)
-        if registry_assignments:
-            catalog = load_registry(registry_path)
-            cfg["model"] = select_registered_backends(
-                cfg["model"], catalog, assignments=registry_assignments)
-        elif cfg["model"].get("provider") == "role_router":
-            raise ModelRegistryError(
-                "select registered roles with --lead <id> --executor <id>")
-        model = (None if args.command in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
-                                          "sync-backtest-cache", "tag-alpha"}
-                 or (args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular")
-                 else build_model_client(cfg["model"]))
+        if not isinstance(cfg, dict):
+            raise ValueError("research config must be a JSON object")
+        # Planning, platform evidence and non-Regular recovery never invoke
+        # an Agent or model. Do not require paid-model credentials, local
+        # CLIs, role selections or registry availability for these commands.
+        model_free = (
+            args.command in {"plan-regular", "plan-optimization", "plan-super",
+                             "recover-research", "sync-backtest-cache", "tag-alpha"}
+            or (args.command in {"recover-workflow", "recover-task"}
+                and args.workflow != "regular")
+        )
+        if model_free:
+            model = None
+        else:
+            cfg["model"] = load_role_profile(cfg)
+            if registry_assignments:
+                catalog = load_registry(registry_path)
+                cfg["model"] = select_registered_backends(
+                    cfg["model"], catalog, assignments=registry_assignments)
+            elif cfg["model"].get("provider") == "role_router":
+                raise ModelRegistryError(
+                    "select registered roles with --lead <id> --executor <id>")
+            model = build_model_client(cfg["model"])
     except (OSError, ValueError, KeyError, TypeError, ModelError) as exc:
         write_progress("无法加载研究配置或模型配置")
         print(f"configuration unavailable: {exc}", file=sys.stderr)
