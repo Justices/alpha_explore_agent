@@ -437,6 +437,7 @@ class DecisionRecorder:
                 "call_id": record["call_id"], "task": record["task"],
                 "session_id": record.get("session_id"),
                 "context_sha256": record["context_sha256"],
+                "route_sha256": record.get("route_sha256"),
                 "context_ref": str(copied_context),
                 "response_ref": str(copied_response),
                 "global_response_ref": str(response_path),
@@ -503,6 +504,7 @@ class DecisionRecorder:
             "call_id": record["call_id"], "task": record["task"],
             "session_id": record["session_id"],
             "context_sha256": record["context_sha256"],
+                "route_sha256": record.get("route_sha256"),
             "context_ref": str(copied_context), "response_ref": str(copied_response),
             "global_response_ref": str(response_path),
             "record_ref": str(copied_record), "global_record_ref": str(record_path)}
@@ -511,7 +513,7 @@ class DecisionRecorder:
                                    if row.get("session_id")}),
             "calls": sorted(entries.values(), key=lambda row: row["call_id"])})
 
-    def _replay_batch_call(self, task, context_sha):
+    def _replay_batch_call(self, task, context_sha, route_sha=None):
         if self.batch_dir is None:
             return None
         manifest_path = self.batch_dir / "model_call_manifest.json"
@@ -522,6 +524,10 @@ class DecisionRecorder:
         for row in manifest.get("calls", []):
             if row.get("task") != task or row.get("context_sha256") != context_sha:
                 continue
+            if row.get("route_sha256") != route_sha:
+                raise ModelError(
+                    "recorded model role/backend differs from current configuration; "
+                    "an explicit research migration is required")
             response_path = Path(row.get("response_ref", ""))
             if not response_path.exists() and row.get("global_response_ref"):
                 response_path = Path(row["global_response_ref"])
@@ -534,6 +540,12 @@ class DecisionRecorder:
                 record = json.loads(record_path.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 record = None
+            if route_sha is not None and not isinstance(record, dict):
+                raise ModelError("recorded agent decision is missing its audit record")
+            response_sha = hashlib.sha256(_json_bytes(payload)).hexdigest()
+            if isinstance(record, dict) and record.get("response_sha256"):
+                if record["response_sha256"] != response_sha:
+                    raise ModelError("recorded model response checksum mismatch")
             if payload.get("status") in {"ok", "error"} and isinstance(record, dict) and record.get("status") == "in_flight":
                 record["status"] = payload["status"]
                 record["response_sha256"] = hashlib.sha256(_json_bytes(payload)).hexdigest()
@@ -563,18 +575,26 @@ class DecisionRecorder:
         call_id = uuid4().hex
         context_bytes = _json_bytes(context)
         context_sha = hashlib.sha256(context_bytes).hexdigest()
-        replay = self._replay_batch_call(task, context_sha)
+        config_for = getattr(self.model, "config_for", None)
+        config = (config_for(task) if callable(config_for)
+                  else getattr(self.model, "config", {})) or {}
+        role_for = getattr(self.model, "role_for", None)
+        selected_role = role_for(task) if callable(role_for) else None
+        route_sha = None
+        if selected_role is not None:
+            identity = {
+                "task": task, "role": selected_role, "backend": config,
+                "instruction": TASK_INSTRUCTIONS.get(task, "Return one JSON object only."),
+                "knowledge_policy": KNOWLEDGE_POLICY,
+            }
+            route_sha = hashlib.sha256(_json_bytes(identity)).hexdigest()
+        replay = self._replay_batch_call(task, context_sha, route_sha)
         if replay is not None:
             return replay
         global_context = self.global_calls_root / f"{call_id}.context.json"
         global_response = self.global_calls_root / f"{call_id}.response.json"
         global_record = self.global_calls_root / f"{call_id}.record.json"
         atomic_write_json(global_context, context)
-        config_for = getattr(self.model, "config_for", None)
-        config = (config_for(task) if callable(config_for)
-                  else getattr(self.model, "config", {})) or {}
-        role_for = getattr(self.model, "role_for", None)
-        selected_role = role_for(task) if callable(role_for) else None
         record = {"ts": datetime.now().astimezone().isoformat(),
                   "call_id": call_id, "session_id": self.session_id,
                   "research_id": self.research_id,
@@ -586,7 +606,8 @@ class DecisionRecorder:
                   "response_sha256": None, "response_ref": str(global_response),
                   "token_in": None, "token_out": None, "latency_ms": None,
                   "provider": config.get("provider"), "model": config.get("model"),
-                  "agent_role": selected_role, "status": "in_flight"}
+                  "agent_role": selected_role, "route_sha256": route_sha,
+                  "status": "in_flight"}
         atomic_write_json(global_record, record)
         self._register_batch_call(record, global_context, global_response, global_record)
         self._write_log_record(record)
