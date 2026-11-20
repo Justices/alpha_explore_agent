@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
-from alpha_research.integrations.model_evidence import check_trusted_path
+from alpha_research.integrations.model_evidence import check_trusted_path, trusted_replay_paths
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
@@ -196,6 +196,11 @@ class ModelCallJournal:
                 or not row["call_id"] for row in rows)
                 or len({row["call_id"] for row in rows}) != len(rows)):
             raise ModelError("batch model call manifest has invalid call entries")
+        # Existing rows may be from another task or Session. Do not let
+        # malformed references pass through a rebind and poison the Session
+        # index even when the current task does not match that old row.
+        for row in rows:
+            trusted_replay_paths(batch_dir, self.calls_root, row)
         entries = {row["call_id"]: row for row in rows}
         changed = not manifest_path.exists()
         for record, context_path, response_path, record_path in calls:
