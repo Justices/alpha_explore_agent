@@ -68,6 +68,13 @@ class ModelTransportBoundaryTests(unittest.TestCase):
             cli.assert_not_called()
             http.assert_not_called()
 
+    def test_malformed_provider_type_is_a_model_error(self):
+        for bad in ([], {}, None, 42):
+            with self.subTest(provider=bad):
+                client = ConfiguredModelClient({"provider": bad}, environ={})
+                with self.assertRaisesRegex(ModelError, "model provider"):
+                    client.complete_json("sample", {})
+
     def test_shared_decoder_rejects_multiple_json_blocks(self):
         text = "first ```json\n{\"a\":1}\n``` second ```json\n{\"b\":2}\n```"
         with self.assertRaises(ValueError):
