@@ -114,5 +114,7 @@ def inspect_execution_proposal(orchestrator, task_id):
                 or record.get("proposal_sha256") != fingerprint_json(expected)):
             raise OrchestrationError("execution proposal identity or fingerprint mismatch")
         return record
+    except OrchestrationError:
+        raise
     except (OSError, ValueError, TypeError) as exc:
         raise OrchestrationError("execution proposal is missing or invalid") from exc
