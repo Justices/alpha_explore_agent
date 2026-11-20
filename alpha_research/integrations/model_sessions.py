@@ -21,7 +21,8 @@ def index_path(logs_root, session_id):
 
 def _ids(items):
     if (not isinstance(items, list)
-            or any(not isinstance(item, str) or not item for item in items)
+            or any(not isinstance(item, str)
+                   or _SESSION_ID.fullmatch(item) is None for item in items)
             or len(set(items)) != len(items)):
         raise ModelError("model session index has invalid call IDs")
     return sorted(items)
