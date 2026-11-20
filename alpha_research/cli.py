@@ -48,8 +48,11 @@ def main(argv=None):
                         help="registered backend ID for research_executor")
     sub = parser.add_subparsers(dest="command", required=True)
     models = sub.add_parser("models", help="list or inspect model/agent registrations offline")
-    models.add_argument("models_action", choices=("list", "inspect", "doctor", "budget"))
-    models.add_argument("--research-id", help="required for models budget")
+    models.add_argument("models_action", choices=(
+        "list", "inspect", "doctor", "budget", "acknowledge-unknown"))
+    models.add_argument("--research-id", help="research ID for budget/acknowledgement")
+    models.add_argument("--call-id", help="unresolved model call ID to acknowledge")
+    models.add_argument("--reason", help="human explanation for unknown outcome")
     orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
     orchestrate.add_argument("--workflow", choices=("regular", "super", "optimization"))
     orchestrate.add_argument("--objective")
@@ -211,18 +214,23 @@ def main(argv=None):
     }
     if args.command == "models":
         try:
-            if args.models_action == "budget":
+            if args.models_action in {"budget", "acknowledge-unknown"}:
                 if not args.research_id:
-                    raise ModelBudgetError("models budget requires --research-id")
+                    raise ModelBudgetError("model budget action requires --research-id")
                 config_path = args.config or root / "config" / "nastu_quant.json"
                 config = json.loads(config_path.read_text(encoding="utf-8"))
                 if (not isinstance(config, dict)
                         or not isinstance(config.get("model_governance"), dict)):
                     raise ModelBudgetError(
                         "models budget requires a config with model_governance")
-                result = ModelCallLedger(
-                    root / "state", config["model_governance"]
-                ).status(args.research_id)
+                ledger = ModelCallLedger(root / "state", config["model_governance"])
+                if args.models_action == "acknowledge-unknown":
+                    if not args.call_id or not args.reason:
+                        raise ModelBudgetError(
+                            "acknowledge-unknown requires --call-id and --reason")
+                    ledger.acknowledge_unknown(
+                        args.research_id, args.call_id, reason=args.reason)
+                result = ledger.status(args.research_id)
             else:
                 registered = load_registry(registry_path)
                 if args.models_action == "list":
