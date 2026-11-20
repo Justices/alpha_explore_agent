@@ -6,6 +6,7 @@ ordering are deliberately preserved for recovery and forensic continuity.
 import json
 import os
 import shutil
+import time
 import hashlib
 from pathlib import Path
 
@@ -78,11 +79,22 @@ class ModelCallJournal:
         """
         self.logs_root.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n"
-        with SingleWriterLock(self.logs_root / "model_log.lock"):
-            with self.log_path.open("a", encoding="utf-8", newline="\n") as handle:
-                handle.write(line)
-                handle.flush()
-                os.fsync(handle.fileno())
+        # Different studies can reach this short append-only critical
+        # section concurrently. Wait *only* for this local audit file lock;
+        # never retry a provider invocation or a batch/research intent.
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                with SingleWriterLock(self.logs_root / "model_log.lock"):
+                    with self.log_path.open("a", encoding="utf-8", newline="\n") as handle:
+                        handle.write(line)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                return
+            except WriterLockError as exc:
+                if time.monotonic() >= deadline:
+                    raise ModelError("model audit event writer remained busy") from exc
+                time.sleep(0.01)
 
     def sync_batch_calls(self, calls, *, batch_dir, session_id):
         """Atomically merge session entries into the shared batch manifest."""
