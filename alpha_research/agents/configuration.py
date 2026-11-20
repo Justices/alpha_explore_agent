@@ -57,4 +57,6 @@ class RoleRoutingConfig:
             raise AgentConfigError("model task must be a nonempty string")
         role = self.task_roles.get(task, self.default_role)
         name = self.roles[role]["backend"]
-        return RoleBinding(role, name, dict(self.backends[name]))
+        # Do not leak nested registry data through a mutable route binding.
+        # In particular, mock response fixtures must not be caller-mutable.
+        return RoleBinding(role, name, copy.deepcopy(self.backends[name]))
