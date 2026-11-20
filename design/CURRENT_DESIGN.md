@@ -35,7 +35,7 @@ CLI / Workbench (入口和装配，不决定研究结论)
 - 工作流拥有 Scope 决策和研究步骤；统一调度器负责阶段检查点和恢复协调，不能越权调用 BRAIN。
 - BRAIN Gateway 负责平台会话、事实读取与被授权操作；模型 Provider 不拥有 BRAIN 工具和 Simulation 提交权限。
 - 验证、Candidate/Preferred、相关性规则属于可审计的确定性逻辑；模型只能提出假设、构造、解释与建议。
-- `MainOrchestrator` 当前默认拒绝真实执行；现有直接 CLI 工作流与统一任务编排是不同的执行入口，不能将离线编排测试当成真实 BRAIN 集成通过。
+- `MainOrchestrator` 当前默认拒绝真实执行；另有独立的 `ProductionWorkflowAdapter` 安全骨架在 `validate` 阶段即拒绝未授权执行，不会预留执行预算。生产 Dispatch 仍未接入统一入口，不能将离线编排测试当成真实 BRAIN 集成通过。
 - 统一调度和已有领域流程保留各自检查点/恢复语义，禁止因结构整合而自动重放结果未知的请求。
 
 模块级边界详见 [架构](RESEARCH_ARCHITECTURE_V1_1.md)；并发、锁、日志与恢复的细节详见 [重构边界](RESEARCH_REFACTOR_BOUNDARIES.md)。
