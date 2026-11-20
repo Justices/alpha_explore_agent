@@ -93,7 +93,22 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertIn("HttpOnly", header)
                 self.assertNotIn(credentials["password"], header)
                 cookie = header.split(";", 1)[0]
+                with closing(http.client.HTTPConnection(
+                        "127.0.0.1", port, timeout=5)) as connection:
+                    connection.request("GET", "/api/models")
+                    response = connection.getresponse()
+                    models = json.loads(response.read())
+                    self.assertEqual(response.status, 200)
+                    self.assertIn("glm", {row["id"] for row in models["entries"]})
+                    self.assertFalse(models["provider_invoked"])
+                    self.assertNotIn("offline-secret", json.dumps(models))
                 self.assertEqual(post(origin, '{"region":"EUR"}', cookie=cookie)[0], 400)
+                self.assertEqual(post(origin, json.dumps({
+                    key: value for key, value in request.items() if key != "executor"
+                }), cookie=cookie)[0], 400)
+                self.assertEqual(post(origin, json.dumps({
+                    **request, "lead": "unregistered"
+                }), cookie=cookie)[0], 400)
                 self.assertEqual(post(origin, json.dumps({**request, "delay": 0}), cookie=cookie)[0], 400)
                 self.assertEqual(post(origin, cookie=cookie)[0], 202)
                 self.assertTrue(entered.wait(3))
@@ -101,10 +116,11 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertEqual(running["status"], "running")
                 self.assertIn("正在规划字段诊断", [event["message"] for event in running["events"]])
                 self.assertEqual(post(origin, cookie=cookie)[0], 409)
-                def action(name, target, session=cookie):
+                def action(name, target, session=cookie, **model_override):
                     payload = {"action": name, "id": target}
                     if name == "resume":
                         payload.update(lead="glm", executor="kimi")
+                    payload.update(model_override)
                     return post(origin, json.dumps(payload),
                                 path="/api/research", cookie=session)[0]
 
@@ -147,6 +163,11 @@ class WorkbenchLaunchTests(unittest.TestCase):
             self.assertFalse(launch_flag.exists())
             entered.clear()
             self.assertEqual(action("resume", saved_id, ""), 401)
+            pinned = Path(root) / "state/logs/workbench" / f"{saved_id}.models.json"
+            pinned.write_text(json.dumps({
+                "campaign_id": saved_id, **recorded["models"]}), encoding="utf-8")
+            self.assertEqual(action("resume", saved_id, lead="kimi"), 400)
+            self.assertEqual(len(commands), 1)
             self.assertEqual(action("resume", saved_id), 202)
             self.assertTrue(entered.wait(3))
             self.assertEqual(commands[-1][10:], [
