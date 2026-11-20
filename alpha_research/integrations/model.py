@@ -274,6 +274,8 @@ class DecisionRecorder:
             else:
                 # Explicit Codex session=ephemeral does not create a thread.
                 result = self.model.complete_json(task, context)
+            if not isinstance(result, dict):
+                raise ModelError("model decision must be a JSON object")
             token_in, token_out = self._usage(self.model)
             response_payload = {"status": "ok", "result": result,
                                 "token_in": token_in, "token_out": token_out}
