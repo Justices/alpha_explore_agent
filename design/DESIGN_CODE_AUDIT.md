@@ -71,6 +71,10 @@ GitHub Actions 运行 [44745226700](https://github.com/Justices/alpha_explore_ag
 - 新增 `tests/test_production_adapter_contract.py`，覆盖三类工作流未授权阻断、预算保持零预留、共享映射与证据不足时拒绝资格投影。
 - CLI 未增加 `orchestrate-live` 或等效入口。真实统一执行还必须补齐受控授权收据、已有认证/模型账本的注入、领域 Intent 绑定及跨进程锁；没有这些不能将 Adapter 改为可执行。
 
+### P1.3 离线验收结果（2026-11-20）
+
+GitHub Actions [44747223404](https://github.com/Justices/alpha_explore_agent/actions/runs/44747223404) 对应代码提交 `46655b60dd696b87cc8432a1a34b4010fcf5352f`。读取 Linux/Windows Job 原始日志，**两个平台均为 619 tests, OK**（Linux 23.127s，Windows 152.767s）；AGY SDK 契约检查同样通过。此前一个新增测试的异常文案断言失败已在本提交修复。此次验收仅证明共享流程合同和不可执行的生产适配层在隔离环境中通过离线验证。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
