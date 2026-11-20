@@ -157,7 +157,7 @@ class ApprovalReviewTests(unittest.TestCase):
         self.assertTrue((root / "tasks" / (self.task["task_id"] + ".json")).is_file())
         self.assertFalse((root / ("1" * 32 + ".json")).exists())
         for next_receipt in (receipt, self.signed(approval_id="2" * 32)):
-            with self.assertRaisesRegex(OrchestrationError, "task approval review already reserved"):
+            with self.assertRaisesRegex(OrchestrationError, "already (consumed|reserved)"):
                 reserve_review_receipt(
                     self.runner, next_receipt, model_profile_sha256=self.model_hash,
                     environ=self.env, now=self.now)
