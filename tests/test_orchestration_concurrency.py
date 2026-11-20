@@ -4,6 +4,8 @@ Every adapter/recovery handler is a local fixture: these tests never call
 BRAIN, models, CLI agents, external APIs or a real Simulation.
 """
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -94,6 +96,29 @@ class OrchestrationConcurrencyTests(unittest.TestCase):
                 runner.create("super", {"objective": "same id"},
                               task_id=task["task_id"])
         self.assertEqual(path.read_bytes(), before)
+
+    def test_execution_lock_is_respected_by_a_separate_python_process(self):
+        runner = MainOrchestrator(self.root)
+        task_id = runner.create("super", {"objective": "OS lock fixture"})["task_id"]
+        lock_path = runner._execution_lock_path(task_id)
+        script = (
+            "import sys\\n"
+            "from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError\\n"
+            "try:\\n"
+            "    with SingleWriterLock(sys.argv[1]):\\n"
+            "        print('ACQUIRED')\\n"
+            "except WriterLockError:\\n"
+            "    print('BUSY')\\n"
+        )
+        def probe():
+            return subprocess.run(
+                [sys.executable, "-c", script, str(lock_path)],
+                cwd=Path(__file__).resolve().parent.parent,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, timeout=15, check=True).stdout.strip()
+        with SingleWriterLock(lock_path):
+            self.assertEqual(probe(), "BUSY")
+        self.assertEqual(probe(), "ACQUIRED")
 
     def test_hard_interrupt_releases_lock_but_unknown_step_never_replays(self):
         calls = []
