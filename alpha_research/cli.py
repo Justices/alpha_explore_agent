@@ -15,6 +15,8 @@ from alpha_research.agents.registry import (
     select_registered_backends,
 )
 from alpha_research.agents.__main__ import inspect_roles
+from alpha_research.agents.doctor import check_registered_roles
+from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
@@ -46,7 +48,8 @@ def main(argv=None):
                         help="registered backend ID for research_executor")
     sub = parser.add_subparsers(dest="command", required=True)
     models = sub.add_parser("models", help="list or inspect model/agent registrations offline")
-    models.add_argument("models_action", choices=("list", "inspect"))
+    models.add_argument("models_action", choices=("list", "inspect", "doctor", "budget"))
+    models.add_argument("--research-id", help="required for models budget")
     orchestrate = sub.add_parser("orchestrate-offline", help="run or resume fixture-only research orchestration")
     orchestrate.add_argument("--workflow", choices=("regular", "super", "optimization"))
     orchestrate.add_argument("--objective")
@@ -208,31 +211,50 @@ def main(argv=None):
     }
     if args.command == "models":
         try:
-            registered = load_registry(registry_path)
-            if args.models_action == "list":
-                result = describe_registry(registered)
+            if args.models_action == "budget":
+                if not args.research_id:
+                    raise ModelBudgetError("models budget requires --research-id")
+                config_path = args.config or root / "config" / "nastu_quant.json"
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                if (not isinstance(config, dict)
+                        or not isinstance(config.get("model_governance"), dict)):
+                    raise ModelBudgetError(
+                        "models budget requires a config with model_governance")
+                result = ModelCallLedger(
+                    root / "state", config["model_governance"]
+                ).status(args.research_id)
             else:
-                path = args.config or root / "config" / "nastu_quant.json"
-                if path.exists():
-                    cfg = json.loads(path.read_text(encoding="utf-8"))
-                    profile = cfg.get("model") if isinstance(cfg, dict) else None
+                registered = load_registry(registry_path)
+                if args.models_action == "list":
+                    result = describe_registry(registered)
                 else:
-                    profile = json.loads(
-                        (Path(__file__).resolve().parent / "agents" /
-                         "role_profile.json").read_text(encoding="utf-8"))
-                if not isinstance(profile, dict):
-                    raise ModelRegistryError("models inspect requires a role profile")
-                effective = select_registered_backends(
-                    profile, registered, assignments=registry_assignments)
-                result = inspect_roles(effective, [])
-                result["selected_registrations"] = registry_assignments
-                result["registry_path"] = str(registry_path)
+                    path = args.config or root / "config" / "nastu_quant.json"
+                    if path.exists():
+                        cfg = json.loads(path.read_text(encoding="utf-8"))
+                        profile = cfg.get("model") if isinstance(cfg, dict) else None
+                    else:
+                        profile = json.loads(
+                            (Path(__file__).resolve().parent / "agents" /
+                             "role_profile.json").read_text(encoding="utf-8"))
+                    if not isinstance(profile, dict):
+                        raise ModelRegistryError(
+                            "models inspect/doctor requires a role profile")
+                    effective = select_registered_backends(
+                        profile, registered, assignments=registry_assignments)
+                    if args.models_action == "inspect":
+                        result = inspect_roles(effective, [])
+                        result["selected_registrations"] = registry_assignments
+                        result["registry_path"] = str(registry_path)
+                    else:
+                        result = check_registered_roles(effective)
+                        result["selected_registrations"] = registry_assignments
         except (OSError, KeyError, ValueError, TypeError) as exc:
-            print(f"model registry unavailable: {exc}", file=sys.stderr)
+            print(f"model runtime unavailable: {exc}", file=sys.stderr)
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
+        if args.models_action == "doctor" and result["status"] != "READY_LOCAL":
+            return 2
         return 0
-
     if args.command in {"stop", "resume"}:
         try:
             update_stop_flag(stop_flag, args.command == "stop")
