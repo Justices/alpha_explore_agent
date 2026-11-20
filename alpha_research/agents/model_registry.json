@@ -24,30 +24,30 @@
     },
     "deepseek": {
       "kind": "llm_api",
-      "provider": "openai_compatible",
-      "url": "https://api.deepseek.com/chat/completions",
+      "provider": "openai_sdk",
       "model": "deepseek-flash",
       "api_key_env": "DEEPSEEK_API_KEY",
       "timeout_seconds": 180,
-      "response_format": "none"
+      "response_format": "none",
+      "base_url": "https://api.deepseek.com"
     },
     "glm": {
       "kind": "llm_api",
-      "provider": "openai_compatible",
-      "url": "https://api.z.ai/api/paas/v4/chat/completions",
+      "provider": "openai_sdk",
       "model": "glm-4.6",
       "api_key_env": "ZAI_API_KEY",
       "timeout_seconds": 180,
-      "response_format": "none"
+      "response_format": "none",
+      "base_url": "https://api.z.ai/api/paas/v4"
     },
     "kimi": {
       "kind": "llm_api",
-      "provider": "openai_compatible",
-      "url": "https://api.moonshot.cn/v1/chat/completions",
+      "provider": "openai_sdk",
       "model": "kimi-k2.5",
       "api_key_env": "MOONSHOT_API_KEY",
       "timeout_seconds": 180,
-      "response_format": "none"
+      "response_format": "none",
+      "base_url": "https://api.moonshot.cn/v1"
     }
   }
 }
