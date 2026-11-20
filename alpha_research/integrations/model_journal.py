@@ -1,7 +1,7 @@
 """Durable model-call audit journal and incremental batch manifests.
 
-This module never invokes a provider. Existing on-disk layout and event
-ordering are deliberately preserved for recovery and forensic continuity.
+This module never invokes a provider. Global call evidence paths and event
+ordering remain stable; Session indices use the strict v2 contract.
 """
 import json
 import os
