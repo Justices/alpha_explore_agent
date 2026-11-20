@@ -76,6 +76,7 @@ class DecisionRecorder:
         self.session_id = None
         self.research_id = None
         self.batch_dir = None
+        self._attached_unbound_calls = set()
         self.journal.reset_session()
 
     def begin_session(self, session_id=None, *, research_id=None):
@@ -90,6 +91,7 @@ class DecisionRecorder:
         self.session_id = selected_session
         self.research_id = research_id or self.session_id
         self.batch_dir = None
+        self._attached_unbound_calls = set()
         self.journal.reset_session()
         return self.session_id
 
@@ -111,12 +113,19 @@ class DecisionRecorder:
                 # Calls made before any batch was bound may be attached here.
                 # A call already owned by a different batch must never be
                 # copied into this batch merely because the session changed.
-                permitted = {str(target), f"session:{self.session_id}"}
-                relevant = [call for call in self.journal.session_calls
-                            if call[0].get("batch_ref") in permitted]
+                standalone = f"session:{self.session_id}"
+                relevant = [
+                    call for call in self.journal.session_calls
+                    if (call[0].get("batch_ref") == str(target)
+                        or (call[0].get("batch_ref") == standalone
+                            and call[0]["call_id"] not in self._attached_unbound_calls))
+                ]
                 self.journal.sync_batch_calls(
                     relevant, batch_dir=target,
                     session_id=self.session_id, research_id=self.research_id)
+                self._attached_unbound_calls.update(
+                    call[0]["call_id"] for call in relevant
+                    if call[0].get("batch_ref") == standalone)
         except WriterLockError as exc:
             raise ModelError("another model call is active for this batch") from exc
         self.batch_dir = target
