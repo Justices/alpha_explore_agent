@@ -3,6 +3,7 @@ import copy
 import hashlib
 import hmac
 import tempfile
+from pathlib import Path
 import unittest
 from datetime import datetime, timedelta, timezone
 
@@ -153,7 +154,7 @@ class ExecutionIdentityTests(unittest.TestCase):
         blocked = runner.execute(self.task["task_id"])
         self.assertEqual(blocked["status"], "BLOCKED")
         research_id = "regular:campaign:" + "a" * 32
-        ledger = ModelCallLedger(self.temp.name, POLICY)
+        ledger = ModelCallLedger(Path(self.temp.name) / "state", POLICY)
         ledger.reserve(research_id, "call-1", task="construct_batch",
                        role="research_lead",
                        backend="registry:deepseek",
