@@ -18,6 +18,7 @@ from alpha_research.state.writer_lock import SingleWriterLock
 class ModelCallJournal:
     def __init__(self, state_root):
         self.logs_root = Path(state_root).resolve() / "logs"
+        self.log_path = self.logs_root / "model_log.jsonl"
         self.calls_root = self.logs_root / "model_calls"
         self.session_calls = []
 
