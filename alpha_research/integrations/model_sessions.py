@@ -57,7 +57,13 @@ def merge_index(existing, session_id, research_id, batch_ref, call_ids):
                     or row["batch_ref"] in entries):
                 raise ModelError("model session index has invalid batch references")
             entries[row["batch_ref"]] = _ids(row["call_ids"])
-        aggregate = sorted({call for ids in entries.values() for call in ids})
+        owners = {}
+        for ref, call_ids in entries.items():
+            for call_id in call_ids:
+                if call_id in owners:
+                    raise ModelError("model session call belongs to another batch")
+                owners[call_id] = ref
+        aggregate = sorted(owners)
         if _ids(existing["call_ids"]) != aggregate:
             raise ModelError("model session index conflicts with batch membership")
 
