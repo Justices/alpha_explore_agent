@@ -165,6 +165,12 @@ TASK_INSTRUCTIONS = {
         "pre-registered failure criterion for its variant when supplied, and classify support, refutation, or insufficient "
         "evidence. Platform ERROR is technical, not hypothesis failure. Do not declare Candidate."
     ),
+    "model_probe": (
+        "Connectivity contract only: return exactly one JSON object with keys "
+        "ready and contract: {ready:true,contract:'model_probe_v1'}. "
+        "Do not call tools, browse, alter files, or assume BRAIN is available. "
+        "Do not include any other keys or prose."
+    ),
     "review_dataset_results": (
         "Synthesize the supplied batch attributions for one Dataset. Explain which hypotheses "
         "the measurements support, what failed, and the limits of the evidence. State concrete "
