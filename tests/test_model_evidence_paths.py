@@ -231,6 +231,25 @@ class ReplayEvidencePathsTests(unittest.TestCase):
             self.replay_without_binding(model)
         self.assertEqual(model.calls, 0)
 
+    def test_poisoned_unrelated_row_blocks_new_task_before_provider(self):
+        # Recovery cannot treat a manifest with forged, unrelated rows as an
+        # empty manifest and authorize a new model operation.
+        forged = dict(self.row)
+        forged["call_id"] = "f" * 32
+        forged["task"] = "nonmatching_task"
+        forged["global_record_ref"] = str(self.root / "untrusted.json")
+        manifest = self.load_manifest()
+        manifest["calls"].append(forged)
+        self.manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        model = OfflineModel()
+        resumed = DecisionRecorder(model, self.root, governance=POLICY)
+        resumed.begin_session(research_id="R1")
+        resumed.batch_dir = self.batch
+        with self.assertRaisesRegex(ModelError, "trusted evidence path"):
+            resumed.complete_json("new_task", {"index": 2})
+        self.assertEqual(model.calls, 0)
+        self.assertEqual(resumed.budget.status("R1")["attempts"], 1)
+
     def test_nonmatching_forged_manifest_row_is_rejected_during_binding(self):
         # Another task's forged evidence must not poison the session index.
         previous = self.load_manifest()
