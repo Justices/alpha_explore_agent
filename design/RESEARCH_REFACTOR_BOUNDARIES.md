@@ -236,6 +236,8 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - Calls already attributed to batch A are never silently copied into batch B
   merely because the recorder was rebound. Historical calls made **before any
   batch binding** retain their ability to be attached later to a batch.
+  Calling `bind_batch` before `begin_session` now initializes the Session
+  first, rather than silently dropping its batch binding on the first call.
 - Batch manifests are published before their corresponding session index.
   A crash between those two atomic writes leaves the existing index intact;
   rebinding that batch recomputes its membership from the durable manifest
