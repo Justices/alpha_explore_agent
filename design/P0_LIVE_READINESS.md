@@ -56,17 +56,42 @@ Keep secrets outside the repo and never paste them into issue trackers.
 
 ### Stage A — Model-only probes
 
-With explicit permission for paid model calls and appropriate credentials,
-run each selected role separately:
+An explicitly authorized model-only check can run the two roles
+**sequentially**. The first contract mismatch aborts the second request.
+No Simulation or BRAIN credentials are involved.
 
 ```sh
+# These commands require model credential variables (e.g. ZAI_API_KEY and
+# MOONSHOT_API_KEY) on the SAME machine executing the Python process.
 python -m alpha_research --state-root "<state-root>" \
-  --lead glm --executor kimi models smoke \
-  --role research_lead --allow-model-call
+  --lead glm --executor kimi models doctor
+
+# First check the routing and contract shape WITHOUT any model call.
 python -m alpha_research --state-root "<state-root>" \
-  --lead glm --executor kimi models smoke \
-  --role research_executor --allow-model-call
+  --lead glm --executor kimi models smoke --role both
+
+# This final command explicitly authorizes at most ONE request per role:
+python -m alpha_research --state-root "<state-root>" \
+  --lead glm --executor kimi models smoke --role both --allow-model-call
 ```
+
+The two results each contain a unique research ID, response digest, declared
+backend and reported usage. Audit evidence stays under
+`<state-root>/state/logs/model_calls/` and model budget under
+`<state-root>/state/logs/model_budget/`. No raw response or key should be
+copied into a ticket. An actual dual-role `PASS` is the acceptance criterion;
+`NOT_EXECUTED` only proves dry-run setup. If the first response is not the
+exact `model_probe_v1` object, the second call is not attempted. The first
+request is bounded to 512 generated tokens (for the OpenAI-compatible HTTP
+adapter); reported-token governance alone does not impose a hard currency
+limit, and charges remain subject to provider accounting.
+
+The bundled model registry uses GLM-4.6 for `glm` and currently maps `kimi`
+to `kimi-k2.5`. The current official Kimi parameter documentation
+highlights K2.6, K2.7 and K3 families, **not a guarantee that K2.5 remains
+callable**. Verify the active model ID in the authenticated provider's model
+catalog before an authorized probe; make deliberate registry changes rather
+than silently switching the model during a running research ID.
 
 Pass requires a valid `model_probe_v1` JSON contract and durable budget/audit
 evidence for both roles. A local doctor alone is insufficient.
