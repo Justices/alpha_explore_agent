@@ -153,7 +153,13 @@ class OfflineModelOrchestrationTests(unittest.TestCase):
                 self.assertEqual(result["status"], "COMPLETED")
                 self.assertEqual(len(calls), 1)
                 self.assertEqual(calls[0][0], command)
-                self.assertEqual(result["checkpoints"]["qualify"]["status"], "completed")
+                if workflow == "regular":
+                    self.assertEqual(
+                        result["checkpoints"]["qualify"]["status"], "completed")
+                else:
+                    self.assertEqual(
+                        result["checkpoints"]["qualify"]["candidate_status"],
+                        "CANDIDATE")
                 self.assertEqual(result["checkpoints"]["collect"]["qualification"],
                                  result["checkpoints"]["qualify"])
                 self.assertEqual(result["budget"]["used"], 1)
