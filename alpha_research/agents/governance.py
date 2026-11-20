@@ -11,10 +11,12 @@ a per-research cross-platform filesystem lock.
 """
 import hashlib
 import json
+import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
-from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _sha
 from alpha_research.state.sealed import write_sealed_json, is_sealed_state
 
@@ -52,6 +54,26 @@ class ModelCallLedger:
         stem = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
         root = self.state_root / "logs" / "model_budget"
         return root / (stem + ".json"), root / (stem + ".lock")
+
+    @staticmethod
+    @contextmanager
+    def _ledger_guard(lock_path):
+        """Bounded wait for a short local ledger transaction, never a model retry."""
+        deadline = time.monotonic() + 2.0
+        while True:
+            guard = SingleWriterLock(lock_path)
+            try:
+                guard.__enter__()
+            except WriterLockError as exc:
+                if time.monotonic() >= deadline:
+                    raise ModelBudgetError("model budget ledger writer remained busy") from exc
+                time.sleep(0.01)
+            else:
+                break
+        try:
+            yield
+        finally:
+            guard.__exit__(None, None, None)
 
     def _write(self, path, state):
         write_sealed_json(path, state)
@@ -129,7 +151,7 @@ class ModelCallLedger:
                 not isinstance(backend_sha256, str) or len(backend_sha256) != 64):
             raise ModelBudgetError("invalid model backend profile digest")
         path, lock = self._paths(research_id)
-        with SingleWriterLock(lock):
+        with self._ledger_guard(lock):
             state = self._load(path, research_id)
             usage = self._summarize(state)
             if usage["unresolved"]:
@@ -165,7 +187,7 @@ class ModelCallLedger:
             if value is not None and (type(value) is not int or value < 0):
                 raise ModelBudgetError("reported model tokens must be nonnegative integers")
         path, lock = self._paths(research_id)
-        with SingleWriterLock(lock):
+        with self._ledger_guard(lock):
             state = self._load(path, research_id)
             matching = [c for c in state["calls"] if c["call_id"] == call_id]
             if len(matching) != 1 or matching[0]["status"] != "IN_FLIGHT":
@@ -198,7 +220,7 @@ class ModelCallLedger:
             if value is not None and (type(value) is not int or value < 0):
                 raise ModelBudgetError("verified model usage must be nonnegative")
         path, lock = self._paths(research_id)
-        with SingleWriterLock(lock):
+        with self._ledger_guard(lock):
             state = self._load(path, research_id)
             matches = [row for row in state["calls"] if row["call_id"] == call_id]
             if len(matches) != 1:
@@ -241,7 +263,7 @@ class ModelCallLedger:
         if not isinstance(reason, str) or len(reason.strip()) < 8:
             raise ModelBudgetError("explicit reason (at least 8 characters) required")
         path, lock = self._paths(research_id)
-        with SingleWriterLock(lock):
+        with self._ledger_guard(lock):
             state = self._load(path, research_id)
             rows = [row for row in state["calls"] if row["call_id"] == call_id]
             if len(rows) != 1 or rows[0]["status"] != "IN_FLIGHT":
@@ -253,7 +275,7 @@ class ModelCallLedger:
 
     def status(self, research_id):
         path, lock = self._paths(research_id)
-        with SingleWriterLock(lock):
+        with self._ledger_guard(lock):
             state = self._load(path, research_id)
             summary = self._summarize(state)
         return {
