@@ -1,9 +1,11 @@
 """P1-P4 offline orchestration contract and fault recovery tests."""
+import hashlib
 import json
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from alpha_research.orchestration.engine import (
@@ -101,6 +103,53 @@ class OrchestrationTests(unittest.TestCase):
         path.write_text(json.dumps(data), encoding="utf-8")
         with self.assertRaises(OrchestrationError):
             runner.load(task["task_id"])
+
+    def test_recovery_receipt_cannot_read_journal_outside_state_root(self):
+        runner = MainOrchestrator(
+            self.root, adapter=FaultAdapter(fixtures("super"), "execute"))
+        task_id = runner.create("super", {"objective": "offline recovery"})["task_id"]
+        self.assertEqual(runner.execute(task_id)["status"], "BLOCKED")
+        with tempfile.TemporaryDirectory() as outside:
+            secret = Path(outside) / "private.json"
+            secret.write_text('{"status":"COMPLETED"}', encoding="utf-8")
+            receipt_path = (self.root / "state" / "research_v1_1" /
+                            "recoveries" / "tasks" / f"{task_id}.json")
+            receipt_path.parent.mkdir(parents=True, exist_ok=True)
+            receipt_path.write_text(
+                json.dumps({"recovery_journal_ref": str(secret)}), encoding="utf-8")
+            digest = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+            original_read = Path.read_text
+
+            def deny_external_read(path, *args, **kwargs):
+                if Path(path).resolve() == secret.resolve():
+                    raise AssertionError("external journal was read")
+                return original_read(path, *args, **kwargs)
+
+            with patch.object(Path, "read_text", deny_external_read):
+                with self.assertRaisesRegex(OrchestrationError, "recovery root"):
+                    runner.reconcile(task_id, "execute", {},
+                                     receipt_ref=str(receipt_path),
+                                     receipt_sha256=digest)
+            self.assertEqual(runner.load(task_id)["status"], "BLOCKED")
+
+    def test_recovery_receipt_rejects_invalid_journal_refs(self):
+        runner = MainOrchestrator(
+            self.root, adapter=FaultAdapter(fixtures("super"), "execute"))
+        task_id = runner.create("super", {"objective": "invalid receipt"})["task_id"]
+        self.assertEqual(runner.execute(task_id)["status"], "BLOCKED")
+        receipt_path = (self.root / "state" / "research_v1_1" /
+                        "recoveries" / "tasks" / f"{task_id}.json")
+        receipt_path.parent.mkdir(parents=True, exist_ok=True)
+        for invalid in (None, [], {}, ""):
+            with self.subTest(invalid=invalid):
+                receipt_path.write_text(
+                    json.dumps({"recovery_journal_ref": invalid}), encoding="utf-8")
+                digest = hashlib.sha256(receipt_path.read_bytes()).hexdigest()
+                with self.assertRaisesRegex(OrchestrationError, "reference is invalid"):
+                    runner.reconcile(task_id, "execute", {},
+                                     receipt_ref=str(receipt_path),
+                                     receipt_sha256=digest)
+        self.assertEqual(runner.load(task_id)["status"], "BLOCKED")
 
     def test_invalid_workflow_and_missing_source(self):
         runner = MainOrchestrator(self.root)
