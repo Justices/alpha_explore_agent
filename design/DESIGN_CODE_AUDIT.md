@@ -63,6 +63,14 @@ GitHub Actions 运行 [44745226700](https://github.com/Justices/alpha_explore_ag
 
 在以上契约完成设计审查之前，生产 Adapter 保持未实现；本轮不开放真实执行。
 
+## P1.3 生产 Adapter 的安全隔离实现
+
+- 新增 `orchestration/workflow_contract.py`：纯函数共享三类领域命令映射、请求校验及**只投影**既有资格结果的逻辑；不触发 BRAIN、模型调用或重新评估 Candidate。
+- 现有 `MockWorkflowAdapter` 改为复用该合同，保留 Mock Gateway/Model 准入限制。
+- 新增独立 `orchestration/production_adapter.py`，目前是 **fail-closed 接口骨架**：在 `validate` 阶段明确拒绝尚未授权的生产任务，确保执行预算在 `execute` 阶段之前尚未预留，也不会创建 Simulation Intent 或调用外部 API。它不是已经开放的生产执行器。
+- 新增 `tests/test_production_adapter_contract.py`，覆盖三类工作流未授权阻断、预算保持零预留、共享映射与证据不足时拒绝资格投影。
+- CLI 未增加 `orchestrate-live` 或等效入口。真实统一执行还必须补齐受控授权收据、已有认证/模型账本的注入、领域 Intent 绑定及跨进程锁；没有这些不能将 Adapter 改为可执行。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
