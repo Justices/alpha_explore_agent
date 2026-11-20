@@ -63,6 +63,51 @@ class OfflineModelOrchestrationTests(unittest.TestCase):
                 self.assertEqual(runner.load(created["task_id"]), completed)
                 self.assertEqual(runner.execute(created["task_id"]), completed)
 
+    def test_lead_executor_handoff_with_durable_offline_checkpoints(self):
+        profile = load_role_profile()
+        profile["roles"]["research_lead"]["backend"] = "offline-lead"
+        profile["roles"]["research_executor"]["backend"] = "offline-executor"
+        profile["backends"] = {
+            "offline-lead": {
+                "kind": "mock", "provider": "mock",
+                "responses": {"construct_batch": {"hypothesis": "synthetic"}},
+            },
+            "offline-executor": {
+                "kind": "mock", "provider": "mock",
+                "responses": {"attribute_results": {"analysis": "synthetic-only"}},
+            },
+        }
+        router = RoleRoutedModelClient(profile)
+
+        class RoleHandoffAdapter:
+            def run(self, workflow, step, request, checkpoints, context=None):
+                if step == "validate":
+                    return {"validated": True}
+                if step == "execute":
+                    return router.complete_json("construct_batch", request)
+                if step == "qualify":
+                    if checkpoints["execute"]["hypothesis"] != "synthetic":
+                        raise AssertionError("missing Lead checkpoint")
+                    return router.complete_json("attribute_results", checkpoints["execute"])
+                if step == "collect":
+                    return {"lead": checkpoints["execute"],
+                            "executor": checkpoints["qualify"]}
+                raise AssertionError("unexpected step")
+
+        with tempfile.TemporaryDirectory() as td:
+            runner = MainOrchestrator(td, adapter=RoleHandoffAdapter())
+            task = runner.create("regular", {"objective": "offline role handoff"})
+            completed = runner.execute(task["task_id"])
+            self.assertEqual(completed["status"], "COMPLETED")
+            self.assertEqual(completed["result"], {
+                "lead": {"hypothesis": "synthetic"},
+                "executor": {"analysis": "synthetic-only"},
+            })
+            saved = runner.load(task["task_id"])
+            self.assertEqual(saved["checkpoints"]["execute"]["hypothesis"], "synthetic")
+            self.assertEqual(saved["checkpoints"]["qualify"]["analysis"], "synthetic-only")
+            self.assertEqual(set(router.instances), {"offline-lead", "offline-executor"})
+
     def test_missing_execute_fixture_blocks_without_automatic_replay(self):
         with tempfile.TemporaryDirectory() as td:
             adapter = OfflineResearchAdapter({
