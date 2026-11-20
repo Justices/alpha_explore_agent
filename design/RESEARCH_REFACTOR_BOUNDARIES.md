@@ -85,7 +85,8 @@ no implicit fallback or repost of an unknown Simulation is permitted.
 - `tests/test_model_cross_instance.py`:
   shared-batch deduplication, research/batch lock contention, independent
   research parallelism, multi-session manifest merging, hard-interrupt
-  fail-closed replay, audit append bounded waiting and OS subprocess locks
+  fail-closed replay, interrupted atomic evidence copies, audit append bounded
+  waiting and OS subprocess locks
 - `tests/test_agent_runtime_concurrency.py`:
   per-backend execution exclusion, independently parallel backends, concurrent lazy cache construction, per-invocation usage isolation and shared-recorder audit safety
 - `tests/test_orchestrator.py`:
@@ -198,7 +199,11 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
 - `ModelCallJournal.sync_batch_calls` uses a **separate, short-lived batch
   manifest lock** for the read/merge/copy/write transaction and session
   index update. Independent recorder instances cannot overwrite each other's
-  call IDs, and this lock is never used as a model invocation lock.
+  call IDs, and this lock is never used as a model invocation lock. Context,
+  audit and response copies are first written to unique temporary files,
+  fsynced and atomically replaced, so a crash during copying cannot expose
+  a partially written final response file. A verified global response remains
+  usable when its batch copy was never published.
 - A replay always pins the original `research_id`, including when governance
   is disabled. A saved receipt may not be reused by another study merely
   because task, context and role digests happen to match.
