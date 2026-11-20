@@ -178,6 +178,59 @@ class ModelCallLedger:
             self._write(path, state)
             return self._summarize(state)
 
+    def reconcile_verified_response(self, research_id, call_id, *,
+                                    task, role, backend, backend_sha256,
+                                    success, token_in=None, token_out=None):
+        """Idempotently settle a pre-reserved attempt from verified on-disk evidence.
+
+        Only the replay verifier may call this after checking the manifest,
+        model response digest, audit identity and selected route. This method
+        never reserves another attempt and never invokes a provider.
+        UNKNOWN remains terminal and cannot be converted into success.
+        """
+        if type(success) is not bool:
+            raise ModelBudgetError("verified model outcome must be explicit")
+        if not isinstance(call_id, str) or not call_id:
+            raise ModelBudgetError("verified model call ID is required")
+        if not isinstance(task, str) or not task:
+            raise ModelBudgetError("verified model task is required")
+        for value in (token_in, token_out):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ModelBudgetError("verified model usage must be nonnegative")
+        path, lock = self._paths(research_id)
+        with SingleWriterLock(lock):
+            state = self._load(path, research_id)
+            matches = [row for row in state["calls"] if row["call_id"] == call_id]
+            if len(matches) != 1:
+                raise ModelBudgetError(
+                    "verified response has no unique budget reservation")
+            attempt = matches[0]
+            if (attempt["task"] != task or attempt["role"] != role
+                    or attempt["backend"] != backend
+                    or attempt["backend_sha256"] != backend_sha256):
+                raise ModelBudgetError(
+                    "verified response does not match reserved model identity")
+            expected = "OK" if success else "ERROR"
+            if attempt["status"] == "UNKNOWN":
+                raise ModelBudgetError(
+                    "operator-acknowledged unknown model outcome cannot be reconciled")
+            if attempt["status"] == expected:
+                if (attempt.get("token_in") != token_in
+                        or attempt.get("token_out") != token_out):
+                    raise ModelBudgetError(
+                        "verified model usage conflicts with settled budget")
+                return self._summarize(state)
+            if attempt["status"] != "IN_FLIGHT":
+                raise ModelBudgetError(
+                    "verified response conflicts with settled model outcome")
+            attempt.update({
+                "status": expected,
+                "token_in": token_in,
+                "token_out": token_out,
+            })
+            self._write(path, state)
+            return self._summarize(state)
+
     def acknowledge_unknown(self, research_id, call_id, *, reason):
         """Operator-only decision: close an unresolved intent WITHOUT claiming failure.
 
