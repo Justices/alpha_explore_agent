@@ -219,16 +219,16 @@ class CrossInstanceModelTests(unittest.TestCase):
         batch = self.root / "batch"
         first_model = LocalModel()
         first = recorder(self.root, "R1", batch, first_model)
-        original = shutil.copy2
+        original = shutil.copyfileobj
 
         def interrupt(source, destination, *args, **kwargs):
-            dest = Path(destination)
-            if ".response.json.tmp-" in dest.name:
-                dest.write_text("{\\\"status\\\":", encoding="utf-8")
+            if ".response.json.tmp-" in Path(destination.name).name:
+                destination.write(b'{"status":')
+                destination.flush()
                 raise RuntimeError("synthetic crash halfway through batch copy")
             return original(source, destination, *args, **kwargs)
 
-        with patch("alpha_research.integrations.model_journal.shutil.copy2",
+        with patch("alpha_research.integrations.model_journal.shutil.copyfileobj",
                    side_effect=interrupt):
             with self.assertRaisesRegex(RuntimeError, "halfway"):
                 first.complete_json("task", {"seq": 1})
