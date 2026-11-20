@@ -2,6 +2,20 @@
 
 > 审计范围：`refactor/configurable-codex-agy-runtime` 功能分支的关键代码与现行设计文档；**静态代码审计**，不是自动化测试通过声明，也不是 BRAIN 生产验收。遵循 [AGENTS.md](../AGENTS.md) 和 [RESEARCH_SCOPE.md](RESEARCH_SCOPE.md)。
 
+## 离线 CI 验收实证（2026-11-20）
+
+GitHub Actions 运行 [44745226700](https://github.com/Justices/alpha_explore_agent/actions/runs/44745226700) 对应功能分支提交 `2654f38e82bcccd93783409909850eaa747d6c5a`，结论为 **success**。读取三个 Job 和原始离线测试日志，确认：
+
+| 运行环境 | 编译 | 完整 unittest | 其他 |
+| --- | --- | --- | --- |
+| Ubuntu / Python 3.11 | PASS | **616 tests, OK** | Registry CLI、离线 Model Smoke、Mock Research CLI 通过 |
+| Windows / Python 3.11 | PASS | **616 tests, OK** | Registry CLI、离线 Model Smoke、Mock Research CLI 通过 |
+| Ubuntu AGY SDK 合同 | — | — | SDK 安装与只构造配置的契约检查通过 |
+
+该执行没有向测试 Job 注入真实模型或 BRAIN 凭证。此结果属于**离线、双平台、当前提交**的确认，不证明生产 BRAIN 鉴权、真实数据可用性、平台 Simulation 的安全性或真实费用。
+
+注意：更早的测试报告中“待运行验证”的记载是验收前的快照，不能覆盖本节新取得的实际 CI 证据。未来新增提交必须重新核对该提交的 CI 状态。
+
 ## 判定口径
 
 - **代码证实**：已从当前分支读取相关实现，可以确认接口/状态机等静态事实。
