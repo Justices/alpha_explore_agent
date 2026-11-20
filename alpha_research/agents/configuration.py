@@ -8,12 +8,24 @@ class AgentConfigError(ValueError):
     pass
 
 
-# The legacy agy_cli backend remains readable in historical configurations,
-# but is intentionally excluded from new unattended role-router configurations.
-SUPPORTED_PROVIDERS = frozenset({
-    "codex_cli", "antigravity_sdk", "mock",
-    "json_http", "openai_compatible", "anthropic_compatible",
-})
+# Backend execution mode is orthogonal to research role. Codex/Claude Code
+# CLIs and Antigravity SDK are agent runtimes; DeepSeek/GLM/Kimi/Claude API
+# can be accessed through the model-API transport family.
+# The historical agy_cli remains explicitly excluded from unattended routing.
+PROVIDERS_BY_KIND = {
+    "agent_runtime": frozenset({"codex_cli", "claude_cli", "antigravity_sdk"}),
+    "llm_api": frozenset({"openai_compatible", "anthropic_compatible", "json_http"}),
+    "mock": frozenset({"mock"}),
+}
+SUPPORTED_PROVIDERS = frozenset().union(*PROVIDERS_BY_KIND.values())
+
+
+def backend_kind(provider):
+    for kind, providers in PROVIDERS_BY_KIND.items():
+        if provider in providers:
+            return kind
+    raise AgentConfigError(f"unsupported backend provider: {provider}")
+
 
 
 @dataclass(frozen=True)
@@ -50,6 +62,10 @@ class RoleRoutingConfig:
             provider = spec.get("provider")
             if provider not in SUPPORTED_PROVIDERS:
                 raise AgentConfigError(f"unsupported unattended backend provider: {provider}")
+            inferred_kind = backend_kind(provider)
+            if spec.get("kind", inferred_kind) != inferred_kind:
+                raise AgentConfigError(
+                    f"backend {name}: kind and provider are incompatible")
             # Never store credentials directly in a checked-in model profile.
             if {"api_key", "access_token", "password", "client_secret", "credentials"} & set(spec):
                 raise AgentConfigError("model secrets must be provided through environment variables")
@@ -61,7 +77,7 @@ class RoleRoutingConfig:
                 # The CLI adapter enforces sandbox=read-only and approval=never;
                 # unsupported overrides must fail, not be silently ignored.
                 allowed = {
-                    "provider", "executable", "model", "timeout_seconds",
+                    "provider", "kind", "executable", "model", "timeout_seconds",
                     "sandbox", "session",
                 }
                 if (set(spec) - allowed
@@ -69,6 +85,15 @@ class RoleRoutingConfig:
                         or spec.get("session", "research") not in {"research", "ephemeral"}):
                     raise AgentConfigError(
                         "Codex research backend requires read-only sandbox and a valid session mode")
+            if provider == "claude_cli":
+                # Claude Code is an agent runtime, not the Anthropic Messages API.
+                # The existing CLI adapter explicitly disables tools/MCP and
+                # session persistence. Do not silently accept unsafe overrides.
+                allowed = {"provider", "kind", "executable", "model", "timeout_seconds", "session"}
+                if (set(spec) - allowed
+                        or spec.get("session", "ephemeral") != "ephemeral"):
+                    raise AgentConfigError(
+                        "Claude Code CLI backend is supported only with isolated ephemeral sessions")
             timeout = spec.get("timeout_seconds", 180)
             if (type(timeout) not in (int, float) or
                     not isfinite(timeout) or timeout <= 0):
@@ -81,7 +106,7 @@ class RoleRoutingConfig:
                         or spec.get("skills_paths") or spec.get("allow_write")):
                     raise AgentConfigError("unattended antigravity_sdk tools are disabled in P0")
                 allowed = {
-                    "provider", "model", "timeout_seconds", "api_key_env",
+                    "provider", "kind", "model", "timeout_seconds", "api_key_env",
                     "tools", "mcp_servers", "skills_paths", "allow_write",
                 }
                 if set(spec) - allowed:
@@ -103,7 +128,7 @@ class RoleRoutingConfig:
                         not isinstance(spec.get("model"), str)
                         or not spec["model"].strip()):
                     raise AgentConfigError(f"{provider} requires a model identifier")
-                allowed = {"provider", "model", "url", "api_key_env", "timeout_seconds"}
+                allowed = {"provider", "kind", "model", "url", "api_key_env", "timeout_seconds"}
                 if provider == "openai_compatible":
                     allowed.add("response_format")
                     if spec.get("response_format", "json_object") not in {
@@ -114,6 +139,8 @@ class RoleRoutingConfig:
                     raise AgentConfigError(
                         f"unsupported model API configuration keys for {provider}")
             if provider == "mock":
+                if set(spec) - {"provider", "kind", "responses", "timeout_seconds"}:
+                    raise AgentConfigError("unsupported mock backend option")
                 responses = spec.get("responses", {})
                 if not isinstance(responses, dict) or any(
                     not isinstance(reply, dict) and not (
