@@ -14,6 +14,13 @@ def _sdk_present():
         return False
 
 
+def _openai_sdk_present():
+    try:
+        return importlib.util.find_spec("openai") is not None
+    except (ImportError, ValueError, ModuleNotFoundError):
+        return False
+
+
 def check_registered_roles(model_config, *, environ=None,
                            which=None, sdk_present=None):
     """Return local readiness, not proof of a provider's remote availability.
@@ -52,14 +59,18 @@ def check_registered_roles(model_config, *, environ=None,
             ready = has_key and installed
             reason = ("SDK package and credential environment detected; remote access unverified"
                       if ready else "SDK package or API credential environment missing")
-        else:
-            url = urlsplit(spec["url"])
-            env_name = spec.get("api_key_env")
-            has_key = bool(environment.get(env_name)) if env_name else True
+        elif provider == "openai_sdk":
+            url = urlsplit(spec["base_url"])
+            env_name = spec["api_key_env"]
+            has_key = bool(environment.get(env_name))
             endpoint_valid = url.scheme == "https" and bool(url.hostname)
-            ready = endpoint_valid and has_key
-            reason = ("HTTPS endpoint and credential environment configured; remote access unverified"
-                      if ready else "HTTPS endpoint or API credential environment unavailable")
+            installed = _openai_sdk_present()
+            ready = endpoint_valid and has_key and installed
+            reason = ("OpenAI Python SDK and model credential configured; remote access unverified"
+                      if ready else "OpenAI Python SDK, HTTPS base_url, or model credential missing")
+        else:
+            ready = False
+            reason = "unsupported model provider"
         rows[role] = {
             "registered_backend": backend_id,
             "kind": kind,
