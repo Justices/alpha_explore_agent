@@ -82,6 +82,10 @@ no implicit fallback or repost of an unknown Simulation is permitted.
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 - `tests/test_agent_runtime_boundaries.py`:
   deep-copy route isolation, single metadata resolution, no stale backend identity, direct registry validation and canonical digest parity
+- `tests/test_model_cross_instance.py`:
+  shared-batch deduplication, research/batch lock contention, independent
+  research parallelism, multi-session manifest merging, hard-interrupt
+  fail-closed replay, audit append bounded waiting and OS subprocess locks
 - `tests/test_agent_runtime_concurrency.py`:
   per-backend execution exclusion, independently parallel backends, concurrent lazy cache construction, per-invocation usage isolation and shared-recorder audit safety
 - `tests/test_orchestrator.py`:
@@ -179,3 +183,31 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   in-flight intents and budget-ledger protections remain authoritative
   for separate processes. An unknown remote result is never silently
   retried. No model-call audit schema or route fingerprint was changed.
+
+## Cross-instance model-call and batch ownership
+
+- A recorder takes a **research-scoped OS invocation lock** for every call;
+  when bound to a batch, it also takes that batch's **invocation lock**.
+  Acquisition order is always research -> batch. These locks are held from
+  before replay inspection/reservation through provider execution, global
+  response/audit persistence and final budget settlement. A second instance
+  fails fast before calling a provider or reserving another attempt.
+- `bind_batch` takes the batch invocation lock before synchronizing historical
+  session calls; a busy batch is rejected without changing the recorder's
+  existing binding.
+- `ModelCallJournal.sync_batch_calls` uses a **separate, short-lived batch
+  manifest lock** for the read/merge/copy/write transaction and session
+  index update. Independent recorder instances cannot overwrite each other's
+  call IDs, and this lock is never used as a model invocation lock.
+- A replay always pins the original `research_id`, including when governance
+  is disabled. A saved receipt may not be reused by another study merely
+  because task, context and role digests happen to match.
+- The global append-only audit stream uses bounded local waiting on its own
+  OS file lock so *independent* studies can log events concurrently without
+  failing on a transient lock collision. This waits only to persist the
+  **same local event**; it is not a retry of the provider or a permission to
+  resubmit an ambiguous request.
+- Crashed calls remain durable as `in_flight` and cannot be automatically
+  replayed without a verified response. The protected filesystem scope is
+  local to the configured state directory and shared batch; distributed
+  filesystems and multi-host lock semantics are not asserted.
