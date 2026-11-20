@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _canonical_sha256
 
 
@@ -137,7 +138,29 @@ class RecoveryCoordinator:
 
     def recover(self, target, *, gateway, agent=None, config=None, expected_workflow=None,
                 task_id=None, step=None):
-        """Recover one existing operation without ever issuing a new Simulation.
+        """Serialize recovery by target across processes, including handler work.
+
+        A second caller cannot pass the journal existence check while the
+        first is creating its intent. The lock is independent of CLI agent.lock.
+        """
+        path = self._resolve_target(target)
+        workflow, _, _, _ = self._inspect(path)
+        journal_path = self._journal_path(workflow, path)
+        try:
+            with SingleWriterLock(journal_path.with_suffix(".lock")):
+                # Re-inspect under the lock: the intent could have changed
+                # since the initial safety preflight.
+                return self._recover_locked(
+                    path, gateway=gateway, agent=agent, config=config,
+                    expected_workflow=expected_workflow,
+                    task_id=task_id, step=step)
+        except WriterLockError as exc:
+            raise RecoveryError(
+                "another recovery writer is already processing this target") from exc
+
+    def _recover_locked(self, target, *, gateway, agent=None, config=None,
+                        expected_workflow=None, task_id=None, step=None):
+        """Recover one existing intent without reposting unknown simulation.
 
         Regular targets are batch directories. Super and Optimization targets
         are their simulation_intent.json files. All targets must live below the
@@ -235,6 +258,21 @@ class RecoveryCoordinator:
 
     def recover_task(self, orchestrator, task_id, *, gateway, agent=None, config=None,
                      expected_workflow=None):
+        """Fail fast on duplicate task recovery before replaying any handler."""
+        # Separate from the task's execution lock: reconcile() legitimately
+        # acquires that lock after the recovery receipt has been written.
+        lock_path = orchestrator._path(task_id).with_suffix(".recover.lock")
+        try:
+            with SingleWriterLock(lock_path):
+                return self._recover_task_locked(
+                    orchestrator, task_id, gateway=gateway, agent=agent,
+                    config=config, expected_workflow=expected_workflow)
+        except WriterLockError as exc:
+            raise RecoveryError(
+                "another recovery writer is already processing this task") from exc
+
+    def _recover_task_locked(self, orchestrator, task_id, *, gateway, agent=None,
+                             config=None, expected_workflow=None):
         """Recover a blocked orchestration execute step from its bound domain artifact."""
         task = orchestrator.load(task_id)
         if expected_workflow is not None and task.get("workflow") != expected_workflow:
