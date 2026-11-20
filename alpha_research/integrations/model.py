@@ -12,7 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alpha_research.integrations.model_cli import CLI_COMMANDS, complete_cli
-from alpha_research.integrations.model_http import complete_http, post_json
+from alpha_research.integrations.model_openai import complete_openai_sdk
 from alpha_research.progress import write_progress
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.integrations.model_errors import ModelError
@@ -30,9 +30,9 @@ from alpha_research.integrations.model_prompts import (
 class ConfiguredModelClient(InvocationMetadata):
     """Route one model decision to its transport-specific adapter."""
 
-    def __init__(self, config: dict, transport=None, environ=None):
+    def __init__(self, config: dict, *, sdk_factory=None, environ=None):
         self.config = config
-        self.transport = transport or post_json
+        self.sdk_factory = sdk_factory
         self.environ = os.environ if environ is None else environ
         self._init_invocation_metadata()
 
@@ -43,10 +43,10 @@ class ConfiguredModelClient(InvocationMetadata):
             raise ModelError("model provider must be a nonempty string")
         if provider in CLI_COMMANDS:
             return complete_cli(self, task, context, thread_path=thread_path)
-        if provider in {"openai_compatible", "anthropic_compatible", "json_http"}:
+        if provider == "openai_sdk":
             if thread_path is not None:
-                raise ModelError("HTTP model API cannot use a CLI research thread")
-            return complete_http(self, task, context)
+                raise ModelError("OpenAI SDK model API cannot use a CLI research thread")
+            return complete_openai_sdk(self, task, context)
         raise ModelError(f"unsupported model provider: {provider}")
 
 
