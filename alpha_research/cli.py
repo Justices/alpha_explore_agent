@@ -244,10 +244,13 @@ def main(argv=None):
                     result = describe_registry(registered)
                 else:
                     path = args.config or root / "config" / "nastu_quant.json"
+                    profile = None
                     if path.exists():
                         cfg = json.loads(path.read_text(encoding="utf-8"))
-                        profile = cfg.get("model") if isinstance(cfg, dict) else None
-                    else:
+                        if not isinstance(cfg, dict):
+                            raise ModelRegistryError("research config must be an object")
+                        profile = cfg.get("model")
+                    if profile is None:
                         profile = json.loads(
                             (Path(__file__).resolve().parent / "agents" /
                              "role_profile.json").read_text(encoding="utf-8"))
@@ -563,8 +566,12 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict) or not isinstance(cfg.get("model"), dict):
-            raise ModelRegistryError("research config must contain a model role profile")
+        if not isinstance(cfg, dict):
+            raise ModelRegistryError("research config must be an object")
+        if not isinstance(cfg.get("model"), dict):
+            cfg["model"] = json.loads(
+                (Path(__file__).resolve().parent / "agents" /
+                 "role_profile.json").read_text(encoding="utf-8"))
         if registry_assignments:
             catalog = load_registry(registry_path)
             cfg["model"] = select_registered_backends(

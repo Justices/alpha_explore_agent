@@ -54,8 +54,10 @@ DEFAULT_CONFIG = {
     "probe": {"windows": [5, 66]},
     "exec": {"multisim_wait_threshold_s": 1200},
     "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
-    "model": {"provider": None, "url": None, "model": None,
-              "api_key_env": "NASTU_QUANT_MODEL_API_KEY"},
+    "model": json.loads(
+        (Path(__file__).resolve().parent / "agents" / "role_profile.json")
+        .read_text(encoding="utf-8")
+    ),
     "knowledge": {
         "construction_advisory_path": None,
         "prior_knowledge_path": None,

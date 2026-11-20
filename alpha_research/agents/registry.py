@@ -97,6 +97,9 @@ def select_registered_backends(model_config, registry, *, assignments):
         raise ModelRegistryError("role profile requires roles")
     if not isinstance(assignments, dict) or set(assignments) != set(roles):
         raise ModelRegistryError("every configured role requires one registered backend selection")
+    if "backends" in model_config:
+        raise ModelRegistryError(
+            "model profile must declare only roles and tasks; backends belong in registry")
     effective = copy.deepcopy(model_config)
     effective["backends"] = {}
     for role in sorted(roles):
