@@ -4,7 +4,12 @@ The batch manifest is untrusted input: it may describe a call, but it must
 never choose which file the recovery process reads or rewrites. The expected
 locations are derived exclusively from trusted roots and the call ID.
 """
+import errno
+import json
+import os
 import re
+import stat
+from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
@@ -55,3 +60,68 @@ def trusted_replay_paths(batch_dir, calls_root, row):
     paths["global_context_ref"] = check_trusted_path(
         calls / f"{call_id}.context.json", label="global_context_ref")
     return paths
+
+@contextmanager
+def open_trusted_evidence(path, *, label="evidence"):
+    """Open one checked regular file without a symlink-swap read on POSIX.
+
+    POSIX: walk absolute path components via pinned directory descriptors,
+    O_DIRECTORY and O_NOFOLLOW. The final descriptor is also O_NOFOLLOW.
+    Windows: Python's portable API lacks openat/O_NOFOLLOW; compare the
+    opened file ID to the path's no-follow stat and recheck the full path.
+    Windows remains best-effort against an actively swapping adversary.
+    """
+    path = Path(path)
+    if not path.is_absolute() or ".." in path.parts:
+        raise ModelError(f"model {label} is not the trusted evidence path")
+    if os.name == "posix":
+        flags = os.O_RDONLY | os.O_NOFOLLOW
+        directory_flags = flags | os.O_DIRECTORY
+        fd = None
+        try:
+            fd = os.open(path.anchor, directory_flags)
+            for part in path.parts[1:-1]:
+                next_fd = os.open(part, directory_flags, dir_fd=fd)
+                os.close(fd)
+                fd = next_fd
+            opened = os.open(path.name, flags, dir_fd=fd)
+            os.close(fd)
+            fd = opened
+            if not stat.S_ISREG(os.fstat(fd).st_mode):
+                raise ModelError(f"model {label} is not a regular evidence file")
+            with os.fdopen(fd, "rb") as handle:
+                fd = None
+                yield handle
+        except OSError as exc:
+            if exc.errno in (errno.ELOOP, errno.ENOTDIR):
+                raise ModelError(
+                    f"model {label} is not the trusted evidence path") from exc
+            raise
+        finally:
+            if fd is not None:
+                os.close(fd)
+    else:
+        # Detect reparse points swapped into any path component immediately
+        # before or after opening. This is *not* equivalent to POSIX openat.
+        check_trusted_path(path, label=label)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_BINARY", 0))
+        try:
+            opened = os.fstat(fd)
+            check_trusted_path(path, label=label)
+            linked = os.stat(path, follow_symlinks=False)
+            if (not stat.S_ISREG(opened.st_mode)
+                    or (opened.st_dev, opened.st_ino)
+                       != (linked.st_dev, linked.st_ino)):
+                raise ModelError(f"model {label} changed during evidence open")
+            with os.fdopen(fd, "rb") as handle:
+                fd = None
+                yield handle
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+
+def read_trusted_json(path, *, label="evidence"):
+    """Parse exactly the file opened by the trusted descriptor."""
+    with open_trusted_evidence(path, label=label) as handle:
+        return json.load(handle)
