@@ -240,7 +240,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     pack = knowledge.build_pack("optimize_alpha", context)
     pack_path = root / "state" / "research_v1_1" / "optimization" / f"{run_id}_knowledge.json"
     atomic_write_json(pack_path, pack)
-    recorder = DecisionRecorder(model, root / "state")
+    recorder = DecisionRecorder(
+        model, root / "state", governance=config.get("model_governance")
+    )
     recorder.begin_session(research_id=f"optimization:{run_id}")
     proposal = recorder.complete_json("optimize_alpha", {**context, "knowledge_pack": pack},
                                       knowledge_pack_ref=str(pack_path))
