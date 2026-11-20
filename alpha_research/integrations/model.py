@@ -19,6 +19,7 @@ from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_metadata import InvocationMetadata
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.integrations.model_journal import ModelCallJournal
+from alpha_research.integrations.model_sessions import index_path as _session_index_path
 from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
     FIELD_EVIDENCE_KEYS, REQUIRED_FIELD_DIMENSIONS, TASK_INSTRUCTIONS,
@@ -82,7 +83,11 @@ class DecisionRecorder:
             return self._begin_session_locked(session_id, research_id=research_id)
 
     def _begin_session_locked(self, session_id=None, *, research_id=None):
-        self.session_id = session_id or uuid4().hex
+        selected_session = uuid4().hex if session_id is None else session_id
+        # Session IDs become on-disk index filenames: reject path traversal,
+        # aliases and malformed IDs before changing the active session.
+        _session_index_path(self.journal.logs_root, selected_session)
+        self.session_id = selected_session
         self.research_id = research_id or self.session_id
         self.batch_dir = None
         self.journal.reset_session()
@@ -98,8 +103,14 @@ class DecisionRecorder:
         # another instance from changing its manifest while a model is live.
         try:
             with SingleWriterLock(self._batch_call_lock_path(target)):
+                # Calls made before any batch was bound may be attached here.
+                # A call already owned by a different batch must never be
+                # copied into this batch merely because the session changed.
+                permitted = {str(target), f"session:{self.session_id}"}
+                relevant = [call for call in self.journal.session_calls
+                            if call[0].get("batch_ref") in permitted]
                 self.journal.sync_batch_calls(
-                    self.journal.session_calls, batch_dir=target,
+                    relevant, batch_dir=target,
                     session_id=self.session_id)
         except WriterLockError as exc:
             raise ModelError("another model call is active for this batch") from exc
