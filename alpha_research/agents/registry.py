@@ -109,6 +109,20 @@ def select_registered_backends(model_config, registry, *, assignments):
     return effective
 
 
+def assert_live_model_routes(effective):
+    """A real platform research run must not use an offline mock provider.
+
+    This is separate from registry loading: Mock registrations remain valid for
+    independent offline tests and fixture-only research cycle entrypoints.
+    """
+    routing = RoleRoutingConfig.parse(effective)
+    for role in routing.roles:
+        selected = routing.roles[role]["backend"]
+        if routing.backends[selected]["provider"] == "mock":
+            raise ModelRegistryError(
+                "live research cannot use a mock model backend for " + role)
+
+
 def bundled_registry_path():
     """Bundled fallback; operators may override with --registry."""
     return Path(__file__).resolve().parent / "model_registry.json"
