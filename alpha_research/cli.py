@@ -22,6 +22,7 @@ from alpha_research.knowledge import KnowledgeService
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
 from alpha_research.state.store import StopSignals, update_stop_flag
 from alpha_research.workflows.regular.campaign import campaign_can_resume
+from alpha_research.workflows.regular.scope import ScopeDiscoveryError
 from alpha_research.state.operation_lock import SubmissionGateError
 from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research
 from alpha_research.state.records import ResearchRecordStore
@@ -636,7 +637,10 @@ def main(argv=None):
             print(json.dumps(summary, ensure_ascii=False))
         return 0
     except Exception as exc:
-        write_progress(f"研究已暂停，异常类型：{type(exc).__name__}")
+        if isinstance(exc, ScopeDiscoveryError):
+            write_progress(f"研究范围核验失败 · {exc}")
+        else:
+            write_progress(f"研究已暂停，异常类型：{type(exc).__name__}")
         print(f"research paused: {exc}", file=sys.stderr)
         return 1
     finally:

@@ -107,6 +107,11 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 self.assertTrue(status()["stop_requested"])
                 self.assertEqual(len(commands), 1)
                 self.assertEqual(child_credentials, [credentials])
+                metadata = Path(root) / "state/logs/workbench" / f"{running['launch_id']}.launch.json"
+                recorded = json.loads(metadata.read_text(encoding="utf-8"))
+                self.assertEqual(recorded["args"][0], "run-campaign")
+                self.assertIn("--region=EUR", recorded["args"])
+                self.assertNotIn(credentials["password"], metadata.read_text(encoding="utf-8"))
                 self.assertEqual(commands[0][4:], [
                     "--state-root", root, "run-campaign", "--region=EUR",
                     "--objective=--example",

@@ -133,6 +133,10 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         self.assertEqual(result["batches_completed"], 10)
         self.assertEqual(result["status"], "scope_complete")
         self.assertFalse(result["remaining_items"])
+        with self.assertRaisesRegex(ValueError, "Universe='TOP3000'.*TOP500.*TOP800"):
+            run_regular_campaign(
+                agent, gateway, region="HKG", category="Analyst",
+                universe="TOP3000", objective="unsupported universe")
 
     def test_campaign_records_failed_attempt_and_continues_to_next_dataset(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)

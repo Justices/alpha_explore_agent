@@ -183,7 +183,7 @@ def _effective_settings(details):
     return {inverse.get(key, key): value for key, value in details["settings"].items()}
 
 
-def _source_dataset(gateway, settings, source_fields):
+def _source_dataset(gateway, settings, source_fields, expected_dataset=None):
     scope = {key: settings[key] for key in
              ("instrument_type", "region", "delay", "universe")}
     datasets = gateway.call("get_datasets", **scope)
@@ -194,6 +194,8 @@ def _source_dataset(gateway, settings, source_fields):
         if not isinstance(row, dict) or not isinstance(row.get("id"), str):
             continue
         dataset_id = row["id"]
+        if expected_dataset is not None and dataset_id != expected_dataset:
+            continue
         fields = gateway.call("get_datafields", dataset_id=dataset_id, **scope)
         if not isinstance(fields, list):
             raise OptimizationError("exact-scope field catalog is unavailable")
@@ -207,17 +209,33 @@ def _source_dataset(gateway, settings, source_fields):
 
 def run_optimization(gateway, model, config: dict, state_root: Path, *,
                      alpha_id: str, objective: str, region: str | None = None,
-                     execution_context=None):
+                     execution_context=None, run_id=None, expected_dataset=None,
+                     expected_settings=None, ppa_profile=False,
+                     selection_evidence=None, stop_flag=None):
     """Simulate one independent candidate, retaining immutable source evidence."""
     if not isinstance(objective, str) or not objective.strip():
         raise OptimizationError("optimization objective is required")
-    run_id = uuid4().hex
+    run_id = run_id or uuid4().hex
+    root = Path(state_root).resolve()
+    work_dir = root / "state" / "research_v1_1" / "optimization"
+    intent_path = work_dir / f"{run_id}_simulation_intent.json"
+    if intent_path.exists():
+        raise OptimizationError("existing optimization simulation must be recovered")
     gateway.call("set_case", case_key=run_id, run_id=run_id)
     source_info = prepare_source(gateway, state_root, alpha_id=alpha_id,
                                  objective=objective, region=region)
     details = json.loads(Path(source_info["snapshot_ref"]).read_text(encoding="utf-8"))
     settings = _effective_settings(details)
     family = source_info["source_type"]
+    if expected_settings is not None and (
+            family != "regular" or any(settings.get(key) != value
+                                       for key, value in expected_settings.items()
+                                       if key != "test_period" or key in settings)):
+        raise OptimizationError("optimization source does not match the Dataset backtest settings")
+    if expected_settings is not None:
+        # BRAIN can omit testPeriod from Alpha details. Preserve the setting
+        # recorded in the original simulation receipt in that case.
+        settings = {**expected_settings, **settings}
     operators = gateway.call("get_operators")
     if not isinstance(operators, list) or not operators:
         raise OptimizationError("live operator catalog is unavailable")
@@ -227,16 +245,19 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         source_fields = _fields(source_expression)
         if not source_fields:
             raise OptimizationError("source Regular fields cannot be resolved")
-        dataset_id, fields = _source_dataset(gateway, settings, source_fields)
+        dataset_id, fields = _source_dataset(gateway, settings, source_fields, expected_dataset)
     else:
         source_expression = None
         source_fields = []
-    root = Path(state_root).resolve()
     knowledge = KnowledgeService(root / "state", root / "runs", config)
     context = {"objective": objective, "source_alpha": details,
                "source_type": family, "source_fields": source_fields,
                "verified_dataset_id": dataset_id,
                "live_operator_catalog": operators}
+    if selection_evidence is not None:
+        context["dataset_attribution_selection_reason"] = selection_evidence
+    if ppa_profile:
+        context["ppa_expression_limits"] = {"operators": 8, "fields": 3}
     pack = knowledge.build_pack("optimize_alpha", context)
     pack_path = root / "state" / "research_v1_1" / "optimization" / f"{run_id}_knowledge.json"
     atomic_write_json(pack_path, pack)
@@ -255,6 +276,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         expression = proposal.get("expression")
         if not isinstance(expression, str) or not expression.strip():
             raise OptimizationError("Regular candidate expression is missing")
+        if expression.strip() == source_expression.strip():
+            raise OptimizationError("Regular candidate repeats the source expression")
         if not set(_fields(expression)) <= set(source_fields):
             raise OptimizationError("candidate introduced fields outside the source")
         catalog = {}
@@ -268,6 +291,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                            operator_definitions=operators)
         if verdict["verdict"] != "PASS" or not verdict["fields"]:
             raise OptimizationError("Regular candidate failed local validation")
+        if ppa_profile and (verdict["operator_count"] > 8 or len(verdict["fields"]) > 3):
+            raise OptimizationError("Regular candidate exceeds the PPA expression limits")
         research = proposal.get("research")
         if not isinstance(research, dict):
             raise OptimizationError("Regular candidate research evidence is missing")
@@ -276,6 +301,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         validate_super_expressions(selection, combo, operators)
         research = {key: proposal[key] for key in
                     ("hypothesis", "rationale", "failure_criterion")}
+    if stop_flag is not None and stop_flag.exists():
+        raise OptimizationError("research stopped before optimization simulation")
     branch_info = create_branch(
         state_root, source_ref=source_info["source_ref"], objective=objective,
         rationale=proposal["rationale"], changes=proposal["changes"],
@@ -297,7 +324,6 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     check_cache = getattr(gateway, "check_simulation_cache", None)
     if family == "regular" and callable(check_cache):
         check_cache(settings=settings, expressions=[expression])
-    intent_path = prereg_path.with_name(f"{run_id}_simulation_intent.json")
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
         batch_id=batch_id, request=request, settings=settings)

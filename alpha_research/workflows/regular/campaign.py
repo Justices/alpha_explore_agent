@@ -11,6 +11,7 @@ from pathlib import Path
 
 from alpha_research.workflows.regular.scope import discover_regular_scope, regular_delay
 from alpha_research.workflows.regular.campaign_report import prior_campaign_findings, write_campaign_summary
+from alpha_research.workflows.regular.dataset_review import review_dataset
 from alpha_research.qualification.ppa import ppa_requested
 from alpha_research.state.store import (
     atomic_write_json, has_only_completed_probes, is_pre_submission_draft, read_json,
@@ -41,8 +42,15 @@ def load_saved_campaign(state_root, campaign_id):
 
 def campaign_can_resume(state):
     budget = state.get("budget", {})
+    reviews = state.get("dataset_reviews", {})
     return (state.get("active_item") is not None
-            or budget.get("used", {}).get("batches", 0) < budget.get("limits", {}).get("batches", 0))
+            or budget.get("used", {}).get("batches", 0) < budget.get("limits", {}).get("batches", 0)
+            or any(_needs_dataset_review(receipt, reviews) for receipt in state.get("completed", [])))
+
+
+def _needs_dataset_review(receipt, reviews):
+    return (bool(receipt.get("attribution_status") or receipt.get("reconciled"))
+            and reviews.get(receipt["dataset_id"], {}).get("status") not in {"complete", "no_selection"})
 
 
 def delete_saved_campaign(state_root, campaign_id):
@@ -55,6 +63,7 @@ def delete_saved_campaign(state_root, campaign_id):
         path, path.with_name(f"{campaign_id}_scope_plan.json"),
         path.with_name(f"{campaign_id}_summary.json"),
         path.parent / "field_pools" / campaign_id,
+        path.parent / "dataset_reviews" / campaign_id,
         root / "state/codex_threads" / hashlib.sha256(research_id.encode()).hexdigest(),
         store.path_for("campaign", campaign_id),
     }
@@ -98,7 +107,9 @@ def delete_saved_campaign(state_root, campaign_id):
                 raise ValueError("此 Campaign 的文件仍被候选或优选记录引用")
     for ref in (root / "state/logs/workbench").glob("*.campaign.json"):
         if read_json(ref) == {"campaign_id": campaign_id}:
-            owned.update((ref, ref.with_name(ref.name.removesuffix(".campaign.json") + ".jsonl")))
+            launch_id = ref.name.removesuffix(".campaign.json")
+            owned.update((ref, ref.with_name(launch_id + ".jsonl"),
+                          ref.with_name(launch_id + ".launch.json")))
     for ref in (root / "state/logs/model_calls").glob("*.record.json"):
         record = read_json(ref, default={})
         if isinstance(record, dict) and record.get("research_id") == research_id:
@@ -171,6 +182,9 @@ def _subtask_summary(state):
     for entry in state["completed"]:
         groups[entry["dataset_id"]]["completed_batches"] += 1
     for group in groups.values():
+        review = state.get("dataset_reviews", {}).get(group["dataset_id"])
+        if review:
+            group["dataset_review"] = review
         if group["status"] != "eligible":
             continue
         if all(item["status"] == "completed" for item in group["combinations"]):
@@ -514,19 +528,54 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         items_by_dataset.setdefault(item["dataset_id"], []).append(index)
     dataset_slots = list(items_by_dataset.values())
     attempt_limit = state["budget"]["limits"]["batches"]
+    if max_batches is None:
+        schedule = list(range(attempt_limit))
+    else:
+        schedule = [slots[round_number % len(slots)]
+                    for round_number in range(max_batches) for slots in dataset_slots]
+        schedule = schedule[:attempt_limit]
+    last_attempt = {items[index]["dataset_id"]: attempt
+                    for attempt, index in enumerate(schedule, start=1)}
+    reviewed_this_run = set()
+
+    def finish_ready_datasets():
+        reviews = state.setdefault("dataset_reviews", {})
+        for dataset_id, last in last_attempt.items():
+            if last > state["budget"]["used"]["batches"] or dataset_id in reviewed_this_run:
+                continue
+            if agent.stop_flag and agent.stop_flag.exists():
+                return
+            receipts = [row for row in state["completed"] if row["dataset_id"] == dataset_id]
+            if not any(_needs_dataset_review(row, reviews) for row in receipts):
+                continue
+            reviewed_this_run.add(dataset_id)
+            directory = (path.parent / "dataset_reviews" / campaign_id /
+                         _key({"dataset_id": dataset_id}))
+            try:
+                reviews[dataset_id] = review_dataset(
+                    agent, gateway, state_root, directory, request, dataset_id, receipts,
+                    [failure for failure in state.get("failures", [])
+                     if items[failure["item_index"]]["dataset_id"] == dataset_id])
+                if reviews[dataset_id]["status"] == "attribution_pending":
+                    write_progress(f"{dataset_id} · 数据集归因待补")
+            except Exception as exc:
+                saved = read_json(directory / "review.json", default={})
+                reviews[dataset_id] = {
+                    **saved, "status": saved.get("status", "attribution_pending"),
+                    "error": str(exc)}
+                write_progress(f"{dataset_id} · 数据集收尾待恢复 · {type(exc).__name__} · {exc}")
+            _checkpoint_campaign(state, state_root, path)
+
     while state["budget"]["used"]["batches"] < attempt_limit:
+        finish_ready_datasets()
         if agent.stop_flag and agent.stop_flag.exists():
             state["status"] = "user_stopped"
             break
         used = state["budget"]["used"]["batches"]
         if resume_batch is not None:
             index = state["active_item"]
-        elif max_batches is None:
-            index = used
         else:
-            round_number, dataset_slot = divmod(used, len(dataset_slots))
-            combinations = dataset_slots[dataset_slot]
-            index = combinations[round_number % len(combinations)]
+            index = schedule[used]
         item = items[index]
         write_progress(f"开始执行第 {used + 1}/{attempt_limit} 批 · {item['dataset_id']}")
         state["active_item"] = index
@@ -617,11 +666,14 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         state["status"] = "active"
         _checkpoint_campaign(state, state_root, path)
     else:
+        finish_ready_datasets()
         if agent.stop_flag and agent.stop_flag.exists():
             state["status"] = "user_stopped"
         elif not state["completed"]:
             state["status"] = "unresolved"
-        elif (state["budget"]["used"]["batches"] > len(state["completed"])
+        elif (any(review["status"] not in {"complete", "no_selection"}
+                  for review in state.get("dataset_reviews", {}).values())
+              or state["budget"]["used"]["batches"] > len(state["completed"])
               or any(entry.get("field_research_status") == "partial"
                      or entry.get("attribution_status") == "unresolved"
                      for entry in state["completed"])):
@@ -642,6 +694,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "failures": state.get("failures", []),
             "remaining_items": state["remaining_items"],
             "subtasks": state["subtasks"],
+            "dataset_reviews": state.get("dataset_reviews", {}),
             "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
             "unresolved": state["plan"]["unresolved"],
             "state_path": str(path), "summary_path": str(summary_path)}

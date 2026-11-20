@@ -251,7 +251,15 @@ async function showResearchSummary(id){
        row.execution_failures.length?"回测未完成 "+row.execution_failures.length+" 组":"",
        row.reason||""].filter(Boolean).join("。")||"—")
    ]);
+   const reviews=Object.entries(result.dataset_reviews||{}).map(([dataset,review])=>[
+     esc(dataset),
+     esc(review.attribution?.summary||(review.status==="attribution_pending"?"归因待补":"—")),
+     esc(review.source?.alpha_id??"—"),esc(review.attribution?.selection_reason??"—"),
+     esc(review.optimization?.candidate_alpha_id??(review.status==="optimization_pending"?"优化待恢复":"—")),
+     esc(review.optimization?.candidate_status??review.error??"—")
+   ]);
    show("研究复盘",'<p>'+esc(result.objective)+'</p>'+
+     (reviews.length?table(["数据集","数据集归因","优化来源","选择理由","优化产出","审计或待处理项"],reviews):"")+
      table(["研究范围","回测数","最高 Sharpe","主要门槛失败","归因及未完成项"],rows),null);
  }catch(error){
    notify(error.message);

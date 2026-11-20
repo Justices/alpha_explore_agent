@@ -105,6 +105,14 @@ require discovery and validation; this scope does not assert their details.
 
 ## 5. Alpha Optimization
 
+A Regular Campaign closes each Dataset after its scheduled backtest attempts.
+It attributes the saved results and records any gaps in the evidence. The
+Dataset review may select one measured source Alpha with a concrete improvement
+to test, then launch one independent optimization branch in the same scope.
+Record the reason when no source is selected. Resume incomplete attribution
+from the saved receipts and reconcile an existing optimization intent before
+taking further action on it.
+
 Resolve the required Alpha ID and confirm whether the source is Regular or
 Super before planning. Capture a read-only source snapshot, effective settings,
 available diagnostics and evidence; report inaccessible or ambiguous sources.
