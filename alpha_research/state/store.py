@@ -7,6 +7,7 @@ lives in these files (NFR-01).
 import hashlib
 import json
 import os
+import tempfile
 from pathlib import Path
 
 from alpha_research.state import paths
@@ -14,10 +15,35 @@ from alpha_research.state.operation_lock import SubmissionGate
 
 
 def atomic_write_json(path: Path, data) -> None:
+    """Publish one complete JSON value with a unique, fsynced temp file.
+
+    The caller remains responsible for serializing concurrent read/modify/
+    write transactions. Distinct temporary names prevent concurrent writers
+    from truncating each other's unfinished payloads.
+    """
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    encoded = json.dumps(data, ensure_ascii=False, indent=2)
+    fd, temporary = tempfile.mkstemp(
+        prefix="." + path.name + ".tmp-", dir=path.parent)
+    tmp_path = Path(temporary)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_path, path)
+        # POSIX rename durability also requires syncing the directory entry.
+        # Windows does not support opening directories this way.
+        if os.name == "posix":
+            directory_fd = os.open(
+                path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        tmp_path.unlink(missing_ok=True)
 
 
 def read_json(path: Path, default=None):
