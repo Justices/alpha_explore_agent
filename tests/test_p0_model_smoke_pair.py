@@ -10,6 +10,11 @@ from unittest.mock import patch
 
 from alpha_research.cli import main
 from alpha_research.integrations.model import ConfiguredModelClient
+from alpha_research.agents.registry import (
+    bundled_registry_path, load_registry, load_role_profile,
+    select_registered_backends,
+)
+from alpha_research.agents.probe import run_model_probe
 
 
 class ModelSmokePairTests(unittest.TestCase):
@@ -122,6 +127,51 @@ class ModelSmokePairTests(unittest.TestCase):
         self.assertNotIn("tools", envelopes[0])
         client.complete_json("attribute_results", {})
         self.assertNotIn("max_tokens", envelopes[1])
+
+    def test_probe_persists_one_attempt_and_sealed_response_with_fake_transport(self):
+        effective = select_registered_backends(
+            load_role_profile(), load_registry(bundled_registry_path()),
+            assignments={"research_lead": "glm", "research_executor": "kimi"},
+        )
+
+        class OfflineClient:
+            config = {"provider": "offline-fixture"}
+            last_usage = {"prompt_tokens": 7, "completion_tokens": 5}
+            last_model = "offline-fixture"
+            last_thread_id = None
+            last_response_text = None
+
+            def __init__(self):
+                self.calls = 0
+
+            def complete_json(self, task, context, *, thread_path=None):
+                self.calls += 1
+                if task != "model_probe" or not context["no_brain_requests"]:
+                    raise AssertionError("only model_probe is authorized")
+                return {"ready": True, "contract": "model_probe_v1"}
+
+        client = OfflineClient()
+        with patch("alpha_research.agents.probe.build_model_client",
+                   side_effect=AssertionError("real client must not be built")):
+            report = run_model_probe(
+                effective, self.root, role="research_lead",
+                allow_model_call=True, model_factory=lambda config: client)
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(client.calls, 1)
+        self.assertFalse(report["brain_invoked"])
+        self.assertEqual(report["reported_usage"]["attempts"], 1)
+        self.assertEqual(report["reported_usage"]["successful"], 1)
+        self.assertEqual(report["reported_usage"]["reported_tokens"], 12)
+        call_files = list((self.root / "state/logs/model_calls").glob("*.record.json"))
+        self.assertEqual(len(call_files), 1)
+        audit = json.loads(call_files[0].read_text(encoding="utf-8"))
+        self.assertEqual(audit["task"], "model_probe")
+        self.assertEqual(audit["research_id"], report["research_id"])
+        response_file = (self.root / "state/logs/model_calls" /
+                         (audit["call_id"] + ".response.json"))
+        sealed = json.loads(response_file.read_text(encoding="utf-8"))
+        self.assertEqual(sealed["status"], "ok")
+        self.assertEqual(len(sealed["state_sha256"]), 64)
 
     def test_single_role_requires_explicit_permission_for_real_provider(self):
         output = StringIO()
