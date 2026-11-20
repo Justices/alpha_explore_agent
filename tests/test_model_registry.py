@@ -160,6 +160,33 @@ class ModelRegistryTests(unittest.TestCase):
                 "research_lead": "deepseek", "research_executor": "deepseek",
             })
 
+    def test_preflight_readiness_uses_canonical_roles_with_legacy_config(self):
+        from alpha_research.agents.readiness import inspect_live_model_roles
+        from alpha_research.config import DEFAULT_CONFIG
+        cfg = copy.deepcopy(DEFAULT_CONFIG)
+        cfg["model"] = {
+            "provider": "openai_sdk",
+            "model": "obsolete-inline-backend",
+            "base_url": "https://api.deepseek.com",
+            "api_key_env": "OBSOLETE_API_KEY",
+        }
+        with patch("alpha_research.agents.doctor._openai_sdk_present",
+                   return_value=True):
+            result = inspect_live_model_roles(
+                cfg, bundled_registry_path(),
+                lead="deepseek", executor="deepseek",
+                environment={"DEEPSEEK_API_KEY": "test-only-secret"},
+            )
+        self.assertEqual(result["status"], "READY_LOCAL")
+        self.assertEqual(
+            set(result["roles"]), {"research_lead", "research_executor"})
+        self.assertEqual(
+            {role["registered_backend"] for role in result["roles"].values()},
+            {"registry:deepseek"})
+        self.assertNotIn("test-only-secret", str(result))
+        self.assertFalse(result["provider_invoked"])
+        self.assertFalse(result["brain_invoked"])
+
     def test_cli_list_is_offline_and_does_not_require_config(self):
         with tempfile.TemporaryDirectory() as td, \
              patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")), \
