@@ -75,6 +75,14 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             raise ModelError("previous model response has invalid status; retry blocked")
         if payload["status"] == "ok" and not isinstance(payload.get("result"), dict):
             raise ModelError("previous model decision must be a JSON object")
+        if (payload["status"] == "error"
+                and (not isinstance(payload.get("error_type"), str)
+                     or not isinstance(payload.get("error"), str))):
+            raise ModelError("previous model error evidence is incomplete; retry blocked")
+        if record.get("status") != "in_flight" and (
+                record.get("token_in") != payload.get("token_in")
+                or record.get("token_out") != payload.get("token_out")):
+            raise ModelError("recorded model usage mismatch; replay blocked")
         if record.get("status") not in {"in_flight", payload.get("status")}:
             raise ModelError("recorded model status mismatch; replay blocked")
         if record.get("status") != "in_flight" and not record.get("response_sha256"):
