@@ -1,6 +1,8 @@
 # Research Architecture V1.1
 
 This architecture implements the approved [research scope](RESEARCH_SCOPE.md).
+See [Current Design](CURRENT_DESIGN.md) for the consolidated system overview,
+verified status and maintained document index.
 The root [agent contract](../AGENTS.md) and approved scope are normative;
 older design files are historical references. The architecture is a target
 until each workflow's execution, recovery and audit path is verified.
