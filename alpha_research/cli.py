@@ -280,6 +280,9 @@ def main(argv=None):
             # The models CLI is an operational boundary: don't leak provider
             # credential-bearing exceptions, network payloads, or raw prompts.
             from alpha_research.integrations.model import ModelError
+            if isinstance(exc, ModelRegistryError):
+                print(f"model runtime failed: {exc}", file=sys.stderr)
+                return 2
             if isinstance(exc, (OSError, KeyError, ValueError, TypeError, ModelError,
                                 TimeoutError)):
                 print(f"model runtime failed: {type(exc).__name__}", file=sys.stderr)
