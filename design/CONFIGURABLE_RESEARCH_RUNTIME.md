@@ -166,3 +166,25 @@ tests. Real BRAIN simulation requires a tool gateway that reuses the existing
 live pre-registration/receipt/recovery path and enforces explicit approval.
 The research UI, production task queue, submission gate, and correlation
 qualification services are not replaced by this offline research-cycle module.
+
+
+## Inspect effective roles without invoking Codex, AGY, or BRAIN
+
+The role-inspection command parses and validates the configured role/backend/provider
+mapping without instantiating a model client or invoking an external service:
+
+    python -m alpha_research.agents --config config.example.json \
+      --task construct_batch --task attribute_results
+
+The output shows selected provider, model name, timeout, Codex session mode
+and credential environment-variable *name* only. Secret values are omitted.
+Codex session mode is research (isolated persistent thread per research ID
+and logical role) or ephemeral (no persisted thread). Sandbox remains read-only.
+
+## Antigravity SDK contract test
+
+Optional SDK dependency: google-antigravity>=0.1.16,<0.2. The CI
+agy-sdk-contract job installs that dependency and calls
+AntigravityModelClient.build_local_config with a synthetic placeholder key,
+checking that built-in tools, skills, MCP servers and subagents are restricted.
+No Agent session, model request, BRAIN call, or submission is performed.
