@@ -32,10 +32,11 @@ class CliRuntimeContext:
             raise OrchestrationError("active CLI Gateway/config unavailable")
         return cls(root, config, gateway, model, agent, expected)
 
-    def dispatch(self, command, args, *, execution_context=None):
+    def dispatch(self, command, args, *, dispatcher=None, execution_context=None):
         """Reuse the original domain Dispatch with existing CLI objects."""
-        from alpha_research.orchestration.dispatch import dispatch
+        if dispatcher is None:
+            from alpha_research.orchestration.dispatch import dispatch as dispatcher
 
-        return dispatch(
+        return dispatcher(
             command, args, self.config, self.state_root,
             self.gateway, self.agent, execution_context=execution_context)
