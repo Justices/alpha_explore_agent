@@ -8,7 +8,7 @@ from alpha_research.agents.antigravity import (
     AntigravityAdapterError, AntigravityModelClient, decode_json_object
 )
 from alpha_research.agents.configuration import AgentConfigError
-from alpha_research.integrations.model import build_model_client, DecisionRecorder
+from alpha_research.integrations.model import build_model_client, DecisionRecorder, ModelError
 from alpha_research.research_cycle import OfflineResearchCycle, OfflineSimulationGateway
 from alpha_research.research_cycle.contracts import ResearchContractError
 
@@ -86,6 +86,50 @@ class TestConfigurableAgents(unittest.TestCase):
             row = json.loads(records[0].read_text(encoding="utf-8"))
             self.assertEqual(row["agent_role"], "research_executor")
             self.assertEqual(row["provider"], "mock")
+
+    def test_batch_replay_is_bound_to_exact_role_and_backend(self):
+        with tempfile.TemporaryDirectory() as td:
+            batch = Path(td) / "batch"
+            recorder = DecisionRecorder(build_model_client(config()), Path(td))
+            recorder.begin_session(research_id="R1")
+            recorder.bind_batch(batch)
+            first = recorder.complete_json("attribute_results", {"fixture": "evidence"})
+            self.assertEqual(first["summary"], "Synthetic experiment only")
+            same = DecisionRecorder(build_model_client(config()), Path(td))
+            same.begin_session(research_id="R1")
+            same.bind_batch(batch)
+            self.assertEqual(same.complete_json("attribute_results", {"fixture": "evidence"}), first)
+            self.assertEqual(len(list((Path(td) / "logs" / "model_calls").glob("*.record.json"))), 1)
+            switched = config()
+            switched["backends"]["replacement"] = {
+                "provider": "mock", "responses": {
+                    "attribute_results": {"summary": "new provider", "findings": []}
+                }
+            }
+            switched["roles"]["research_executor"]["backend"] = "replacement"
+            next_recorder = DecisionRecorder(build_model_client(switched), Path(td))
+            next_recorder.begin_session(research_id="R1")
+            next_recorder.bind_batch(batch)
+            with self.assertRaisesRegex(ModelError, "role/backend"):
+                next_recorder.complete_json("attribute_results", {"fixture": "evidence"})
+            self.assertEqual(len(list((Path(td) / "logs" / "model_calls").glob("*.record.json"))), 1)
+
+    def test_batch_replay_rejects_modified_stored_model_response(self):
+        with tempfile.TemporaryDirectory() as td:
+            batch = Path(td) / "batch"
+            initial = DecisionRecorder(build_model_client(config()), Path(td))
+            initial.begin_session(research_id="R1")
+            initial.bind_batch(batch)
+            initial.complete_json("attribute_results", {"fixture": "evidence"})
+            saved, = list((batch / "model_calls").glob("*.response.json"))
+            payload = json.loads(saved.read_text(encoding="utf-8"))
+            payload["result"]["summary"] = "untrusted replacement"
+            saved.write_text(json.dumps(payload), encoding="utf-8")
+            replay = DecisionRecorder(build_model_client(config()), Path(td))
+            replay.begin_session(research_id="R1")
+            replay.bind_batch(batch)
+            with self.assertRaisesRegex(ModelError, "checksum mismatch"):
+                replay.complete_json("attribute_results", {"fixture": "evidence"})
 
     def test_offline_cycle(self):
         gw = gateway()
