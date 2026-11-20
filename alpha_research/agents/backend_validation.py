@@ -114,7 +114,7 @@ def validate_backend(name, spec):
         if not isinstance(spec.get("model"), str) or not spec["model"].strip():
             raise AgentConfigError("openai_sdk requires model")
         response_format = spec.get("response_format", "json_object")
-        if response_format not in {"json_object", "none"}:
+        if not isinstance(response_format, str) or response_format not in {"json_object", "none"}:
             raise AgentConfigError(
                 "OpenAI SDK response_format must be json_object or none")
         allowed = {"provider", "kind", "model", "base_url",
