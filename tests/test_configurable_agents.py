@@ -152,7 +152,7 @@ class TestConfigurableAgents(unittest.TestCase):
             build_model_client(cfg)
 
     def test_http_timeout_setting_reaches_default_transport(self):
-        from alpha_research.integrations import model as model_module
+        from alpha_research.integrations import model_http as model_http_module
         cfg = {
             "provider": "openai_compatible",
             "url": "https://api.example.invalid/v1/chat/completions",
@@ -172,7 +172,7 @@ class TestConfigurableAgents(unittest.TestCase):
             seen.append(timeout)
             return FakeResponse()
         # json.load works with a file-like .read() response.
-        with patch.object(model_module, "urlopen", side_effect=fake_urlopen):
+        with patch.object(model_http_module, "urlopen", side_effect=fake_urlopen):
             result = ConfiguredModelClient(cfg, environ={"TEST_API_KEY": "fixture"}).complete_json(
                 "plan_experiments", {"fixture": 1})
         self.assertEqual(result, {"ok": True})
