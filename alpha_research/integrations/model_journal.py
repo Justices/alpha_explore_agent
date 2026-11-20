@@ -42,7 +42,9 @@ class ModelCallJournal:
         atomic_write_json(context_path, context)
         atomic_write_json(record_path, record)
         call = (record, context_path, response_path, record_path)
-        self.sync_batch_calls([call], batch_dir=batch_dir, session_id=session_id)
+        self.sync_batch_calls(
+            [call], batch_dir=batch_dir, session_id=session_id,
+            research_id=record.get("research_id"))
         self.append_event(record)
         return context_path, response_path, record_path
 
@@ -70,7 +72,9 @@ class ModelCallJournal:
         self.append_event(record)
         call = (record, context_path, response_path, record_path)
         self.session_calls.append(call)
-        self.sync_batch_calls([call], batch_dir=batch_dir, session_id=session_id)
+        self.sync_batch_calls(
+            [call], batch_dir=batch_dir, session_id=session_id,
+            research_id=record.get("research_id"))
 
 
     @staticmethod
@@ -138,7 +142,7 @@ class ModelCallJournal:
         finally:
             guard.__exit__(None, None, None)
 
-    def sync_batch_calls(self, calls, *, batch_dir, session_id):
+    def sync_batch_calls(self, calls, *, batch_dir, session_id, research_id=None):
         """Atomically merge session entries into the shared batch manifest."""
         if batch_dir is None:
             return
@@ -151,16 +155,16 @@ class ModelCallJournal:
                     with self._session_index_guard(session_id) as session_path:
                         return self._sync_batch_calls_locked(
                             calls, batch_dir=batch_dir, session_id=session_id,
-                            session_path=session_path)
+                            session_path=session_path, research_id=research_id)
                 return self._sync_batch_calls_locked(
                     calls, batch_dir=batch_dir, session_id=None,
-                    session_path=None)
+                    session_path=None, research_id=research_id)
         except WriterLockError as exc:
             raise ModelError(
                 "another writer is updating this batch model manifest") from exc
 
     def _sync_batch_calls_locked(self, calls, *, batch_dir, session_id,
-                                 session_path):
+                                 session_path, research_id):
         """Rebinding completed calls is idempotent; never re-copy unchanged rows."""
         target = batch_dir / "model_calls"
         target.mkdir(parents=True, exist_ok=True)
@@ -220,7 +224,26 @@ class ModelCallJournal:
             merged_index = merge_index(
                 previous_index, session_id, str(batch_dir),
                 [row["call_id"] for row in entries.values()
-                 if row.get("session_id") == session_id])
+                 if row.get("session_id") == session_id],
+                research_id=research_id)
+            if (previous_index is not None
+                    and previous_index.get("research_id") is None
+                    and research_id is not None):
+                # Old indices had no research ownership field. Verify every
+                # prior call's saved audit identity before assigning one.
+                for call_id in previous_index["call_ids"]:
+                    prior_path = self.calls_root / (call_id + ".record.json")
+                    try:
+                        prior = json.loads(prior_path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError) as exc:
+                        raise ModelError(
+                            "legacy model session lacks verifiable call ownership") from exc
+                    if (not isinstance(prior, dict)
+                            or prior.get("call_id") != call_id
+                            or prior.get("session_id") != session_id
+                            or prior.get("research_id") != research_id):
+                        raise ModelError(
+                            "legacy model session audit research identity mismatch")
         if changed:
             atomic_write_json(manifest_path, {
                 "session_ids": sorted({row.get("session_id") for row in entries.values()
