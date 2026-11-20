@@ -39,7 +39,12 @@ class WorkbenchLaunchTests(unittest.TestCase):
                 patch.object(serve, "monotonic", create=True, return_value=100) as clock:
             cfg = Path(root) / "config" / "nastu_quant.json"
             cfg.parent.mkdir(parents=True)
-            cfg.write_text("{}", encoding="utf-8")
+            cfg.write_text(json.dumps({
+                "model_governance": {
+                    "max_calls": 5, "max_reported_tokens": 1000,
+                    "failover": "manual",
+                },
+            }), encoding="utf-8")
             server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
             port = server.server_address[1]
             server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
