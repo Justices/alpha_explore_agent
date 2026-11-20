@@ -4,11 +4,11 @@ The application chooses a task; roles choose capabilities; backends implement
 model transport. The router itself never invokes a BRAIN tool or simulation.
 """
 import copy
-from contextvars import ContextVar
 from threading import Lock
 
 from alpha_research.agents.configuration import AgentConfigError, RoleRoutingConfig
 from alpha_research.agents.antigravity import AntigravityModelClient
+from alpha_research.integrations.model_metadata import InvocationMetadata
 
 
 class MockModelClient:
@@ -35,7 +35,7 @@ class MockModelClient:
         return copy.deepcopy(answer)
 
 
-class RoleRoutedModelClient:
+class RoleRoutedModelClient(InvocationMetadata):
     """Implements complete_json(task, context) and config_for(task).
 
     Each backend is lazily initialized. All result types remain JSON objects.
@@ -48,10 +48,8 @@ class RoleRoutedModelClient:
         self.instances = {}
         self._instance_locks = {}
         self._factory_lock = Lock()
-        # Each thread/async context sees only the metadata of its own call.
-        # Backends may share mutable last_* fields, so snapshot them while
-        # holding the per-backend call lock.
-        self._last_call = ContextVar(f"role_runtime_metadata_{id(self)}", default=None)
+        # Invocation receipt is scoped to this thread/async context.
+        self._init_invocation_metadata()
 
     def _make_backend(self, binding):
         if self.backend_factory is not None:
@@ -88,30 +86,10 @@ class RoleRoutedModelClient:
     def backend_name_for(self, task):
         return self.route_for(task).backend_name
 
-    def _metadata(self, name):
-        snapshot = self._last_call.get()
-        return copy.deepcopy(snapshot.get(name)) if snapshot is not None else None
-
-    @property
-    def last_usage(self):
-        return self._metadata("last_usage")
-
-    @property
-    def last_model(self):
-        return self._metadata("last_model")
-
-    @property
-    def last_response_text(self):
-        return self._metadata("last_response_text")
-
-    @property
-    def last_thread_id(self):
-        return self._metadata("last_thread_id")
-
     def complete_json(self, task, context, *, thread_path=None):
         # Clear this invocation's metadata before route resolution. An invalid
         # task cannot inherit the last successful call's usage or model name.
-        self._last_call.set(None)
+        self._reset_invocation_metadata()
         _, backend, call_lock = self._backend(task)
         with call_lock:
             try:
@@ -120,8 +98,4 @@ class RoleRoutedModelClient:
                 # Snapshot even on provider errors: DecisionRecorder needs the
                 # error response text/usage from this exact failed invocation.
                 # Do not copy backend references into the invocation context.
-                self._last_call.set({
-                    name: copy.deepcopy(getattr(backend, name, None))
-                    for name in ("last_usage", "last_model",
-                                 "last_response_text", "last_thread_id")
-                })
+                self._capture_metadata(backend)
