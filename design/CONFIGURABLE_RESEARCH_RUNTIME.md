@@ -122,3 +122,47 @@ retaining the old context/response hashes and a reason in the run record.
 It does not clear or replay a simulation intent. Plans cannot be invalidated
 after simulation intents exist. Operator action is required for the subsequent
 resume_blocked=True call. An experimental source remains NOT_EVALUATED.
+
+
+## P1/P2 safety hardening (offline scope)
+
+- PENDING or FAILED fixture results are **unsettled**, not performance
+  evidence. The engine stops before AGY attribution or Codex reflection.
+  The journal records UNSETTLED; the operator must read back a completed,
+  schema-valid offline fixture via explicit reconciliation before resuming.
+- Experiment IDs and expression+settings signatures must be unique across
+  rounds. Reusing an ID for a different expression is rejected.
+- After a crash between a round COMPLETED checkpoint and the terminal task
+  status, the next run derives the terminal decision from the saved immutable
+  report without launching another experiment.
+- Durable P1 state files have a SHA-256 checksum, validate their schema,
+  simulation intents and budget invariants on load. This detects accidental
+  corruption, NOT malicious tampering by a writer with filesystem access.
+  Old unsealed state files fail closed; explicitly migrate/review them or start
+  a new research ID. Never silently restart a previous experiment.
+- For role_router model sessions, the stored role/backend and prompt contract
+  are hashed into batch decision audit entries. Replaying a decision under a
+  different configuration is blocked; corrupted stored responses are rejected.
+  Older manifests without a role identity cannot be silently reused under
+  the new role_router contract.
+- Codex's configured session may be research (persisted, isolated by research
+  ID + logical role) or ephemeral (no saved thread). In both cases the CLI
+  research tool remains read-only, without arbitrary shell/network tooling.
+  The Codex sandbox configuration cannot request a write-capable mode.
+- AGY tools, skills, MCP servers, and subagents remain disabled in P0/P1;
+  provider configs that request extra capabilities or embed raw credentials
+  fail validation rather than silently ignoring the requested setting.
+
+The CI workflow exercises Linux and Windows mock-only full suites, plus
+explicit corrupt-state, replay, simulation-uncertainty, and thread-isolation
+fault injection. No Codex CLI, AGY SDK, Gemini API, BRAIN service, or live
+Alpha submission is invoked by these offline tests.
+
+### Production gaps still open
+
+This branch is **not** an operational unattended Alpha production runner.
+Real AGY SDK and Codex CLI compatibility requires separately approved smoke
+tests. Real BRAIN simulation requires a tool gateway that reuses the existing
+live pre-registration/receipt/recovery path and enforces explicit approval.
+The research UI, production task queue, submission gate, and correlation
+qualification services are not replaced by this offline research-cycle module.
