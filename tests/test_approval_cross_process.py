@@ -138,7 +138,7 @@ class CrossProcessApprovalTests(unittest.TestCase):
 
     def test_hard_process_exit_after_canonical_claim_blocks_both_identities(self):
         process, ready, _ = self._launch(
-            "crash", self._payload("3" * 32), mode="crash_after_task_fence")
+            "crash", self._payload("3" * 32), mode="crash_after_canonical_claim")
         self._ready([ready])
         (self.root / "start").write_text("go", encoding="utf-8")
         _, error = process.communicate(timeout=20)
