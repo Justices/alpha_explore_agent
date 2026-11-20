@@ -4,6 +4,8 @@ The application chooses a task; roles choose capabilities; backends implement
 model transport. The router itself never invokes a BRAIN tool or simulation.
 """
 import copy
+from contextvars import ContextVar
+from threading import Lock
 
 from alpha_research.agents.configuration import AgentConfigError, RoleRoutingConfig
 from alpha_research.agents.antigravity import AntigravityModelClient
@@ -44,7 +46,12 @@ class RoleRoutedModelClient:
         self.backend_factory = backend_factory
         self.environ = environ
         self.instances = {}
-        self.active = None
+        self._instance_locks = {}
+        self._factory_lock = Lock()
+        # Each thread/async context sees only the metadata of its own call.
+        # Backends may share mutable last_* fields, so snapshot them while
+        # holding the per-backend call lock.
+        self._last_call = ContextVar(f"role_runtime_metadata_{id(self)}", default=None)
 
     def _make_backend(self, binding):
         if self.backend_factory is not None:
@@ -64,9 +71,13 @@ class RoleRoutedModelClient:
 
     def _backend(self, task):
         binding = self.route_for(task)
-        if binding.backend_name not in self.instances:
-            self.instances[binding.backend_name] = self._make_backend(binding)
-        return binding, self.instances[binding.backend_name]
+        # Lazy construction and lock creation must be one transaction.
+        with self._factory_lock:
+            if binding.backend_name not in self.instances:
+                self.instances[binding.backend_name] = self._make_backend(binding)
+                self._instance_locks[binding.backend_name] = Lock()
+            return (binding, self.instances[binding.backend_name],
+                    self._instance_locks[binding.backend_name])
 
     def config_for(self, task):
         return self.route_for(task).backend
@@ -77,26 +88,40 @@ class RoleRoutedModelClient:
     def backend_name_for(self, task):
         return self.route_for(task).backend_name
 
+    def _metadata(self, name):
+        snapshot = self._last_call.get()
+        return copy.deepcopy(snapshot.get(name)) if snapshot is not None else None
+
     @property
     def last_usage(self):
-        return getattr(self.active, "last_usage", None)
+        return self._metadata("last_usage")
 
     @property
     def last_model(self):
-        return getattr(self.active, "last_model", None)
+        return self._metadata("last_model")
 
     @property
     def last_response_text(self):
-        return getattr(self.active, "last_response_text", None)
+        return self._metadata("last_response_text")
 
     @property
     def last_thread_id(self):
-        return getattr(self.active, "last_thread_id", None)
+        return self._metadata("last_thread_id")
 
     def complete_json(self, task, context, *, thread_path=None):
-        # A rejected new route must never expose the previous backend's usage
-        # or model identity through last_* during an error audit.
-        self.active = None
-        _, backend = self._backend(task)
-        self.active = backend
-        return backend.complete_json(task, context, thread_path=thread_path)
+        # Clear this invocation's metadata before route resolution. An invalid
+        # task cannot inherit the last successful call's usage or model name.
+        self._last_call.set(None)
+        _, backend, call_lock = self._backend(task)
+        with call_lock:
+            try:
+                return backend.complete_json(task, context, thread_path=thread_path)
+            finally:
+                # Snapshot even on provider errors: DecisionRecorder needs the
+                # error response text/usage from this exact failed invocation.
+                # Do not copy backend references into the invocation context.
+                self._last_call.set({
+                    name: copy.deepcopy(getattr(backend, name, None))
+                    for name in ("last_usage", "last_model",
+                                 "last_response_text", "last_thread_id")
+                })
