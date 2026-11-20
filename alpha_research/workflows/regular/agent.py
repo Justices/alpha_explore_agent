@@ -20,13 +20,11 @@ from alpha_research.simulation.matching import match_alphas_detailed
 from alpha_research.qualification.gates import evaluate_candidate, local_self_correlation_state, parse_correlations
 from alpha_research.qualification.ppa import (PPA_MAX_FIELDS, PPA_MAX_OPERATORS, PPA_MIN_SHARPE,
                   ppa_gate_kwargs, ppa_requested)
-from alpha_research.qualification.audit_policy import reconcile_audit_evidence
-from alpha_research.qualification.service import CandidateQualificationService
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.workflows.regular.campaign_state import CampaignStore
 from alpha_research.workflows.regular.diagnosis import DiagnosisError, diagnose_batch
 from alpha_research.workflows.regular.scope import (
-    SCOPE_KEYS, category_matches, dataset_category, exact_catalog_scope, regular_delay,
+    category_matches, dataset_category, exact_catalog_scope, regular_delay,
 )
 from alpha_research.knowledge import KnowledgeService
 from alpha_research.integrations.model import DecisionRecorder, FIELD_EVIDENCE_KEYS, REQUIRED_FIELD_DIMENSIONS
@@ -39,10 +37,9 @@ from alpha_research.workflows.regular.decisions import ResearchDecisionSession
 from alpha_research.workflows.regular.field_plan import FieldPlanWorkflow
 from alpha_research.workflows.regular.candidate_audit import CandidateAuditService
 from alpha_research.workflows.regular.case_evidence import CaseEvidenceStore
-from alpha_research.workflows.regular.settings_validation import _duration_parts, _duration_difference_bounds, _validate_test_period
+from alpha_research.workflows.regular.settings_validation import _validate_test_period
 from alpha_research.workflows.regular.field_catalog import (
-    _rows, _field_summaries, _admissible_field_rows, _catalog,
-    _passes_field_prefilter, _campaign_field_pool,
+    _rows, _field_summaries, _catalog, _campaign_field_pool,
 )
 
 
