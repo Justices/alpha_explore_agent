@@ -20,6 +20,7 @@ authorization to call BRAIN or to promote/submit an Alpha.
 | `orchestration/offline_adapter.py` | Both explicitly offline adapters; never the live BRAIN gateway |
 | `state/fingerprint.py` | Canonical JSON digest |
 | `state/sealed.py` | One persisted state checksum contract for both offline research checkpoints and model-call ledgers |
+| `state/store.py` | Unique-file atomic JSON publication, file fsync and POSIX directory fsync; caller owns concurrent state transaction locking |
 | `integrations/model_prompts.py` | Canonical task instructions, field-evidence vocabulary and knowledge policy shared by CLI, LLM API and Antigravity SDK |
 | `integrations/model.py` | `ConfiguredModelClient` transport dispatcher plus `DecisionRecorder` call/budget coordinator; no inline HTTP or CLI execution |
 | `integrations/model_cli.py` | Isolated CLI Agent invocation, sandbox/thread controls and CLI response admission |
@@ -85,6 +86,9 @@ no implicit fallback or repost of an unknown Simulation is permitted.
 - `tests/test_model_transaction_boundary.py`:
   cross-file reservation/intent/manifest/response crash gaps, sealed response
   corruption rejection and operator-visible orphan reservation IDs
+- `tests/test_atomic_store.py`:
+  interrupted rename cleanup, complete concurrent JSON publication,
+  fsynced files and intact sealed model/research state
 - `tests/test_model_transport_boundaries.py`:
   CLI/HTTP adapter separation, credential handling, contract decoding and no accidental cross-transport invocation
 - `tests/test_agent_runtime_boundaries.py`:
@@ -285,6 +289,9 @@ Never enable real Simulation or Alpha submission merely to validate a refactor.
   one atomic filesystem replacement. Every intermediate crash point must
   therefore leave a fail-closed state instead of permitting automatic retry.
 - The response and its `state_sha256` share **one atomic JSON write**.
+  Shared `atomic_write_json` now writes to a unique same-directory temp file,
+  fsyncs its contents, performs `os.replace` and fsyncs the directory on
+  POSIX. Failures before replacement preserve the prior JSON unchanged.
   A terminal response persisted before the terminal audit can be accepted
   only after validating that seal, its task/context/route/research identity,
   response shape, and the original reserved budget attempt. Invalid or
