@@ -83,6 +83,10 @@ GitHub Actions [44747223404](https://github.com/Justices/alpha_explore_agent/act
 
 新增 `tests/test_execution_proposal.py` 进行纯离线校验，覆盖三类工作流的指纹绑定、幂等读取、篡改拒绝、错误预算和非 CREATED 任务。生产 Adapter 的 `validate` 阶段拒绝行为与 CLI 入口禁用规则保持不变。
 
+### P1.4 离线测试验收（2026-11-20）
+
+GitHub Actions [44748199366](https://github.com/Justices/alpha_explore_agent/actions/runs/44748199366) 对应代码提交 `3de1af73f7dad888fbe88aa3ab9744764bbecd51`；读取两平台原始日志：Linux **622 tests, OK**（29.044 秒），Windows **622 tests, OK**（188.767 秒），AGY SDK 合同检查通过。此结论验证不可授权提案记录的离线契约，不构成真实 BRAIN Simulation 或生产执行许可。
+
 ## P1.2 领域恢复与状态一致性核对
 
 本轮从 `orchestration/recovery.py`、`orchestration/engine.py`、`simulation/intent.py`、`tests/test_recovery_coordinator.py` 以及 `tests/test_workflow_adapter.py` 核对以下边界：
