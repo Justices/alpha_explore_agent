@@ -4,6 +4,7 @@ The agent depends only on ``complete_json(task, context)``.
 """
 import hashlib
 import os
+from threading import RLock
 import time
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +66,9 @@ class DecisionRecorder:
 
     def __init__(self, model, state_root: Path, *, governance=None):
         self.model = model
+        # Session/manifest ownership is per-recorder; never allow two threads
+        # to switch sessions or append call history at the same time.
+        self._call_lock = RLock()
         self.state_root = Path(state_root).resolve()
         self.journal = ModelCallJournal(self.state_root)
         self.budget = None
@@ -77,6 +81,10 @@ class DecisionRecorder:
         self.journal.reset_session()
 
     def begin_session(self, session_id=None, *, research_id=None):
+        with self._call_lock:
+            return self._begin_session_locked(session_id, research_id=research_id)
+
+    def _begin_session_locked(self, session_id=None, *, research_id=None):
         self.session_id = session_id or uuid4().hex
         self.research_id = research_id or self.session_id
         self.batch_dir = None
@@ -84,6 +92,10 @@ class DecisionRecorder:
         return self.session_id
 
     def bind_batch(self, batch_dir: Path):
+        with self._call_lock:
+            return self._bind_batch_locked(batch_dir)
+
+    def _bind_batch_locked(self, batch_dir: Path):
         self.batch_dir = Path(batch_dir).resolve()
         # Only historical calls need copying when a batch is first bound.
         # The active call is synchronized incrementally at its two status
@@ -102,6 +114,11 @@ class DecisionRecorder:
                 completion if isinstance(completion, int) and not isinstance(completion, bool) else None)
 
     def complete_json(self, task: str, context: dict, knowledge_pack_ref=None) -> dict:
+        with self._call_lock:
+            return self._complete_json_locked(task, context, knowledge_pack_ref)
+
+    def _complete_json_locked(self, task: str, context: dict,
+                              knowledge_pack_ref=None) -> dict:
         if self.session_id is None:
             self.begin_session()
         call_id = uuid4().hex
