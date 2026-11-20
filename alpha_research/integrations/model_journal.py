@@ -13,7 +13,9 @@ from contextlib import contextmanager
 from pathlib import Path
 
 from alpha_research.integrations.model_errors import ModelError
-from alpha_research.integrations.model_evidence import check_trusted_path, trusted_replay_paths
+from alpha_research.integrations.model_evidence import (
+    check_trusted_path, read_trusted_json, trusted_replay_paths,
+)
 from alpha_research.integrations.model_sessions import index_path, merge_index
 from alpha_research.state.fingerprint import canonical_json_bytes as _json_bytes
 from alpha_research.state.store import atomic_write_json
@@ -183,7 +185,7 @@ class ModelCallJournal:
         manifest_path = check_trusted_path(
             batch_dir / "model_call_manifest.json", label="batch manifest")
         try:
-            previous = json.loads(manifest_path.read_text(encoding="utf-8"))
+            previous = read_trusted_json(manifest_path, label="batch manifest")
         except FileNotFoundError:
             previous = {}
         except (OSError, ValueError) as exc:
@@ -245,7 +247,7 @@ class ModelCallJournal:
             changed = True
         if session_path is not None:
             try:
-                previous_index = json.loads(session_path.read_text(encoding="utf-8"))
+                previous_index = read_trusted_json(session_path, label="session index")
             except FileNotFoundError:
                 previous_index = None
             except (OSError, ValueError) as exc:
