@@ -12,7 +12,7 @@ from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.agents.configuration import AgentConfigError
 from alpha_research.agents.registry import (
     ModelRegistryError, bundled_registry_path, load_registry, describe_registry,
-    select_registered_backends,
+    select_registered_backends, load_role_profile,
 )
 from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
@@ -244,19 +244,9 @@ def main(argv=None):
                     result = describe_registry(registered)
                 else:
                     path = args.config or root / "config" / "nastu_quant.json"
-                    profile = None
-                    if path.exists():
-                        cfg = json.loads(path.read_text(encoding="utf-8"))
-                        if not isinstance(cfg, dict):
-                            raise ModelRegistryError("research config must be an object")
-                        profile = cfg.get("model")
-                    if profile is None:
-                        profile = json.loads(
-                            (Path(__file__).resolve().parent / "agents" /
-                             "role_profile.json").read_text(encoding="utf-8"))
-                    if not isinstance(profile, dict):
-                        raise ModelRegistryError(
-                            "models inspect/doctor requires a role profile")
+                    config = (json.loads(path.read_text(encoding="utf-8"))
+                              if path.exists() else None)
+                    profile = load_role_profile(config)
                     effective = select_registered_backends(
                         profile, registered, assignments=registry_assignments)
                     if args.models_action == "inspect":
@@ -566,12 +556,7 @@ def main(argv=None):
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
         cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict):
-            raise ModelRegistryError("research config must be an object")
-        if not isinstance(cfg.get("model"), dict):
-            cfg["model"] = json.loads(
-                (Path(__file__).resolve().parent / "agents" /
-                 "role_profile.json").read_text(encoding="utf-8"))
+        cfg["model"] = load_role_profile(cfg)
         if registry_assignments:
             catalog = load_registry(registry_path)
             cfg["model"] = select_registered_backends(

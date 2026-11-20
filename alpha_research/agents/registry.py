@@ -116,3 +116,27 @@ def select_registered_backends(model_config, registry, *, assignments):
 def bundled_registry_path():
     """Bundled fallback; operators may override with --registry."""
     return Path(__file__).resolve().parent / "model_registry.json"
+
+def bundled_profile_path():
+    """One packaged source for all default task/role declarations."""
+    return Path(__file__).resolve().parent / "role_profile.json"
+
+
+def load_role_profile(config=None):
+    """Resolve a profile from business config; never silently merge backends.
+
+    A model profile may be explicitly supplied for tests, but a business
+    configuration normally contains no model section at all.
+    """
+    if config is not None and not isinstance(config, dict):
+        raise ModelRegistryError("research config must be an object")
+    supplied = config.get("model") if config is not None else None
+    if supplied is None:
+        try:
+            supplied = json.loads(bundled_profile_path().read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ModelRegistryError("bundled model role profile unavailable") from exc
+    if not isinstance(supplied, dict):
+        raise ModelRegistryError("model role profile must be an object")
+    return copy.deepcopy(supplied)
+
