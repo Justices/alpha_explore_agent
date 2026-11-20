@@ -85,6 +85,16 @@
 
 `alpha_research/config.py` 文件头仍引用已经从当前分支删除的 `AGENT_DESIGN.md`，已改为指向当前 `AGENTS.md` / `RESEARCH_SCOPE.md` 契约；不改配置语义。
 
+## 离线 CI 与发布门槛
+
+已核对现有 `.github/workflows/agent-runtime-offline.yml`：功能分支 `push` 会在 Linux 与 Windows 上执行 `compileall`、完整 `unittest discover -s tests -v`、Registry CLI 本地检查和 Mock 研究 CLI；另有 AGY SDK 构造检查。**无需另建第二套 CI。**
+
+本轮已把 DeepSeek / GLM / Kimi / Anthropic / OpenAI / BRAIN 的凭证环境变量全部在 CI job 中显式清空。CI 不应依赖真实密钥或授权真实平台调用。
+
+连接器目前只能返回部分触发类别的 Workflow Run 记录；因此`workflow_runs=[]` **不能证明 push CI 没有运行**，更不能证明测试通过。提交前必须在 GitHub Actions 中取得具体 Run ID、Linux/Windows 两套执行结论和失败测试日志；并核对是否存在无法复现的环境差异。
+
+本分支相对 `main` 的变更覆盖多模块和大量历史提交。**不以本轮静态审计代替完整 Review**，也不直接合并。
+
 ## 下一轮整改与验收计划
 
 | 优先级 | 任务 | 通过标准 | 安全限制 |
