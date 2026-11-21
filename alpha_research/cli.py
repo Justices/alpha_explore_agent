@@ -39,8 +39,13 @@ from alpha_research.orchestration.simulation_attempt_admission import (
     stage_simulation_attempt, inspect_staged_simulation_attempt,
 )
 from alpha_research.orchestration.simulation_dispatch_preflight import inspect_simulation_dispatch_gate
-from alpha_research.orchestration.operator_consent import inspect_consent_reservation
-from alpha_research.orchestration.pre_dispatch_escrow import inspect_pre_dispatch_escrow
+from alpha_research.orchestration.operator_consent import (
+    inspect_consent_reservation, verify_external_consent,
+    reserve_consent_for_audit,
+)
+from alpha_research.orchestration.pre_dispatch_escrow import (
+    inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
+)
 from alpha_research.orchestration.simulation_recovery_audit import inspect_simulation_recovery_evidence
 from alpha_research.orchestration.release_gate import inspect_production_release_gate
 from alpha_research.orchestration.mock_workspace import marker_path
@@ -163,6 +168,22 @@ def main(argv=None):
         "orchestration-consent-status",
         help="read-only one-shot operator consent audit status; NEVER grant execution")
     consent_status.add_argument("task_id")
+    for command, help_text in (
+        ("orchestration-consent-verify",
+         "verify external Ed25519 consent evidence without creating authorization"),
+        ("orchestration-consent-reserve",
+         "reserve consent evidence once for audit ONLY; never dispatch"),
+    ):
+        consent_command = sub.add_parser(command, help=help_text)
+        consent_command.add_argument("task_id")
+        consent_command.add_argument(
+            "--receipt", type=_path_argument, required=True)
+        consent_command.add_argument(
+            "--trust-policy", type=_path_argument, required=True)
+    escrow_reserve = sub.add_parser(
+        "orchestration-predispatch-escrow-reserve",
+        help="one-shot offline evidence escrow; NO platform POST or model call")
+    escrow_reserve.add_argument("task_id")
     escrow_status = sub.add_parser(
         "orchestration-predispatch-escrow-status",
         help="read-only pre-POST escrow evidence status; NEVER dispatch BRAIN")
@@ -526,6 +547,9 @@ def main(argv=None):
                         "orchestration-simulation-stage",
                         "orchestration-simulation-stage-status",
                         "orchestration-consent-status",
+                        "orchestration-consent-verify",
+                        "orchestration-consent-reserve",
+                        "orchestration-predispatch-escrow-reserve",
                         "orchestration-predispatch-escrow-status",
                         "orchestration-simulation-recovery-audit",
                         "orchestration-release-gate",
@@ -555,6 +579,26 @@ def main(argv=None):
             if args.command == "orchestration-simulation-recovery-audit":
                 result = inspect_simulation_recovery_evidence(
                     MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-predispatch-escrow-reserve":
+                result = reserve_pre_dispatch_escrow(
+                    MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command in {"orchestration-consent-verify",
+                                "orchestration-consent-reserve"}:
+                receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
+                trust_policy = json.loads(
+                    args.trust_policy.read_text(encoding="utf-8"))
+                if args.command == "orchestration-consent-verify":
+                    result = verify_external_consent(
+                        MainOrchestrator(root), args.task_id,
+                        effective, policy, receipt, trust_policy)
+                else:
+                    result = reserve_consent_for_audit(
+                        MainOrchestrator(root), args.task_id,
+                        effective, policy, receipt, trust_policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-predispatch-escrow-status":
