@@ -35,6 +35,10 @@ class DomainMockGateway:
         if command == "get_simulation_settings_schema":
             return {"selectionHandling": {"type": "choice",
                     "choices": [{"value": "POSITIVE"}]}}
+        if command == "get_datasets":
+            return [{"id": "OFFLINE_DATASET", "category": "OTHER",
+                     "region": self.region, "delay": 1, "universe": "TOP3000",
+                     "description": "offline mock dataset"}]
         if command == "get_user_alphas":
             return {"results": [{"id": "OFFLINE_SUBMITTED", "status": "ACTIVE",
                      "type": "REGULAR", "settings": {
@@ -57,6 +61,36 @@ class DomainMockGateway:
                             "is": {"sharpe": 1.4}}}],
                 "runner": {"mock": True}}
         raise OrchestrationError("offline gateway rejected unsupported command")
+
+
+class RegularMockAgent:
+    """Scripted batch, executed by the real Campaign scheduler (not ResearchAgent)."""
+    def __init__(self, state_root, *, lost_response=False):
+        self.runs_root = Path(state_root) / "runs"
+        self.stop_flag = Path(state_root) / "state" / "stop.flag"
+        self.lost_response = lost_response
+        self.calls = 0
+
+    def run_once(self, objective, *, dataset_id, **kwargs):
+        self.calls += 1
+        if self.calls > 1:
+            raise OrchestrationError("offline Regular attempted additional batch")
+        scope = kwargs["fixed_scope"]
+        batch = self.runs_root / scope["region"] / dataset_id / "offline_mock_batch"
+        batch.mkdir(parents=True, exist_ok=True)
+        intent = batch / "simulation_intent.json"
+        intent.write_text('{"workflow":"regular","mode":"offline_domain_mock"}',
+                          encoding="utf-8")
+        context = kwargs.get("execution_context")
+        if context is not None:
+            context["bind_recovery_target"]("regular_batch", batch)
+        if self.lost_response:
+            raise RuntimeError("injected lost Regular mock batch response")
+        return {
+            "batch_dir": str(batch),
+            "alpha_ids": ["OFFLINE_REGULAR_ALPHA"],
+            "candidate_status": {"OFFLINE_REGULAR_ALPHA": "EVIDENCE_PENDING"},
+        }
 
 
 class DomainMockModel:
@@ -107,6 +141,11 @@ def mock_domain_boundary(region):
             return result
 
     with ExitStack() as stack:
+        # Campaign review is a model-mediated attribution step; replace it in
+        # this standalone offline integration without suppressing scheduling.
+        stack.enter_context(patch(
+            "alpha_research.workflows.regular.campaign.review_dataset",
+            return_value={"status": "no_selection", "mode": "offline_domain_mock"}))
         for module in ("alpha_research.workflows.super_alpha.workflow",
                        "alpha_research.workflows.optimization.workflow"):
             stack.enter_context(patch(module + ".KnowledgeService", DomainMockKnowledge))
@@ -115,9 +154,8 @@ def mock_domain_boundary(region):
 
 
 def build_domain_mock_adapter(state_root, task, *, fault=None):
-    if task["workflow"] not in ("super", "optimization"):
-        raise OrchestrationError(
-            "domain mock currently supports Super and Optimization only")
+    if task["workflow"] not in ("regular", "super", "optimization"):
+        raise OrchestrationError("unsupported domain mock workflow")
     if fault not in (None, "lost-simulation-response"):
         raise OrchestrationError("unsupported domain mock failure injection")
     request = task["request"]
@@ -130,5 +168,11 @@ def build_domain_mock_adapter(state_root, task, *, fault=None):
     gateway = DomainMockGateway(
         region, request.get("alpha_id"),
         lost_response=fault == "lost-simulation-response")
-    agent = SimpleNamespace(model=DomainMockModel())
-    return MockWorkflowAdapter(Path(state_root), cfg, gateway, agent), gateway
+    if task["workflow"] == "regular":
+        agent = RegularMockAgent(
+            state_root, lost_response=fault == "lost-simulation-response")
+        # MockWorkflowAdapter needs a fake model marker even for Campaign-only mode.
+        agent.model = DomainMockModel()
+    else:
+        agent = SimpleNamespace(model=DomainMockModel())
+    return MockWorkflowAdapter(Path(state_root), cfg, gateway, agent), gateway, agent
