@@ -86,7 +86,38 @@ that the remote platform really performed the operation; separately
 authenticated readback is still mandatory. The lock serializes local writers;
 it does not by itself provide remote idempotency.
 
-## 3. Outstanding production gates
+## 3. Atomic one-shot pre-dispatch staging (new)
+
+`simulation_attempt_admission.py` persists a canonical task/authorization
+staging journal **before** creating its associated Simulation Intent. The
+staging file is durable and non-executable: its state is always
+`STAGED_NO_DISPATCH` with `permission_to_dispatch=false`. The
+cross-process reservation lock serializes all tasks in the state root;
+duplicate authorization IDs (even on other tasks) are rejected.
+
+If a crash leaves a journal without a complete, matching PREPARED Intent,
+`orchestration-simulation-stage-status` returns
+`RECONCILIATION_REQUIRED`. An automatic second staging or POST is forbidden.
+The global stop flag and the mock-workspace marker also block staging.
+
+```sh
+# Only after obtaining a separate externally issued v2 scoped receipt:
+python3 -m alpha_research --lead deepseek --executor deepseek \
+  orchestration-simulation-stage <TASK_ID> \
+  --receipt /secure/path/simulation-receipt-v2.json \
+  --manifest /secure/path/simulation-manifest.json
+
+# Status inspection does not consume additional rights:
+python3 -m alpha_research --lead deepseek --executor deepseek \
+  orchestration-simulation-stage-status <TASK_ID>
+```
+
+This is a **non-executable audit reservation**, not trusted approval
+consumption. Even a successful stage does not authorize model, BRAIN POST,
+readback, or Alpha submission. Its evidence is surfaced by the ordinary
+`orchestration-admission-audit` as an explicit blocker.
+
+## 4. Outstanding production gates
 
 P4.5.1 is **not production-enabled**. The following must exist and be
 independently audited before a live Simulation:
@@ -108,9 +139,11 @@ No global `--live` shortcut or environment boolean may bypass these gates.
 P4.4 read-only connectivity to USA / D1 / TOP3000 does not imply
 permission for even one Simulation.
 
-## 4. Offline acceptance
+## 5. Offline acceptance
 
-`tests/test_p4_simulation_scope.py` covers signature invalidity, scope and
+`tests/test_p4_simulation_staging.py` covers the canonical journal,
+cross-task authorization-ID reuse, concurrent reservations, and interrupted
+journal/Intent writes. `tests/test_p4_simulation_scope.py` covers signature invalidity, scope and
 request drift, attempt budgets, expiry, and concurrent Intent creation /
 PREPARED-to-POSTING transitions. All existing workflow and Intent recovery
 tests must continue passing on the CI matrix.
