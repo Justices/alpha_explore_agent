@@ -19,8 +19,10 @@ def write(payload):
 def main():
     args = sys.argv[1:]
     read_only = "--read-only" in args
-    remaining = [arg for arg in args if arg != "--read-only"]
-    if (len(remaining) != len(args) - int(read_only)
+    guarded = "--orchestration-guarded" in args
+    flags = {"--read-only", "--orchestration-guarded"}
+    remaining = [arg for arg in args if arg not in flags]
+    if (len(remaining) != len(args) - int(read_only) - int(guarded)
             or remaining not in ([], ["--brain-credentials-stdin"])):
         write({"ok": False, "stage": "configuration",
                "error": "invalid driver options"})
@@ -47,6 +49,18 @@ def main():
                 if command == "shutdown":
                     write({"ok": True, "stage": "shutdown"})
                     break
+                # Even raw stdin access must not bypass the orchestration
+                # production admission boundary. This option is NOT a live
+                # enablement; unimplemented trusted grant consumption means
+                # every mutating research command is refused by construction.
+                if guarded and command in {
+                    "simulate_batch", "simulate_super",
+                    "tag_alpha", "sync_backtest_cache",
+                    "resume_simulation_batch",
+                }:
+                    write({"ok": False, "error":
+                           "orchestration live admission is not implemented"})
+                    continue
                 # Independent driver-side authorization barrier: a caller
                 # cannot bypass Gateway.read_only by writing raw JSON to stdin.
                 if read_only and command not in {
