@@ -52,6 +52,40 @@ class GuardedGatewayTests(unittest.TestCase):
         self.assertIn("admission", responses[1]["error"])
         self.assertFalse(responses[2]["ok"])
 
+
+    def test_p4_7_3_raw_driver_rejects_forged_predispatch_escrow(self):
+        calls = []
+
+        class FakeRuntime:
+            def dispatch(self, command, params):
+                calls.append(command)
+                raise AssertionError("BRAIN mutation crossed guarded boundary")
+            def close(self):
+                pass
+
+        requests = [
+            {"cmd": "simulate_super", "attempt_id": "a" * 64,
+             "grant_id": "b" * 32, "permission_to_dispatch": True,
+             "authorization_id": "c" * 32},
+            {"cmd": "resume_simulation_batch", "attempt_id": "a" * 64,
+             "dispatch_authorized": True},
+            {"cmd": "shutdown"},
+        ]
+        stream = io.StringIO("".join(json.dumps(item) + "\n" for item in requests))
+        output = io.StringIO()
+        with (patch.object(driver.sys, "argv",
+                           ["driver.py", "--orchestration-guarded"]),
+              patch.object(driver.sys, "stdin", stream),
+              patch.object(driver.sys, "stdout", output),
+              patch.object(driver, "PlatformRuntime", return_value=FakeRuntime())):
+            result = driver.main()
+        self.assertEqual(result, 0)
+        responses = [json.loads(row) for row in output.getvalue().splitlines()]
+        self.assertFalse(responses[1]["ok"])
+        self.assertFalse(responses[2]["ok"])
+        self.assertIn("admission", responses[1]["error"])
+        self.assertEqual(calls, [])
+
     def test_guarded_driver_redacts_provider_exception(self):
         class FakeRuntime:
             def dispatch(self, command, params):
