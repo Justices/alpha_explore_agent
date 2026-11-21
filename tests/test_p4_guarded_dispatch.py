@@ -15,6 +15,42 @@ from alpha_research.orchestration.simulation_dispatch_preflight import (
 )
 
 
+class GuardedWireProtocolTests(unittest.TestCase):
+    def test_guarded_protocol_shared_between_client_and_driver(self):
+        from alpha_research.integrations.brain import guarded_protocol
+        from alpha_research.integrations.brain import gateway
+        from alpha_research.integrations.brain import driver as brain_driver
+        self.assertIs(
+            gateway.GUARDED_ORCHESTRATION_READS,
+            brain_driver.GUARDED_ORCHESTRATION_READS)
+        self.assertIs(
+            gateway.GUARDED_FORBIDDEN_CLAIMS,
+            brain_driver.GUARDED_FORBIDDEN_CLAIMS)
+        self.assertIs(
+            gateway.guarded_request_allowed,
+            guarded_protocol.guarded_request_allowed)
+        self.assertIs(
+            brain_driver.guarded_request_allowed,
+            guarded_protocol.guarded_request_allowed)
+
+    def test_positively_allowlisted_reads_and_forged_grants(self):
+        from alpha_research.integrations.brain.guarded_protocol import (
+            guarded_request_allowed, GUARDED_ORCHESTRATION_READS,
+            GUARDED_FORBIDDEN_CLAIMS,
+        )
+        self.assertEqual(len(GUARDED_ORCHESTRATION_READS), 8)
+        for command in GUARDED_ORCHESTRATION_READS:
+            self.assertTrue(guarded_request_allowed(command, {"alpha_id": "offline"}))
+            for claim in GUARDED_FORBIDDEN_CLAIMS:
+                with self.subTest(command=command, claim=claim):
+                    self.assertFalse(guarded_request_allowed(
+                        command, {claim: False}))
+        for command in ("simulate_batch", "simulate_super", "tag_alpha",
+                        "resume_simulation_batch", "set_case",
+                        "future_mutation_not_reviewed", None, 5):
+            self.assertFalse(guarded_request_allowed(command, {}))
+
+
 class GuardedGatewayTests(unittest.TestCase):
     def test_simulation_mutations_refused_before_driver(self):
         gateway = Gateway(orchestration_guarded=True)
