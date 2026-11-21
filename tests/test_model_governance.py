@@ -173,6 +173,10 @@ class ModelLedgerTests(unittest.TestCase):
             path, _ = ledger._paths("R2")
             with self.assertRaisesRegex(ModelBudgetError, "symlink forbidden"):
                 ledger._load(path, "R2")
+            with self.assertRaisesRegex(ModelBudgetError, "lock symlink forbidden"):
+                ledger.reserve("R2", "C1", task="offline")
+            self.assertEqual(list(external.iterdir()), [],
+                             "linked budget directory must remain untouched")
 
     def test_automatic_failover_policy_is_disallowed(self):
         with self.assertRaisesRegex(ModelBudgetError, "automatic model failover"):
