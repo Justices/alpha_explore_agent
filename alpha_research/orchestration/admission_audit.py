@@ -9,6 +9,7 @@ from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.execution_identity import inspect_execution_identity
 from alpha_research.orchestration.execution_proposal import inspect_execution_proposal
 from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
+from alpha_research.orchestration.execution_reservation import inspect_non_executable_reservation
 
 
 def audit_execution_admission(orchestrator, task_id, model_config,
@@ -72,6 +73,15 @@ def audit_execution_admission(orchestrator, task_id, model_config,
             blockers.append("REVIEW_LEDGER_RECONCILIATION_REQUIRED")
     except (OrchestrationError, OSError, ValueError, TypeError, KeyError, AttributeError):
         blockers.append("REVIEW_LEDGER_UNREADABLE")
+    try:
+        reservation = inspect_non_executable_reservation(orchestrator, task_id)
+        facts["execution_receipt_reservation"] = reservation["status"]
+        if reservation["status"] == "RECONCILIATION_REQUIRED":
+            blockers.append("EXECUTION_RECEIPT_LEDGER_RECONCILIATION_REQUIRED")
+        elif reservation["status"] == "RESERVED_INSPECTION_ONLY":
+            blockers.append("EXECUTION_RECEIPT_NOT_DISPATCH_AUTHORIZATION")
+    except (OrchestrationError, OSError, ValueError, TypeError, KeyError, AttributeError):
+        blockers.append("EXECUTION_RECEIPT_LEDGER_UNREADABLE")
     # Review receipts cover only proposal review, not model or BRAIN writes.
     blockers.append("TRUSTED_EXECUTION_AUTHORIZATION_NOT_IMPLEMENTED")
     blockers.append("PRODUCTION_DISPATCH_ADAPTER_DISABLED")
