@@ -65,7 +65,9 @@ class Gateway:
             self._credentials = None
         self.auth_info = self._read_response()
         if not self.auth_info.get("ok"):
-            raise GatewayError(f"platform runtime unavailable: {self.auth_info}")
+            # Driver startup responses may contain provider details. Do not
+            # echo raw authentication payloads into CLI errors or audit logs.
+            raise GatewayError("platform runtime unavailable; authentication or session initialization failed")
         return self.auth_info
 
     def _read_response(self) -> dict:
@@ -113,7 +115,9 @@ class Gateway:
             raise GatewayError("driver is not running")
         resp = self._send({"cmd": cmd, **params})
         if not resp.get("ok"):
-            raise GatewayError(f"{cmd} failed: {resp.get('error')}")
+            # Never propagate untrusted provider error bodies: they may
+            # contain credentials, request headers or account identifiers.
+            raise GatewayError(f"{cmd} failed in platform driver")
         return resp.get("result", resp)
 
     def shutdown(self) -> None:
