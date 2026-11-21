@@ -112,6 +112,8 @@ class GuardedDispatchAuditTests(unittest.TestCase):
         self.assertFalse(status["automatic_retry_allowed"])
         self.assertIn("TRUSTED_LIVE_GRANT_CONSUMER_NOT_IMPLEMENTED",
                       status["blockers"])
+        self.assertFalse((self.root / "logs" / "model_budget").exists(),
+                         "read-only audit must not create budget lock files")
 
     def test_stop_flag_blocks_dispatch_without_network(self):
         stop = self.root / "state" / "stop.flag"
