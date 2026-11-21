@@ -40,6 +40,7 @@ from alpha_research.orchestration.simulation_attempt_admission import (
 )
 from alpha_research.orchestration.simulation_dispatch_preflight import inspect_simulation_dispatch_gate
 from alpha_research.orchestration.operator_consent import inspect_consent_reservation
+from alpha_research.orchestration.pre_dispatch_escrow import inspect_pre_dispatch_escrow
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
@@ -160,6 +161,10 @@ def main(argv=None):
         "orchestration-consent-status",
         help="read-only one-shot operator consent audit status; NEVER grant execution")
     consent_status.add_argument("task_id")
+    escrow_status = sub.add_parser(
+        "orchestration-predispatch-escrow-status",
+        help="read-only pre-POST escrow evidence status; NEVER dispatch BRAIN")
+    escrow_status.add_argument("task_id")
     sim_dispatch_audit = sub.add_parser(
         "orchestration-simulation-dispatch-audit",
         help="read-only full Simulation write admission blockers; never dispatch")
@@ -510,6 +515,7 @@ def main(argv=None):
                         "orchestration-simulation-stage",
                         "orchestration-simulation-stage-status",
                         "orchestration-consent-status",
+                        "orchestration-predispatch-escrow-status",
                         "orchestration-simulation-dispatch-audit"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
@@ -524,6 +530,11 @@ def main(argv=None):
             effective = prepared["model"]
             if args.command == "orchestration-simulation-dispatch-audit":
                 result = inspect_simulation_dispatch_gate(
+                    MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-predispatch-escrow-status":
+                result = inspect_pre_dispatch_escrow(
                     MainOrchestrator(root), args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
