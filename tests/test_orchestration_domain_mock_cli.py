@@ -84,12 +84,47 @@ class DomainMockCliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(MainOrchestrator(self.root).load(task_id)["budget"]["reserved"], 1)
 
-    def test_regular_cannot_enter_super_only_fixture(self):
+    def test_regular_campaign_real_scheduler_with_scripted_batch(self):
         task_id = self.prepare("regular")
-        code, _, err = self.call([
+        code, out, err = self.call([
             "orchestration-domain-mock", task_id, "--mode", "mock"])
+        self.assertEqual(code, 0, err)
+        response = json.loads(out)
+        self.assertEqual(response["status"], "COMPLETED",
+                         response["execution"].get("failure"))
+        self.assertEqual(response["mock_simulation_attempts"], 1)
+        self.assertIn("get_datasets", response["gateway_calls"])
+        self.assertFalse(response["model_provider_invoked"])
+        task = MainOrchestrator(self.root).load(task_id)
+        self.assertEqual(task["budget"]["used"], 1)
+        self.assertEqual(task["budget"]["reserved"], 0)
+        self.assertEqual(task["checkpoints"]["execute"]["batches_completed"], 1)
+        self.assertEqual(
+            task["checkpoints"]["execute"]["completed"][0]["alpha_ids"],
+            ["OFFLINE_REGULAR_ALPHA"])
+        self.assertTrue(list(self.root.rglob("simulation_intent.json")))
+        self.assertEqual(
+            len(ResearchRecordStore(self.root).list("campaign")), 1)
+        code, _, _ = self.call(
+            ["orchestration-domain-mock", task_id, "--mode", "mock"])
         self.assertEqual(code, 2)
-        self.assertEqual(MainOrchestrator(self.root).load(task_id)["status"], "CREATED")
+
+    def test_regular_lost_batch_outcome_retains_reserved_budget(self):
+        task_id = self.prepare("regular")
+        code, out, err = self.call([
+            "orchestration-domain-mock", task_id, "--mode", "mock",
+            "--fault", "lost-simulation-response"])
+        self.assertEqual(code, 0, err)
+        response = json.loads(out)
+        self.assertEqual(response["status"], "BLOCKED")
+        self.assertEqual(response["mock_simulation_attempts"], 1)
+        task = MainOrchestrator(self.root).load(task_id)
+        self.assertEqual(task["budget"]["reserved"], 1)
+        self.assertEqual(task["budget"]["used"], 0)
+        self.assertIsNotNone(task["recovery_target"])
+        code, _, _ = self.call(
+            ["orchestration-domain-mock", task_id, "--mode", "mock"])
+        self.assertEqual(code, 2)
 
 
 if __name__ == "__main__":
