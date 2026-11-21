@@ -69,7 +69,7 @@ class NonExecutableReservationTests(unittest.TestCase):
         (self.root / "reservations.json").unlink()
         status = inspect_non_executable_reservation(self.runner, self.task_id)
         self.assertEqual(status["status"], "RECONCILIATION_REQUIRED")
-        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+        with self.assertRaisesRegex(OrchestrationError, "canonical ledger missing"):
             self.reserve()
 
     def test_mock_workspace_forbids_receipt_reservation(self):
