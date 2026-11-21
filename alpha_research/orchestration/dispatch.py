@@ -13,6 +13,7 @@ from alpha_research.workflows.regular.campaign import load_saved_campaign, run_r
 from alpha_research.workflows.super_alpha.workflow import prepare_super_run, run_super_research
 from alpha_research.workflows.optimization.workflow import prepare_source, run_optimization
 from alpha_research.orchestration.recovery import RecoveryCoordinator
+from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
 
 
 COMMANDS = {"plan-regular", "run-campaign", "plan-super", "run-super", "plan-optimization", "run-optimization", "recover-research"}
@@ -42,6 +43,18 @@ def _regular_scope(args, cfg):
 def dispatch(command, args, cfg, root: Path, gateway, agent=None, execution_context=None):
     if command not in COMMANDS:
         raise ValueError(f"unknown research workflow command: {command}")
+    # Defense in depth: the domain dispatcher must not trust callers who
+    # bypass CLI command guards. A marked workspace can use only explicitly
+    # synthetic Gateway / Agent objects.
+    marker = marker_path(root)
+    if marker.exists() or marker.is_symlink():
+        inspect_mock_workspace(root)
+        if not getattr(gateway, "is_offline_mock", False):
+            raise ValueError("live Gateway forbidden in offline mock workspace")
+        if (agent is not None
+                and not getattr(getattr(agent, "model", None),
+                                "is_offline_mock", False)):
+            raise ValueError("live model forbidden in offline mock workspace")
     if command == "recover-research":
         return RecoveryCoordinator(root).recover(args.intent_path, gateway=gateway, config=cfg)
     if command in {"plan-optimization", "run-optimization"}:
