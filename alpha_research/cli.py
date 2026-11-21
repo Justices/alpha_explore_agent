@@ -30,6 +30,7 @@ from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationE
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
 from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
+from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
 )
@@ -467,8 +468,12 @@ def main(argv=None):
                     inspect_execution_proposal(runner, args.task_id)
                     inspect_execution_identity(
                         runner, args.task_id, effective, policy)
+                    # Validate the workspace before any domain evidence can be written.
+                    # The marker is permanent and never grants production authority.
+                    inspect_mock_workspace(root)
                     adapter, mock_gateway, mock_agent = build_domain_mock_adapter(
                         root, task, fault=args.fault)
+                    claim_mock_workspace(root)
                     runner.adapter = adapter
                     with mock_domain_boundary(task["request"]["region"]):
                         completed = runner.execute(args.task_id)
