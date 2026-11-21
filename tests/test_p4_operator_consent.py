@@ -549,6 +549,72 @@ class ExternalConsentTests(unittest.TestCase):
         self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
         self.assertFalse(result["permission_to_dispatch"])
 
+    def test_p4_7_4_readonly_recovery_audit_classifies_local_escrow(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow,
+        )
+        from alpha_research.orchestration.simulation_recovery_audit import (
+            inspect_simulation_recovery_evidence,
+        )
+        self.reserve()
+        reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        root = self.root / "state" / "research_v1_1"
+        before = sorted(str(item) for item in root.rglob("*"))
+        result = inspect_simulation_recovery_evidence(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(result["status"], "OFFLINE_ESCROW_ONLY_NO_POST_EVIDENCE")
+        self.assertEqual(result["facts"]["intent_status"], "PREPARED")
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(result["automatic_retry_allowed"])
+        self.assertFalse(result["remote_outcome_proven"])
+        self.assertFalse(result["brain_invoked"])
+        self.assertFalse(result["provider_invoked"])
+        self.assertEqual(before, sorted(str(item) for item in root.rglob("*")),
+                         "recovery audit must not create or repair files")
+
+    def test_p4_7_4_posting_and_unknown_are_never_resubmitted(self):
+        from alpha_research.simulation.intent import transition_simulation_intent
+        from alpha_research.orchestration.simulation_recovery_audit import (
+            inspect_simulation_recovery_evidence,
+        )
+        intent = (self.root / "state" / "research_v1_1" /
+                  "simulation_attempt_admission" / "intents" /
+                  (self.task["task_id"] + ".intent.json"))
+        transition_simulation_intent(
+            intent, expected_status="PREPARED", status="POSTING")
+        for status in ("POSTING", "OUTCOME_UNKNOWN"):
+            with self.subTest(status=status), patch(
+                "alpha_research.integrations.brain.gateway.Gateway",
+                side_effect=AssertionError("recovery must never start Gateway"),
+            ):
+                result = inspect_simulation_recovery_evidence(
+                    self.runner, self.task["task_id"], self.policy)
+            self.assertEqual(result["status"], "PLATFORM_READBACK_REQUIRED")
+            self.assertEqual(result["facts"]["intent_status"], status)
+            self.assertIn("REMOTE_OUTCOME_UNVERIFIED", result["blockers"])
+            self.assertFalse(result["automatic_retry_allowed"])
+            self.assertFalse(result["brain_invoked"])
+            if status == "POSTING":
+                transition_simulation_intent(
+                    intent, expected_status="POSTING", status="OUTCOME_UNKNOWN")
+
+    def test_p4_7_4_corrupt_intent_is_never_treated_as_postable(self):
+        from alpha_research.orchestration.simulation_recovery_audit import (
+            inspect_simulation_recovery_evidence,
+        )
+        intent = (self.root / "state" / "research_v1_1" /
+                  "simulation_attempt_admission" / "intents" /
+                  (self.task["task_id"] + ".intent.json"))
+        record = json.loads(intent.read_text())
+        record["request"]["selection"] = "rank(changed)"
+        intent.write_text(json.dumps(record))
+        result = inspect_simulation_recovery_evidence(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("INTENT_UNREADABLE_OR_DRIFTED", result["blockers"])
+        self.assertFalse(result["permission_to_dispatch"])
+
     def test_p4_7_3_gateway_does_not_accept_escrow_receipt(self):
         from alpha_research.integrations.brain.gateway import Gateway, GatewayError
         from alpha_research.orchestration.pre_dispatch_escrow import (
