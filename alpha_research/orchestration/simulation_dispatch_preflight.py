@@ -56,8 +56,11 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
             record_path, _ = ledger._paths(research_id)
             state = ledger._load(record_path, research_id)
             budget = ledger._summarize(state)
+            # Unreported tokens are not a cost bound. A successful call
+            # with unknown usage must not be silently counted as free.
             budget["blocked"] = bool(
                 budget["unknown"] or budget["unresolved"]
+                or budget["unknown_usage_attempts"]
                 or budget["attempts"] >= ledger.policy["max_calls"]
                 or budget["reported_tokens"]
                    >= ledger.policy["max_reported_tokens"])
@@ -65,10 +68,13 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
                 "attempts": budget["attempts"],
                 "unknown": budget["unknown"],
                 "unresolved": budget["unresolved"],
+                "unknown_usage_attempts": budget["unknown_usage_attempts"],
                 "blocked": budget["blocked"],
             }
             if budget["unknown"] or budget["unresolved"]:
                 blockers.append("MODEL_ATTEMPT_RECONCILIATION_REQUIRED")
+            if budget["unknown_usage_attempts"]:
+                blockers.append("MODEL_USAGE_UNVERIFIED")
             if budget["blocked"]:
                 blockers.append("MODEL_BUDGET_BLOCKED")
         except (ModelBudgetError, OSError, TypeError, ValueError, KeyError):
