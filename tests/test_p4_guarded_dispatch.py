@@ -52,6 +52,27 @@ class GuardedGatewayTests(unittest.TestCase):
         self.assertIn("admission", responses[1]["error"])
         self.assertFalse(responses[2]["ok"])
 
+    def test_guarded_driver_redacts_provider_exception(self):
+        class FakeRuntime:
+            def dispatch(self, command, params):
+                raise RuntimeError("sensitive-account-secret")
+            def close(self):
+                pass
+        input_stream = io.StringIO(
+            '{"cmd":"get_platform_setting_options"}\\n'
+            '{"cmd":"shutdown"}\\n')
+        output = io.StringIO()
+        with (patch.object(driver.sys, "argv",
+                           ["driver.py", "--orchestration-guarded"]),
+              patch.object(driver.sys, "stdin", input_stream),
+              patch.object(driver.sys, "stdout", output),
+              patch.object(driver, "PlatformRuntime", return_value=FakeRuntime())):
+            result = driver.main()
+        self.assertEqual(result, 0)
+        self.assertNotIn("sensitive-account-secret", output.getvalue())
+        lines = [json.loads(x) for x in output.getvalue().splitlines()]
+        self.assertFalse(lines[1]["ok"])
+
     def test_gateway_spawns_guarded_driver_flag(self):
         gateway = Gateway(orchestration_guarded=True)
         class Pipe:
