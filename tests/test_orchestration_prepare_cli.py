@@ -67,6 +67,24 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
                 self.assertFalse(inspected["inspection_provider_invoked"])
                 self.assertFalse(inspected["inspection_brain_invoked"])
 
+    def test_operator_consent_cli_is_read_only_and_never_authorizes(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline consent status"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        ledger_dir = (self.root / "state" / "research_v1_1"
+                      / "operator_consent_audit")
+        self.assertFalse(ledger_dir.exists())
+        status, output, error = self._call(
+            self.prefix + ["orchestration-consent-status", task_id])
+        self.assertEqual(status, 0, error)
+        result = json.loads(output)
+        self.assertEqual(result["status"], "NOT_RESERVED")
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(ledger_dir.exists(),
+                         "read-only status must not create a consent journal")
+
     def test_recovery_check_is_read_only_for_unstarted_task(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
