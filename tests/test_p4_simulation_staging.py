@@ -85,11 +85,20 @@ class StagingTests(unittest.TestCase):
     def test_competing_stage_has_one_winner(self):
         def invoke(_):
             try:
-                return self.stage()["status"]
+                return stage_simulation_attempt(
+                    self.orchestrator, self.task["task_id"],
+                    {}, {}, {"synthetic": True}, self.plan)["status"]
             except (OrchestrationError, ValueError):
                 return "BLOCKED"
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            states = list(pool.map(invoke, range(2)))
+        # Patch once around the entire concurrent section. Nesting patch()
+        # in each worker races as either thread exits and restores the
+        # global target while the other is still verifying its receipt.
+        with patch(
+            "alpha_research.orchestration.simulation_attempt_admission.inspect_simulation_scope",
+            return_value=self.scope_result,
+        ):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                states = list(pool.map(invoke, range(2)))
         self.assertCountEqual(states, ["STAGED_NO_DISPATCH", "BLOCKED"])
 
     def test_crash_after_journal_before_intent_requires_reconciliation(self):
