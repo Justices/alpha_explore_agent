@@ -133,6 +133,17 @@ requires an independent, reviewed migration. No trusted issuer or
 server-side live grant consumer has been installed, so a guarded Gateway
 is deliberately **incapable of posting a Simulation**.
 
+The Gateway and subprocess now both implement an **explicit read-only
+allowlist** rather than a write-command blacklist. A future unknown
+driver command is denied by default. Guarded driver error responses
+redact remote exception payloads (credentials, account identifiers
+and provider diagnostics) instead of echoing them.
+
+`tests/test_p4_guarded_dispatch.py` verifies that forged `allow=true`
+and `authorization_id` fields, direct stdin injection, unknown future
+commands and provider exceptions cannot bypass this deny-by-default
+boundary.
+
 The read-only CLI
 `orchestration-simulation-dispatch-audit <TASK_ID>` combines the task
 budget, staged Intent integrity, global stop, mock workspace status and
