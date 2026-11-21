@@ -5,10 +5,12 @@ platform-side operation before a caller may proceed.
 """
 import hashlib
 import json
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 
 _TRANSITIONS = {
@@ -19,6 +21,16 @@ _TRANSITIONS = {
     # Reconciliation may settle an unknown outcome; reposting is never allowed.
     "OUTCOME_UNKNOWN": {"RESPONSE_RECEIVED"},
 }
+
+
+@contextmanager
+def _intent_guard(path):
+    """Cross-process serialization for creation and all state transitions."""
+    try:
+        with SingleWriterLock(path.with_name(path.name + ".lock")):
+            yield
+    except WriterLockError as exc:
+        raise ValueError("simulation intent is being updated by another writer") from exc
 
 
 def _now():
@@ -42,8 +54,6 @@ def create_simulation_intent(path, *, workflow, run_id, batch_id,
     if not isinstance(request, dict) or not isinstance(settings, dict):
         raise ValueError("request and settings must be objects")
     path = Path(path)
-    if path.exists():
-        raise ValueError("simulation intent already exists; refusing duplicate POST")
     if metadata is not None and not isinstance(metadata, dict):
         raise ValueError("metadata must be an object")
     payload = {"request": request, "settings": settings}
@@ -56,7 +66,10 @@ def create_simulation_intent(path, *, workflow, run_id, batch_id,
         "history": [{"status": "PREPARED", "at": now}],
         "created_at": now, "updated_at": now,
     }
-    atomic_write_json(path, record)
+    with _intent_guard(path):
+        if path.exists() or path.is_symlink():
+            raise ValueError("simulation intent already exists; refusing duplicate POST")
+        atomic_write_json(path, record)
     return record
 
 
@@ -65,6 +78,15 @@ def transition_simulation_intent(path, *, expected_status, status,
                                  response_ref=None):
     """Compare-and-transition an intent; terminal/uncertain states never retry."""
     path = Path(path)
+    with _intent_guard(path):
+        return _transition_locked(
+            path, expected_status=expected_status, status=status,
+            receipt_ref=receipt_ref, response_sha256=response_sha256,
+            response_ref=response_ref)
+
+
+def _transition_locked(path, *, expected_status, status,
+                       receipt_ref, response_sha256, response_ref):
     try:
         record = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
