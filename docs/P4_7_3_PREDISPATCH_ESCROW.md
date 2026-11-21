@@ -32,7 +32,10 @@ checks and rechecks evidence under an OS-backed per-root writer lock:
    `intent_sha256`, grant ID and operator-approval ID
 4. ModelCallLedger for the staged domain Research ID under its exact
    governance policy; **zero existing model-call attempts**, no unknown
-   usage, in-flight attempts or exhausted budget
+   usage, in-flight attempts or exhausted budget. The audit separately
+   records whether the model-budget file actually exists; an absent file
+   is read as an empty baseline by the existing ledger API and does
+   **not** prove that historical calls were never made
 5. A deterministic, operation-specific `attempt_id` SHA-256 fingerprint
    of the Task ID, grant ID, scope authorization ID, Intent hash and
    `brain_simulation` operation
