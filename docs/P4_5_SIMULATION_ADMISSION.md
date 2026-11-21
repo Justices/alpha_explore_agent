@@ -1,5 +1,11 @@
 # P4.5.1 / P4.5.2 — Simulation admission scope and safe pre-POST lifecycle
 
+**P4.7 update:** The staging write order and evidence schema in Section 3
+have been strengthened. The authoritative contract is now
+[P4.7 authorization index](P4_7_AUTHORIZATION_INDEX.md). Historical
+P4.5 staging files without the canonical index are reconciliation-required;
+no automatic migration or live permission is implied.
+
 This stage establishes a strict simulation-specific verification contract
 and serializes durable Simulation Intent transitions. It is **offline-only
 integration work**: no real model, BRAIN Simulation or Alpha submission is
@@ -88,9 +94,10 @@ it does not by itself provide remote idempotency.
 
 ## 3. Atomic one-shot pre-dispatch staging (new)
 
-`simulation_attempt_admission.py` persists a canonical task/authorization
-staging journal **before** creating its associated Simulation Intent. The
-staging file is durable and non-executable: its state is always
+`simulation_attempt_admission.py` now writes a canonical one-use
+authorization index **before** the per-task staging journal and its
+Simulation Intent. The index records reciprocal Task/Authorization IDs and
+the journal's immutable digest. The staging file remains non-executable:
 `STAGED_NO_DISPATCH` with `permission_to_dispatch=false`. The
 cross-process reservation lock serializes all tasks in the state root;
 duplicate authorization IDs (even on other tasks) are rejected.
