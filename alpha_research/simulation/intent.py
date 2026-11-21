@@ -108,8 +108,9 @@ def _transition_locked(path, *, expected_status, status,
                 or not isinstance(response_ref, str)
                 or not response_ref.strip()):
             raise ValueError("unknown Simulation outcome requires verified response evidence")
-        resolved = Path(response_ref).resolve()
-        if resolved.parent != path.resolve().parent or resolved.is_symlink():
+        ref_path = Path(response_ref)
+        resolved = ref_path.resolve()
+        if resolved.parent != path.resolve().parent or ref_path.is_symlink():
             raise ValueError("unknown Simulation response must be next to Intent")
         try:
             response = json.loads(resolved.read_text(encoding="utf-8"))
