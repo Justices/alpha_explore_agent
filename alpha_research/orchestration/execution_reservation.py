@@ -39,6 +39,19 @@ def _load_ledger(path):
             or not isinstance(ledger["by_id"], dict)
             or not isinstance(ledger["by_task"], dict)):
         raise OrchestrationError("execution receipt ledger schema invalid")
+    # Both indexes are authoritative; a corrupted/unmatched mapping must
+    # fail closed even when it concerns a DIFFERENT task/receipt ID.
+    by_id, by_task = ledger["by_id"], ledger["by_task"]
+    if (len(by_id) != len(by_task)
+            or any(not isinstance(aid, str) or len(aid) != 32
+                   or any(c not in "0123456789abcdef" for c in aid)
+                   or not isinstance(tid, str) or len(tid) != 32
+                   or any(c not in "0123456789abcdef" for c in tid)
+                   or by_task.get(tid) != aid
+                   for aid, tid in by_id.items())
+            or any(by_id.get(aid) != tid for tid, aid in by_task.items())):
+        raise OrchestrationError(
+            "execution receipt ledger reciprocal index mismatch")
     return ledger
 
 
@@ -100,6 +113,8 @@ def inspect_non_executable_reservation(orchestrator, task_id):
     root = _root(orchestrator)
     ledger_path = root / "reservations.json"
     if not ledger_path.exists():
+        # If the canonical ledger was lost but any derived projection exists,
+        # no reservation can be silently considered new.
         if ((root / "tasks" / (task_id + ".json")).exists()
                 or (root.exists() and any(root.glob("[0-9a-f]" * 32 + ".json")))):
             return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
