@@ -28,7 +28,8 @@ def audit_execution_admission(orchestrator, task_id, model_config,
         blockers.append("EXECUTION_BUDGET_NOT_FRESH")
     from pathlib import Path
     root = Path(orchestrator.state_root)
-    if (root / "state" / "stop.flag").exists():
+    stop = root / "state" / "stop.flag"
+    if stop.exists() or stop.is_symlink():
         blockers.append("GLOBAL_STOP_SIGNAL_PRESENT")
     if task.get("recovery_target") is not None:
         blockers.append("UNRESOLVED_RECOVERY_TARGET")
