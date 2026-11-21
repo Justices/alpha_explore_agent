@@ -117,7 +117,29 @@ consumption. Even a successful stage does not authorize model, BRAIN POST,
 readback, or Alpha submission. Its evidence is surfaced by the ordinary
 `orchestration-admission-audit` as an explicit blocker.
 
-## 4. Outstanding production gates
+## 4. Gateway and driver guarded admission boundary
+
+The new orchestration-specific Gateway must be constructed with
+`Gateway(orchestration_guarded=True)`. It passes
+`--orchestration-guarded` to the driver. **Both layers independently reject**
+`simulate_batch`, `simulate_super`, `tag_alpha`,
+`sync_backtest_cache` and `resume_simulation_batch`, including requests
+that contain untrusted `allow` or `authorization_id` fields.
+
+The guarded mode is a compatibility-safe separate entrypoint for
+orchestration development. Existing legacy non-guarded Gateway clients
+are not magically controlled by it; converting those pathways safely
+requires an independent, reviewed migration. No trusted issuer or
+server-side live grant consumer has been installed, so a guarded Gateway
+is deliberately **incapable of posting a Simulation**.
+
+The read-only CLI
+`orchestration-simulation-dispatch-audit <TASK_ID>` combines the task
+budget, staged Intent integrity, global stop, mock workspace status and
+model budget ledger with explicit missing-authorization blockers.
+It never signs, consumes or executes an operation.
+
+## 5. Outstanding production gates
 
 P4.5.1 is **not production-enabled**. The following must exist and be
 independently audited before a live Simulation:
@@ -139,7 +161,7 @@ No global `--live` shortcut or environment boolean may bypass these gates.
 P4.4 read-only connectivity to USA / D1 / TOP3000 does not imply
 permission for even one Simulation.
 
-## 5. Offline acceptance
+## 6. Offline acceptance
 
 `tests/test_p4_simulation_staging.py` covers the canonical journal,
 cross-task authorization-ID reuse, concurrent reservations, and interrupted
@@ -147,5 +169,9 @@ journal/Intent writes. `tests/test_p4_simulation_scope.py` covers signature inva
 request drift, attempt budgets, expiry, and concurrent Intent creation /
 PREPARED-to-POSTING transitions. All existing workflow and Intent recovery
 tests must continue passing on the CI matrix.
+
+`tests/test_p4_guarded_dispatch.py` verifies Gateway-side rejection,
+direct driver stdin bypass rejection, propagation of the guarded-driver
+flag and negative pre-dispatch audit with stop signal.
 
 Actual live operations remain out of scope for this stage.
