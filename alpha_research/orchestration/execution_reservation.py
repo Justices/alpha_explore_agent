@@ -100,6 +100,10 @@ def inspect_non_executable_reservation(orchestrator, task_id):
     root = _root(orchestrator)
     ledger_path = root / "reservations.json"
     if not ledger_path.exists():
+        if ((root / "tasks" / (task_id + ".json")).exists()
+                or (root.exists() and any(root.glob("[0-9a-f]" * 32 + ".json")))):
+            return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
+                    "permission_to_dispatch": False}
         return {"task_id": task_id, "status": "NOT_RESERVED",
                 "permission_to_dispatch": False}
     try:
