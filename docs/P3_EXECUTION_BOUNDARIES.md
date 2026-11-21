@@ -19,10 +19,13 @@ code contracts, not a claim that live provider execution is approved.
   closed; no automatic conversion or migration is attempted.
 - All ResearchRecordStore writes executed inside the mock domain boundary
   receive `evidence_origin: OFFLINE_DOMAIN_MOCK`, including candidate,
-  preferred and campaign records.
+  preferred and campaign records. The canonical store refuses unstamped
+  records in a marked workspace and refuses stamped records in an unmarked
+  workspace; the store rejects bypasses through direct domain calls.
 - CandidatePool.build_index and CandidatePool.find_reusable exclude records
-  with mock provenance. Mock research artifacts remain inspectable in the
-  mock workspace, not promotable to live candidates.
+  with mock provenance. A marked mock workspace produces **no** live pool
+  entries, even if legacy/raw files lacking provenance are copied into it.
+  Mock research artifacts remain inspectable, never promotable.
 - Existing live CLI workflow commands (including real recovery, research
   planning, tagging and model probes with explicit paid-call flags) reject a
   marked offline mock root.
@@ -53,14 +56,29 @@ A signed `review_execution_proposal` receipt is **review only**; it does
 not grant invocation rights. Even a valid receipt cannot make the disabled
 ProductionWorkflowAdapter executable.
 
+`orchestration-authorization-inspect TASK_ID --receipt PATH` validates an
+**externally issued** execution receipt under a separate HMAC-SHA256 signing
+context and verification environment variable
+`ALPHA_RESEARCH_EXECUTION_VERIFY_KEY`. The exact receipt binds Task ID,
+Workflow, request/proposal SHA-256, selected model-profile SHA-256, model
+governance SHA-256, one enumerated operation, single attempt, UTC issue/expiry
+and at most 15-minute lifetime. The program does **not** issue receipts, does
+not accept local self-signing as approval, does not reserve an execution grant,
+and does not consume the receipt for dispatch. Even a valid signature returns
+`INSPECTED_NOT_EXECUTABLE` with all permission booleans false.
+
+This strict parser and verifier is only a prerequisite for a future trusted
+authorization service; key possession alone is not proof of actual user
+consent. ProductionWorkflowAdapter remains disabled.
+
 ## 3. Future production admission (not implemented)
 
 Before enabling the first live BRAIN operation, independently review and
 implement all of the following:
 
 1. A trusted **execution** approval issuer, distinct from review-only
-   approval, with a signed task/workflow/request/model/policy/operation scope,
-   expiry, one-shot budget and anti-replay binding.
+   approval. The signed receipt verification contract is now implemented,
+   but the trusted issuer and independent consent/permission check are not.
 2. An atomic admission journal and single-writer reservation before any
    model or BRAIN I/O; reconcile crashes without refunding unknown attempts.
 3. Gateway ownership, credentials and provider routing transferred only from
@@ -86,8 +104,9 @@ including Python 3.11 and 3.13, and validate these assertions:
 
 - Fresh dedicated mock root accepts all three workflows; default root and
   preexisting evidence root reject the command before task mutation.
-- Every Mock candidate and preferred row has provenance; pool index,
-  candidate list, preferred list and reuse cache exclude it.
+- Every Mock candidate and preferred row has provenance; direct record-store
+  calls cannot bypass the stamp; the pool and reuse cache reject it, including
+  unstamped raw files in a marked mock workspace.
 - Mock workspace denies all live research, recovery, tagging and model smoke
   commands, including explicit `--allow-model-call`.
 - Proposal, profile and policy drift reject mock and admission operations.
@@ -96,6 +115,8 @@ including Python 3.11 and 3.13, and validate these assertions:
   and cannot automatically replay POST.
 - Admission audit creates no runtime state and remains `NOT_AUTHORIZED`,
   including when a review-only receipt is valid.
+- Signed execution receipt parsing rejects malformed envelopes, timestamps,
+  signing keys, policy drift and replay conditions, yet never enables dispatch.
 - Native macOS temporary-path aliases and symlink/TOCTOU attack cases
   still fail closed (not just canonical `TMPDIR` happy path).
 
