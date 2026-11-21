@@ -14,8 +14,9 @@ class TestGateway(unittest.TestCase):
         sent = []
         gateway._send = lambda payload: sent.append(payload) or {
             "ok": False, "error": "401 Unauthorized"}
-        with self.assertRaisesRegex(GatewayError, "401 Unauthorized"):
+        with self.assertRaisesRegex(GatewayError, "failed in platform driver") as caught:
             gateway.call("get_datasets", region="GLB")
+        self.assertNotIn("401 Unauthorized", str(caught.exception))
         self.assertEqual([item["cmd"] for item in sent], ["get_datasets"])
 
     def test_expired_session_never_reposts_simulation(self):
@@ -24,9 +25,28 @@ class TestGateway(unittest.TestCase):
         sent = []
         gateway._send = lambda payload: sent.append(payload) or {
             "ok": False, "error": "401 Unauthorized"}
-        with self.assertRaisesRegex(GatewayError, "401 Unauthorized"):
+        with self.assertRaisesRegex(GatewayError, "failed in platform driver") as caught:
             gateway.call("simulate_batch", variants=[{"expression": "rank(x)"}])
+        self.assertNotIn("401 Unauthorized", str(caught.exception))
         self.assertEqual([item["cmd"] for item in sent], ["simulate_batch"])
+
+    def test_gateway_auth_failure_never_exposes_driver_response(self):
+        gateway = Gateway()
+        class FakePipe:
+            def write(self, *args):
+                pass
+            def flush(self):
+                pass
+        class FakeProcess:
+            stdin = FakePipe()
+        from unittest.mock import patch
+        with patch("alpha_research.integrations.brain.gateway.subprocess.Popen",
+                   return_value=FakeProcess()):
+            gateway._read_response = lambda: {
+                "ok": False, "error": "credential: provider-secret-sentinel"}
+            with self.assertRaisesRegex(GatewayError, "platform runtime unavailable") as caught:
+                gateway.start()
+        self.assertNotIn("provider-secret-sentinel", str(caught.exception))
 
     def test_direct_simulation_creation_is_not_exposed(self):
         gateway = Gateway()
