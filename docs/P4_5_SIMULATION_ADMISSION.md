@@ -78,9 +78,13 @@ OUTCOME_UNKNOWN -> RESPONSE_RECEIVED  (verified readback only)
 ```
 
 The local state machine never automatically transitions from unknown
-outcome to POSTING, never resubmits a simulation, and requires explicit
-reconciliation of the recorded remote operation. The lock serializes local
-writers; it does not by itself provide remote idempotency.
+outcome to POSTING or resubmits a simulation. An
+`OUTCOME_UNKNOWN -> RESPONSE_RECEIVED` transition now requires an existing,
+non-symlinked response JSON file under the Intent directory, plus a matching
+SHA-256 fingerprint. This is a **local evidence-integrity check**, not proof
+that the remote platform really performed the operation; separately
+authenticated readback is still mandatory. The lock serializes local writers;
+it does not by itself provide remote idempotency.
 
 ## 3. Outstanding production gates
 
