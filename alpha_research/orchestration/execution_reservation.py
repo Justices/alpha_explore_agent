@@ -125,7 +125,9 @@ def inspect_non_executable_reservation(orchestrator, task_id):
     if not ledger_path.exists():
         # If the canonical ledger was lost but any derived projection exists,
         # no reservation can be silently considered new.
-        if ((root / "tasks" / (task_id + ".json")).exists()
+        tasks = root / "tasks"
+        if ((tasks.exists() and (
+                not tasks.is_dir() or any(tasks.iterdir())))
                 or (root.exists() and any(root.glob("[0-9a-f]" * 32 + ".json")))):
             return {"task_id": task_id, "status": "RECONCILIATION_REQUIRED",
                     "permission_to_dispatch": False}
@@ -135,6 +137,10 @@ def inspect_non_executable_reservation(orchestrator, task_id):
         ledger = _load_ledger(ledger_path)
         authorization_id = ledger["by_task"].get(task_id)
         if authorization_id is None:
+            if (root / "tasks" / (task_id + ".json")).exists():
+                return {"task_id": task_id,
+                        "status": "RECONCILIATION_REQUIRED",
+                        "permission_to_dispatch": False}
             return {"task_id": task_id, "status": "NOT_RESERVED",
                     "permission_to_dispatch": False}
         if (not isinstance(authorization_id, str)
