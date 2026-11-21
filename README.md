@@ -575,6 +575,11 @@ nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-admission-audit <TASK_ID>
 ```
 
+P4 static review and deferred regression matrix:
+[`docs/P4_REVIEW_AND_RELEASE_GATE.md`](docs/P4_REVIEW_AND_RELEASE_GATE.md).
+This code-only phase does not establish a passing regression or real BRAIN
+execution authorization.
+
 The audit result is always `NOT_AUTHORIZED`. It checks proposal/identity,
 budget, config provenance, review receipt state and mock isolation, but cannot
 create execution permission or a provider token. The production adapter
