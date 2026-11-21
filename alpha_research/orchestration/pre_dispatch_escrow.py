@@ -166,7 +166,7 @@ def _evidence(orchestrator, task_id, governance_policy):
     policy = validate_policy(governance_policy)
     ledger = ModelCallLedger(orchestrator.state_root, policy)
     budget_path, _ = ledger._paths(research_id)
-    if budget_path.is_symlink():
+    if budget_path.is_symlink() or budget_path.parent.is_symlink():
         raise OrchestrationError("pre-dispatch escrow model ledger symlinked")
     try:
         budget_record = ledger._load(budget_path, research_id)
