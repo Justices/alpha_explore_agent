@@ -378,7 +378,21 @@ class ExternalConsentTests(unittest.TestCase):
         self.assertEqual(record["intent_sha256"],
                          self.claims["intent_sha256"])
         self.assertEqual(record["model_budget_attempts"], 0)
+        self.assertFalse(record["model_budget_ledger_present"],
+                         "missing budget history is not proof of past usage")
         self.assertFalse(record["permission_to_dispatch"])
+
+    def test_p4_7_3_escrow_rejects_incomplete_task_step_state(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow)
+        self.reserve()
+        task = self.runner.load(self.task["task_id"])
+        prior = task["updated_at"]
+        task["steps"] = {}
+        self.runner._save(task, expected=prior)
+        with self.assertRaisesRegex(OrchestrationError, "fresh unexecuted task"):
+            reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
 
     def test_p4_7_3_escrow_is_one_shot(self):
         from alpha_research.orchestration.pre_dispatch_escrow import (
