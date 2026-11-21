@@ -124,5 +124,25 @@ class GuardedDispatchAuditTests(unittest.TestCase):
         self.assertIn("GLOBAL_STOP_SIGNAL_PRESENT", status["blockers"])
 
 
+    def test_global_stop_dangling_symlink_blocks_readonly_admission(self):
+        from alpha_research.orchestration.admission_audit import (
+            audit_execution_admission,
+        )
+        stop = self.root / "state" / "stop.flag"
+        stop.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stop.symlink_to(stop.with_name("missing-target"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation unavailable on this host")
+        result = audit_execution_admission(
+            self.orchestrator, self.task["task_id"], {},
+            self.policy, config_source="offline_default")
+        self.assertEqual(result["status"], "NOT_AUTHORIZED")
+        self.assertIn("GLOBAL_STOP_SIGNAL_PRESENT", result["blockers"])
+        self.assertFalse(result["brain_simulation_authorized"])
+        self.assertFalse(result["provider_invoked"])
+        self.assertFalse(result["brain_invoked"])
+
+
 if __name__ == "__main__":
     unittest.main()
