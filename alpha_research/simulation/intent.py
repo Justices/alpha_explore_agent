@@ -98,6 +98,28 @@ def _transition_locked(path, *, expected_status, status,
     if status not in _TRANSITIONS.get(expected_status, set()):
         raise ValueError(f"invalid simulation intent transition: "
                          f"{expected_status} -> {status}")
+    if expected_status == "OUTCOME_UNKNOWN" and status == "RESPONSE_RECEIVED":
+        # A previously ambiguous POST cannot be marked successful merely by
+        # supplying an arbitrary status string. Require the persisted
+        # readback response and its matching digest under the Intent folder.
+        if (not isinstance(response_sha256, str)
+                or len(response_sha256) != 64
+                or any(ch not in "0123456789abcdef" for ch in response_sha256)
+                or not isinstance(response_ref, str)
+                or not response_ref.strip()):
+            raise ValueError("unknown Simulation outcome requires verified response evidence")
+        resolved = Path(response_ref).resolve()
+        if resolved.parent != path.resolve().parent or resolved.is_symlink():
+            raise ValueError("unknown Simulation response must be next to Intent")
+        try:
+            response = json.loads(resolved.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError("unknown Simulation response evidence is unreadable") from exc
+        response_bytes = json.dumps(
+            response, ensure_ascii=False, sort_keys=True,
+            default=str).encode("utf-8")
+        if hashlib.sha256(response_bytes).hexdigest() != response_sha256:
+            raise ValueError("unknown Simulation response fingerprint changed")
     if status == "READ_BACK":
         if not isinstance(receipt_ref, str) or not receipt_ref.strip():
             raise ValueError("READ_BACK requires a receipt reference")
