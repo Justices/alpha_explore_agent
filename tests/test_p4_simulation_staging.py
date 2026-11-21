@@ -130,5 +130,84 @@ class StagingTests(unittest.TestCase):
             self.stage()
 
 
+    def test_dangling_journal_symlink_requires_reconciliation(self):
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        location.mkdir(parents=True, exist_ok=True)
+        journal = location / (self.task["task_id"] + ".json")
+        try:
+            journal.symlink_to(location / "missing-journal.json")
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation unavailable on this host")
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(result["permission_to_dispatch"])
+        with self.assertRaisesRegex(OrchestrationError, "already staged"):
+            self.stage()
+
+    def test_dangling_stop_symlink_rejects_stage(self):
+        stop = self.root / "state" / "stop.flag"
+        stop.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            stop.symlink_to(stop.with_name("missing-stop-target"))
+        except (OSError, NotImplementedError):
+            self.skipTest("symlink creation unavailable on this host")
+        with self.assertRaisesRegex(OrchestrationError, "stop flag"):
+            self.stage()
+
+    def test_stop_created_during_scope_recheck_blocks_staging(self):
+        stop = self.root / "state" / "stop.flag"
+        calls = []
+
+        def validate(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                stop.parent.mkdir(parents=True, exist_ok=True)
+                stop.write_text("stopped", encoding="utf-8")
+            return dict(self.scope_result)
+
+        with patch(
+            "alpha_research.orchestration.simulation_attempt_admission.inspect_simulation_scope",
+            side_effect=validate,
+        ):
+            with self.assertRaisesRegex(OrchestrationError, "stop flag"):
+                stage_simulation_attempt(
+                    self.orchestrator, self.task["task_id"], {}, {},
+                    {"synthetic": True}, self.plan)
+        self.assertEqual(len(calls), 2)
+        journal = (self.root / "state" / "research_v1_1" /
+                   "simulation_attempt_admission" /
+                   (self.task["task_id"] + ".json"))
+        self.assertFalse(journal.exists())
+
+    def test_mock_marker_created_during_scope_recheck_blocks_staging(self):
+        from alpha_research.orchestration.mock_workspace import marker_path
+        marker = marker_path(self.root)
+        calls = []
+
+        def validate(*args, **kwargs):
+            calls.append(1)
+            if len(calls) == 2:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.write_text('{"kind":"OFFLINE_DOMAIN_MOCK_ONLY"}',
+                                  encoding="utf-8")
+            return dict(self.scope_result)
+
+        with patch(
+            "alpha_research.orchestration.simulation_attempt_admission.inspect_simulation_scope",
+            side_effect=validate,
+        ):
+            with self.assertRaisesRegex(OrchestrationError, "mock workspace"):
+                stage_simulation_attempt(
+                    self.orchestrator, self.task["task_id"], {}, {},
+                    {"synthetic": True}, self.plan)
+        self.assertEqual(len(calls), 2)
+        journal = (self.root / "state" / "research_v1_1" /
+                   "simulation_attempt_admission" /
+                   (self.task["task_id"] + ".json"))
+        self.assertFalse(journal.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
