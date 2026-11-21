@@ -109,7 +109,7 @@ class StagingTests(unittest.TestCase):
         self.assertEqual(inspect_staged_simulation_attempt(
             self.orchestrator, self.task["task_id"])["status"],
             "RECONCILIATION_REQUIRED")
-        with self.assertRaisesRegex(OrchestrationError, "already staged"):
+        with self.assertRaisesRegex(OrchestrationError, "index missing"):
             self.stage()
 
     def test_orphan_intent_without_journal_requires_reconciliation(self):
@@ -143,7 +143,7 @@ class StagingTests(unittest.TestCase):
             self.orchestrator, self.task["task_id"])
         self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
         self.assertFalse(result["permission_to_dispatch"])
-        with self.assertRaisesRegex(OrchestrationError, "already staged"):
+        with self.assertRaisesRegex(OrchestrationError, "index missing"):
             self.stage()
 
     def test_dangling_stop_symlink_rejects_stage(self):
