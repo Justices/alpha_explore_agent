@@ -44,6 +44,17 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
+## P4.7 Simulation authorization integrity (offline only)
+
+A canonical one-use Simulation authorization index is now written before
+the staged journal and PREPARED Intent. Read-only audits cross-check the exact
+staged request, workflow/Run/Batch/Research IDs, reciprocal authorization
+identity and model-budget uncertainty. Incomplete or legacy staging evidence
+requires manual reconciliation and **never** grants BRAIN dispatch.
+See [P4.7 authorization index and remaining production gates](docs/P4_7_AUTHORIZATION_INDEX.md).
+Real provider calls, BRAIN Simulation and Alpha submission remain independently
+disabled without separate trusted operator consent and production admission.
+
 ## Current boundary
 
 - `plan-regular` reads live platform settings and exact-scope Dataset catalogs
