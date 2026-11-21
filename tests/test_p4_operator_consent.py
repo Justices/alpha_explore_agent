@@ -217,6 +217,49 @@ class ExternalConsentTests(unittest.TestCase):
         with self.assertRaisesRegex(OrchestrationError, "already reserved"):
             self.reserve(self.receipt(claims), task=other)
 
+    def test_same_operator_approval_cannot_fund_another_grant(self):
+        self.reserve()
+        other = self.runner.create(
+            "super", {"objective": "another approved experiment",
+                      "region": "USA", "delay": 1, "universe": "TOP3000"})
+        other_plan = {**self.plan, "run_id": "0" * 32,
+                      "research_id": "super:" + "0" * 32}
+        self.stage(other, "3" * 32, other_plan)
+        claims = self._claims(other, other_plan, "3" * 32)
+        claims["grant_id"] = "4" * 32
+        # Approval identity is intentionally reused even though grant differs.
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            self.reserve(self.receipt(claims), task=other)
+
+    def test_dispatch_audit_keeps_signed_reservation_non_executable(self):
+        from alpha_research.orchestration.simulation_dispatch_preflight import (
+            inspect_simulation_dispatch_gate,
+        )
+        self.reserve()
+        result = inspect_simulation_dispatch_gate(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(result["status"], "NOT_AUTHORIZED")
+        self.assertEqual(
+            result["facts"]["operator_consent_audit_status"],
+            "RESERVED_CONSENT_AUDIT_ONLY")
+        self.assertIn("OPERATOR_CONSENT_AUDIT_NOT_LIVE_AUTHORIZATION",
+                      result["blockers"])
+        self.assertFalse(result["brain_invoked"])
+        self.assertFalse(result["provider_invoked"])
+        self.assertFalse(result["permission_to_dispatch"])
+
+    def test_symlinked_consent_directory_rejected(self):
+        parent = self.root / "state" / "research_v1_1"
+        original = parent / "operator_consent_audit"
+        external = self.root / "external-consent-audit"
+        external.mkdir()
+        try:
+            original.symlink_to(external, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlink unavailable")
+        with self.assertRaisesRegex(OrchestrationError, "directory unsafe"):
+            self.reserve()
+
     def test_crash_after_canonical_index_refuses_replay(self):
         from alpha_research.orchestration import operator_consent as module
         original = atomic_write_json
