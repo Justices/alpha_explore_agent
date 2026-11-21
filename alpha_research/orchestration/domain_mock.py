@@ -13,7 +13,7 @@ from unittest.mock import patch
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
 from alpha_research.orchestration.engine import OrchestrationError
-from alpha_research.state.records import ResearchRecordStore
+from alpha_research.state.records import offline_mock_record_scope
 
 
 class DomainMockGateway:
@@ -142,16 +142,9 @@ def mock_domain_boundary(region):
             return result
 
     with ExitStack() as stack:
-        # Every record written by domain code during this context carries an
-        # explicit mock provenance; promotion queries must never trust it.
-        original_put = ResearchRecordStore.put
-        def mock_provenance_put(store, kind, record, **kwargs):
-            from copy import deepcopy
-            stamped = deepcopy(record)
-            stamped["evidence_origin"] = "OFFLINE_DOMAIN_MOCK"
-            return original_put(store, kind, stamped, **kwargs)
-        stack.enter_context(patch.object(
-            ResearchRecordStore, "put", mock_provenance_put))
+        # ContextVar-scoped provenance protects concurrent workflows from
+        # process-wide ResearchRecordStore monkey patches.
+        stack.enter_context(offline_mock_record_scope())
         # Campaign review is a model-mediated attribution step; replace it in
         # this standalone offline integration without suppressing scheduling.
         stack.enter_context(patch(
