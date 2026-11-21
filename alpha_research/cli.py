@@ -511,7 +511,8 @@ def main(argv=None):
     if args.command in {"stop", "resume"}:
         try:
             update_stop_flag(stop_flag, args.command == "stop")
-        except (OSError, SubmissionGateError) as exc:
+        except (OSError, SubmissionGateError, ValueError) as exc:
+            # A symlinked stop flag is unsafe and cannot be overwritten.
             print(f"stop state not changed: {exc}", file=sys.stderr)
             return 1
         print(json.dumps({"stopped": args.command == "stop"}))
