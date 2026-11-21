@@ -498,6 +498,11 @@ def main(argv=None):
                     inspect_execution_proposal(runner, args.task_id)
                     inspect_execution_identity(
                         runner, args.task_id, effective, policy)
+                    # A domain mock may NEVER take over the default research root.
+                    # Require a separately supplied --state-root for isolation.
+                    if root == default_state_root().resolve():
+                        raise OrchestrationError(
+                            "domain mock requires a dedicated non-default --state-root")
                     # Validate the workspace before any domain evidence can be written.
                     # The marker is permanent and never grants production authority.
                     inspect_mock_workspace(root)
