@@ -162,13 +162,21 @@ class StopSignals:
         self.launch_flag = Path(launch_flag) if launch_flag else None
 
     def exists(self):
-        return self.global_flag.exists() or bool(self.launch_flag and self.launch_flag.exists())
+        # exists() follows symlinks, so a dangling stop link must count
+        # as active rather than allowing a stopped run to continue.
+        return (
+            self.global_flag.exists() or self.global_flag.is_symlink()
+            or bool(self.launch_flag and (
+                self.launch_flag.exists() or self.launch_flag.is_symlink()))
+        )
 
 
 def update_stop_flag(path: Path, stopped: bool) -> None:
     path = Path(path)
     with SubmissionGate(path.parent):
         if stopped:
+            if path.is_symlink():
+                raise ValueError("refusing to overwrite a symlinked stop flag")
             path.write_text("stop\n", encoding="utf-8")
         else:
             path.unlink(missing_ok=True)
@@ -183,4 +191,5 @@ def clear_stop() -> None:
 
 
 def stop_requested() -> bool:
-    return stop_flag_path().exists()
+    path = stop_flag_path()
+    return path.exists() or path.is_symlink()
