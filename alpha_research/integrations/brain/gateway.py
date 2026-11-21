@@ -49,7 +49,8 @@ class GatewayError(RuntimeError):
 
 class Gateway:
     def __init__(self, driver_path: Path = None, alpha_lookup=None, *,
-                 credentials=None, read_only=False):
+                 credentials=None, read_only=False,
+                 orchestration_guarded=False):
         """alpha_lookup: callable(alpha_id) -> alpha state dict, used for
         the correlation precondition check (design §3.3, second layer)."""
         self.driver_path = driver_path or (Path(__file__).with_name("driver.py"))
@@ -57,6 +58,11 @@ class Gateway:
         self._audit_evidence = {}
         self._credentials = credentials
         self.read_only = bool(read_only)
+        # New orchestration integration MUST use this boundary. Existing
+        # legacy Gateway callers remain independent of the control plane.
+        # No trusted live admission consumer exists yet: guarded mutating
+        # commands are always refused, even if a caller fabricates params.
+        self.orchestration_guarded = bool(orchestration_guarded)
         self.proc = None
         self.auth_info = None
 
@@ -65,6 +71,8 @@ class Gateway:
         command = [sys.executable, str(self.driver_path)]
         if self.read_only:
             command.append("--read-only")
+        if self.orchestration_guarded:
+            command.append("--orchestration-guarded")
         if self._credentials is not None:
             command.append("--brain-credentials-stdin")
         self.proc = subprocess.Popen(
@@ -108,6 +116,14 @@ class Gateway:
         return self.call("check_simulation_cache", **params)
 
     def call(self, cmd: str, **params) -> dict:
+        if self.orchestration_guarded and cmd in {
+                "simulate_batch", "simulate_super", "tag_alpha",
+                "sync_backtest_cache", "resume_simulation_batch"}:
+            # Refuse before serializing any payload, including fabricated
+            # 'approval' or 'allow' fields. The driver checks independently.
+            raise GatewayError(
+                "orchestrated BRAIN write requires trusted live admission "
+                "consumer; dispatch disabled")
         if self.read_only and cmd not in READONLY_PROBE_COMMANDS:
             raise GatewayError("read-only BRAIN probe forbids this command")
         if cmd not in WHITELIST:
