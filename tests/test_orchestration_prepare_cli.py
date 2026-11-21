@@ -84,6 +84,69 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(task["status"], "CREATED")
         self.assertEqual(task["budget"]["reserved"], 0)
 
+    def test_missing_default_config_uses_safe_builtin_only_for_offline_preparation(self):
+        args = [
+            "--state-root", str(self.root),
+            "--lead", "deepseek", "--executor", "deepseek",
+            "orchestration-prepare", "--workflow", "regular",
+            "--region", "CHN", "--objective", "Mac without user config",
+        ]
+        status, output, error = self._call(args)
+        self.assertEqual(status, 0, error)
+        result = json.loads(output)
+        self.assertEqual(result["config_source"], "builtin_offline_defaults")
+        self.assertFalse(result["model_call_authorized"])
+        task_id = result["task_id"]
+        task = MainOrchestrator(self.root).load(task_id)
+        self.assertEqual(task["request"]["region"], "CHN")
+        self.assertEqual(task["request"]["delay"], 1)
+        self.assertFalse((self.root / "config" / "nastu_quant.json").exists())
+        for action, expected in (
+            ("orchestration-handoff", "AWAITING_DOMAIN_RESEARCH_ID"),
+            ("orchestration-recovery-check", "NOT_BLOCKED_EXECUTE"),
+        ):
+            status, output, error = self._call(
+                args[:6] + [action, task_id])
+            self.assertEqual(status, 0, error)
+            self.assertEqual(json.loads(output)["status"], expected)
+
+    def test_missing_default_config_still_requires_explicit_region(self):
+        args = [
+            "--state-root", str(self.root),
+            "--lead", "deepseek", "--executor", "deepseek",
+            "orchestration-prepare", "--workflow", "regular",
+            "--objective", "scope required",
+        ]
+        status, _, error = self._call(args)
+        self.assertEqual(status, 2)
+        self.assertIn("OrchestrationError", error)
+        self.assertFalse((self.root / "state" / "research_v1_1" /
+                          "orchestration").exists())
+
+    def test_missing_explicit_config_reports_path_and_does_not_fallback(self):
+        missing = self.root / "missing-custom-config.json"
+        args = [
+            "--state-root", str(self.root), "--config", str(missing),
+            "--lead", "deepseek", "--executor", "deepseek",
+            "orchestration-prepare", "--workflow", "regular",
+            "--region", "CHN", "--objective", "must not bypass config",
+        ]
+        status, _, error = self._call(args)
+        self.assertEqual(status, 2)
+        self.assertIn(str(missing), error)
+        self.assertIn("research configuration file not found", error)
+        self.assertFalse((self.root / "state" / "research_v1_1" /
+                          "orchestration").exists())
+
+    def test_present_explicit_config_without_governance_never_gets_fallback(self):
+        self.config.write_text(json.dumps({"scope": {"region": "CHN"}}),
+                               encoding="utf-8")
+        status, _, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "regular",
+                           "--objective", "no governance bypass"])
+        self.assertEqual(status, 2)
+        self.assertIn("missing model_governance", error)
+
     def test_prepare_requires_both_registered_roles_and_policy(self):
         missing_role = [
             "--state-root", str(self.root), "--config", str(self.config),
