@@ -108,7 +108,8 @@ def _index(root):
             raise OrchestrationError("pre-dispatch escrow reciprocal mapping invalid")
         record = _read_json_file(
             root / (entry["task_id"] + ".json"), "pre-dispatch escrow projection")
-        if (record.get("schema_version") != _SCHEMA
+        if (type(record.get("schema_version")) is not int
+                or record.get("schema_version") != _SCHEMA
                 or record.get("task_id") != entry["task_id"]
                 or record.get("grant_id") != entry["grant_id"]
                 or record.get("attempt_id") != aid
@@ -138,7 +139,13 @@ def _evidence(orchestrator, task_id, governance_policy):
             or task["budget"] != {"limit": 1, "reserved": 0, "used": 0}
             or task.get("recovery_target") is not None
             or task.get("research_identity") is not None
-            or any(state != "PENDING" for state in task["steps"].values())):
+            or task.get("checkpoints") != {}
+            or task.get("result") is not None
+            or task.get("failure") is not None
+            or task.get("steps") != {
+                "validate": "PENDING", "execute": "PENDING",
+                "qualify": "PENDING", "collect": "PENDING",
+            }):
         raise OrchestrationError("pre-dispatch escrow requires fresh unexecuted task")
     staged = inspect_staged_simulation_attempt(orchestrator, task_id)
     if staged["status"] != "STAGED_NO_DISPATCH":
@@ -193,6 +200,9 @@ def _evidence(orchestrator, task_id, governance_policy):
         "staging_sha256": fingerprint_json(stage),
         "governance_policy_sha256": fingerprint_json(policy),
         "model_budget_attempts": budget["attempts"],
+        # Missing file is interpreted by ModelCallLedger as an empty
+        # baseline, NOT proof that all historical calls are accounted for.
+        "model_budget_ledger_present": budget_path.is_file(),
     }
 
 
@@ -258,6 +268,9 @@ def reserve_pre_dispatch_escrow(orchestrator, task_id, governance_policy):
             # Cross-file atomicity is NOT provided by a filesystem; publish
             # the canonical anti-replay index FIRST, then its projection.
             # A crash between writes blocks all tasks pending reconciliation.
+            # Re-check non-executable environmental stop just before the
+            # canonical write. This does not create a live dispatch lock.
+            _assert_offline_environment(orchestrator)
             atomic_write_json(index_path, index)
             atomic_write_json(projection, record)
             return inspect_pre_dispatch_escrow(
