@@ -59,8 +59,8 @@ class GuardedGatewayTests(unittest.TestCase):
             def close(self):
                 pass
         input_stream = io.StringIO(
-            '{"cmd":"get_platform_setting_options"}\\n'
-            '{"cmd":"shutdown"}\\n')
+            '{"cmd":"get_platform_setting_options"}\n'
+            '{"cmd":"shutdown"}\n')
         output = io.StringIO()
         with (patch.object(driver.sys, "argv",
                            ["driver.py", "--orchestration-guarded"]),
