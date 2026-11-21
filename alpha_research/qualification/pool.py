@@ -57,6 +57,18 @@ class CandidatePool:
         self.index_path = record_store.root / "pool_index.json"
 
     def build_index(self, current_policy_sha256=None):
+        # A marked mock workspace has NO live pool, including if raw files
+        # were copied there without provenance or escaped the write API.
+        from alpha_research.orchestration.mock_workspace import (
+            marker_path, inspect_mock_workspace,
+        )
+        state_root = self.store.root.parent.parent
+        marker = marker_path(state_root)
+        if marker.exists() or marker.is_symlink():
+            inspect_mock_workspace(state_root)  # invalid markers fail closed
+            return {"schema_version": 1, "alpha_count": 0,
+                    "candidate_count": 0, "preferred_count": 0,
+                    "entries": []}
         # Mock evidence can exist in the same record layout, but must never
         # influence live Candidate / Preferred admission or reusable verdicts.
         candidates = [row for row in self.store.list("candidate")
@@ -147,6 +159,14 @@ class CandidatePool:
         Exact evidence and policy digests are mandatory. Callers must obtain
         current evidence independently and MUST NOT use this to skip RA/PC/SC.
         """
+        from alpha_research.orchestration.mock_workspace import (
+            marker_path, inspect_mock_workspace,
+        )
+        state_root = self.store.root.parent.parent
+        marker = marker_path(state_root)
+        if marker.exists() or marker.is_symlink():
+            inspect_mock_workspace(state_root)
+            return None
         if not all(isinstance(v, str) and len(v) == 64 and
                    all(ch in "0123456789abcdef" for ch in v)
                    for v in (evidence_sha256, policy_sha256)):
