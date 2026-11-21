@@ -9,12 +9,10 @@ if str(IMPORT_ROOT) not in sys.path:
     sys.path.insert(0, str(IMPORT_ROOT))
 
 from alpha_research.integrations.brain.runtime import PlatformRuntime, WorldQuantClient  # noqa: E402
-
-# Enforced independently of Gateway; raw driver stdin is not a grant channel.
-_GUARDED_FORBIDDEN_CLAIMS = frozenset({
-    "allow", "live", "authorization_id", "operator_approval_id",
-    "grant_id", "attempt_id", "permission_to_dispatch", "dispatch_authorized",
-})
+from alpha_research.integrations.brain.guarded_protocol import (
+    GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
+    guarded_request_allowed,
+)  # noqa: E402
 
 
 def write(payload):
@@ -63,17 +61,13 @@ def main():
                 # production admission boundary. This option is NOT a live
                 # enablement; unimplemented trusted grant consumption means
                 # every mutating research command is refused by construction.
-                if guarded and command not in {
-                    "get_platform_setting_options",
-                    "get_simulation_settings_schema",
-                    "readonly_probe_datasets", "get_dataset_details",
-                    "get_alpha_details", "get_alpha_pnl",
-                    "get_alpha_yearly_stats", "get_user_alphas",
-                }:
+                if guarded and command not in GUARDED_ORCHESTRATION_READS:
                     write({"ok": False, "error":
                            "orchestration live admission is not implemented"})
                     continue
-                if guarded and _GUARDED_FORBIDDEN_CLAIMS.intersection(request):
+                if guarded and not guarded_request_allowed(
+                        command, {key: value for key, value in request.items()
+                                  if key != "cmd"}):
                     write({"ok": False, "error":
                            "untrusted orchestration authorization claims refused"})
                     continue
