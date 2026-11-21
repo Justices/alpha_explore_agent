@@ -144,6 +144,62 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")),
                          "release audit must not mutate state")
 
+    def test_p4_8_consent_cli_routes_offline_receipts_without_braindispatch(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline signed consent CLI"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        receipt = self.root / "external-consent-fixture.json"
+        trust = self.root / "external-trust-fixture.json"
+        receipt.write_text(json.dumps({"claims": {}, "signature": "fixture"}))
+        trust.write_text(json.dumps({
+            "schema_version": 1, "issuers": {}, "revoked_grants": []}))
+        evidence = {
+            "status": "EXTERNAL_SIGNATURE_VERIFIED_NOT_AUTHORIZED",
+            "permission_to_dispatch": False,
+            "brain_simulation_authorized": False,
+            "model_call_authorized": False,
+        }
+        root = (self.root / "state" / "research_v1_1"
+                / "operator_consent_audit")
+        with patch("alpha_research.cli.verify_external_consent",
+                   return_value=evidence) as verified:
+            status, output, error = self._call(
+                self.prefix + ["orchestration-consent-verify", task_id,
+                               "--receipt", str(receipt),
+                               "--trust-policy", str(trust)])
+        self.assertEqual(status, 0, error)
+        self.assertEqual(json.loads(output), evidence)
+        verified.assert_called_once()
+        self.assertFalse(root.exists())
+        with patch("alpha_research.cli.reserve_consent_for_audit",
+                   return_value={
+                       "status": "RESERVED_CONSENT_AUDIT_ONLY",
+                       "permission_to_dispatch": False,
+                   }) as reserve:
+            status, output, error = self._call(
+                self.prefix + ["orchestration-consent-reserve", task_id,
+                               "--receipt", str(receipt),
+                               "--trust-policy", str(trust)])
+        self.assertEqual(status, 0, error)
+        self.assertFalse(json.loads(output)["permission_to_dispatch"])
+        reserve.assert_called_once()
+
+    def test_p4_8_escrow_reserve_cli_refuses_missing_prerequisites(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline escrow CLI"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        status, _, error = self._call(
+            self.prefix + ["orchestration-predispatch-escrow-reserve", task_id])
+        self.assertEqual(status, 2)
+        self.assertIn("staging", error.lower())
+        self.assertFalse((
+            self.root / "state" / "research_v1_1" /
+            "simulation_predispatch_escrow" / "escrow_index.json").exists())
+
     def test_recovery_check_is_read_only_for_unstarted_task(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
