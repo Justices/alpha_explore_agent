@@ -206,7 +206,8 @@ def inspect_pre_dispatch_escrow(orchestrator, task_id, governance_policy=None):
             if projection.is_symlink() or projection.exists():
                 raise OrchestrationError("pre-dispatch escrow orphan task")
             return {"task_id": task_id, "status": "NOT_ESCROWED",
-                    "permission_to_dispatch": False}
+                    "permission_to_dispatch": False,
+                    "automatic_retry_allowed": False}
         record = _read_json_file(projection, "pre-dispatch escrow projection")
         if governance_policy is not None:
             evidence = _evidence(orchestrator, task_id, governance_policy)
