@@ -114,6 +114,8 @@ def _trust_key(trust, claims):
 
 def _load_index(root):
     """Validate all reciprocal entries and projections, including other tasks."""
+    if root.is_symlink() or (root.exists() and not root.is_dir()):
+        raise OrchestrationError("operator consent audit directory unsafe")
     index_path = root / "consumed.json"
     if index_path.is_symlink():
         raise OrchestrationError("operator consent index symlink forbidden")
