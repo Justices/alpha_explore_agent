@@ -481,6 +481,60 @@ class ExternalConsentTests(unittest.TestCase):
         directory = self.root / "state" / "research_v1_1" / "simulation_predispatch_escrow"
         self.assertFalse((directory / "escrow_index.json").exists())
 
+
+    def test_p4_7_3_budget_changes_after_escrow_force_reconciliation(self):
+        from alpha_research.agents.governance import ModelCallLedger
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        escrow.reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        ModelCallLedger(self.root, self.policy).reserve(
+            self.plan["research_id"], "late-budget-attempt",
+            task="offline", role="research_lead",
+            backend="registry:deepseek", backend_sha256="a" * 64)
+        status = escrow.inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(status["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(status["automatic_retry_allowed"])
+        from alpha_research.orchestration.simulation_dispatch_preflight import (
+            inspect_simulation_dispatch_gate,
+        )
+        audit = inspect_simulation_dispatch_gate(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertIn("PREDISPATCH_ESCROW_RECONCILIATION_REQUIRED",
+                      audit["blockers"])
+        self.assertFalse(audit["permission_to_dispatch"])
+
+    def test_p4_7_3_missing_index_never_means_new_escrow(self):
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        escrow.reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        root = self.root / "state" / "research_v1_1" / "simulation_predispatch_escrow"
+        (root / "escrow_index.json").unlink()
+        status = escrow.inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(status["status"], "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "index missing"):
+            escrow.reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+
+    def test_p4_7_3_tampered_intent_blocks_existing_escrow(self):
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        escrow.reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        intent_path = (self.root / "state" / "research_v1_1"
+                       / "simulation_attempt_admission" / "intents"
+                       / (self.task["task_id"] + ".intent.json"))
+        intent = json.loads(intent_path.read_text())
+        intent["request"]["selection"] = "rank(unauthorized)"
+        intent_path.write_text(json.dumps(intent))
+        result = escrow.inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(result["permission_to_dispatch"])
+
     def test_p4_7_3_gateway_does_not_accept_escrow_receipt(self):
         from alpha_research.integrations.brain.gateway import Gateway, GatewayError
         from alpha_research.orchestration.pre_dispatch_escrow import (
