@@ -41,7 +41,17 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
         blockers.append("RESEARCH_ID_NOT_BOUND")
     else:
         try:
-            budget = ModelCallLedger(root, policy).status(research_id)
+            # The ordinary status() takes a writer lock and updates its
+            # metadata file. Audit must remain genuinely read-only.
+            ledger = ModelCallLedger(root, policy)
+            record_path, _ = ledger._paths(research_id)
+            state = ledger._load(record_path, research_id)
+            budget = ledger._summarize(state)
+            budget["blocked"] = bool(
+                budget["unknown"] or budget["unresolved"]
+                or budget["attempts"] >= ledger.policy["max_calls"]
+                or budget["reported_tokens"]
+                   >= ledger.policy["max_reported_tokens"])
             facts["model_budget"] = {
                 "attempts": budget["attempts"],
                 "unknown": budget["unknown"],
