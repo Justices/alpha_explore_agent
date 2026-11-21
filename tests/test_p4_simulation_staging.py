@@ -217,7 +217,14 @@ class StagingTests(unittest.TestCase):
         task_id = self.task["task_id"]
         authorization_id = self.scope_result["authorization_id"]
         self.assertEqual(index["by_task"], {task_id: authorization_id})
-        self.assertEqual(index["by_id"], {authorization_id: task_id})
+        from alpha_research.state.fingerprint import fingerprint_json
+        journal = json.loads((location / (task_id + ".json")).read_text())
+        self.assertEqual(index["by_id"], {
+            authorization_id: {
+                "task_id": task_id,
+                "journal_sha256": fingerprint_json(journal),
+            }
+        })
         self.assertEqual(inspect_staged_simulation_attempt(
             self.orchestrator, task_id)["status"], "STAGED_NO_DISPATCH")
 
@@ -338,6 +345,21 @@ class StagingTests(unittest.TestCase):
             self.orchestrator, self.task["task_id"])
         self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
         self.assertEqual(before, sorted(str(p) for p in location.rglob("*")))
+
+
+
+    def test_canonical_index_seals_immutable_staging_identity(self):
+        self.stage()
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        path = location / (self.task["task_id"] + ".json")
+        body = json.loads(path.read_text())
+        body["run_id"] = "different-run-id"
+        path.write_text(json.dumps(body), encoding="utf-8")
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(result["permission_to_dispatch"])
 
 
 
