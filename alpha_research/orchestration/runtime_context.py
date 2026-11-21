@@ -9,6 +9,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from alpha_research.orchestration.engine import OrchestrationError
+from alpha_research.orchestration.mock_workspace import (
+    marker_path, inspect_mock_workspace,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +33,13 @@ class CliRuntimeContext:
                 "CLI runtime requires the already-acquired global execution lock")
         if gateway is None or not isinstance(config, dict):
             raise OrchestrationError("active CLI Gateway/config unavailable")
+        marker = marker_path(root)
+        if marker.exists() or marker.is_symlink():
+            inspect_mock_workspace(root)
+            if (not getattr(gateway, "is_offline_mock", False)
+                    or not getattr(model, "is_offline_mock", False)):
+                raise OrchestrationError(
+                    "active live CLI runtime forbidden in offline mock workspace")
         return cls(root, config, gateway, model, agent, expected)
 
     def dispatch(self, command, args, *, dispatcher=None, execution_context=None):
