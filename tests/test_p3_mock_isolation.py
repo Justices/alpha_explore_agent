@@ -11,7 +11,7 @@ from alpha_research.orchestration.mock_workspace import (
 )
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.qualification.pool import CandidatePool
-from alpha_research.state.records import ResearchRecordStore
+from alpha_research.state.records import ResearchRecordStore, offline_mock_record_scope
 
 
 class DomainMockIsolationTests(unittest.TestCase):
@@ -27,6 +27,30 @@ class DomainMockIsolationTests(unittest.TestCase):
                          "EXISTING_MOCK_ONLY")
         self.assertEqual(CandidatePool(ResearchRecordStore(self.root))
                          .build_index()["candidate_count"], 0)
+
+    def test_mock_origin_is_context_local_and_restored(self):
+        from alpha_research.state.records import _ACTIVE_EVIDENCE_ORIGIN
+        self.assertIsNone(_ACTIVE_EVIDENCE_ORIGIN.get())
+        with offline_mock_record_scope():
+            self.assertEqual(_ACTIVE_EVIDENCE_ORIGIN.get(),
+                             "OFFLINE_DOMAIN_MOCK")
+        self.assertIsNone(_ACTIVE_EVIDENCE_ORIGIN.get())
+
+    def test_context_does_not_leak_to_independent_threads(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from alpha_research.state.records import _ACTIVE_EVIDENCE_ORIGIN
+        with offline_mock_record_scope():
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                self.assertIsNone(
+                    pool.submit(_ACTIVE_EVIDENCE_ORIGIN.get).result())
+        self.assertIsNone(_ACTIVE_EVIDENCE_ORIGIN.get())
+
+    def test_second_claim_reuses_same_mock_workspace_identity(self):
+        first = claim_mock_workspace(self.root)
+        second = claim_mock_workspace(self.root)
+        self.assertEqual(first["status"], "FRESH_EMPTY_MOCK_ROOT")
+        self.assertEqual(second["status"], "EXISTING_MOCK_ONLY")
+        self.assertEqual(first["marker"], second["marker"])
 
     def test_existing_real_run_prevents_mock_claim(self):
         directory = self.root / "runs" / "real"
