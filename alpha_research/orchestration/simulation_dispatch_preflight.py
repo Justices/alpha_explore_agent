@@ -74,6 +74,11 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
             # metadata file. Audit must remain genuinely read-only.
             ledger = ModelCallLedger(root, policy)
             record_path, _ = ledger._paths(research_id)
+            history_present = record_path.is_file() and not record_path.is_symlink()
+            if not history_present:
+                # Missing ledger is an empty local baseline for *offline*
+                # staging, not proof of a zero-spend production history.
+                blockers.append("MODEL_BUDGET_HISTORY_NOT_PROVABLE")
             state = ledger._load(record_path, research_id)
             budget = ledger._summarize(state)
             # Unreported tokens are not a cost bound. A successful call
@@ -85,6 +90,7 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
                 or budget["reported_tokens"]
                    >= ledger.policy["max_reported_tokens"])
             facts["model_budget"] = {
+                "history_present": history_present,
                 "attempts": budget["attempts"],
                 "unknown": budget["unknown"],
                 "unresolved": budget["unresolved"],
