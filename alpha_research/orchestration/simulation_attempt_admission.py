@@ -23,7 +23,8 @@ from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 _VERSION = 2
-_INDEX_VERSION = 1
+_INDEX_VERSION = 2
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _STAGED = "STAGED_NO_DISPATCH"
 _RECONCILE = "RECONCILIATION_REQUIRED"
@@ -55,6 +56,8 @@ def _load_authorization_index(root):
         raise OrchestrationError("Simulation authorization index is a symlink")
     projections = list(root.glob("[0-9a-f]" * 32 + ".json"))
     intent_dir = root / "intents"
+    if intent_dir.is_symlink():
+        raise OrchestrationError("Simulation authorization Intent directory is a symlink")
     if not path.exists():
         if projections or intent_dir.is_symlink() or (
                 intent_dir.exists() and (
@@ -76,14 +79,24 @@ def _load_authorization_index(root):
     by_id, by_task = data["by_id"], data["by_task"]
     if (len(by_id) != len(by_task)
             or any(not isinstance(aid, str) or _HEX32.fullmatch(aid) is None
-                   or not isinstance(tid, str) or _HEX32.fullmatch(tid) is None
-                   or by_task.get(tid) != aid
-                   for aid, tid in by_id.items())
-            or any(by_id.get(aid) != tid for tid, aid in by_task.items())):
+                   or not isinstance(entry, dict)
+                   or set(entry) != {"task_id", "journal_sha256"}
+                   or not isinstance(entry["task_id"], str)
+                   or _HEX32.fullmatch(entry["task_id"]) is None
+                   or not isinstance(entry["journal_sha256"], str)
+                   or _HEX64.fullmatch(entry["journal_sha256"]) is None
+                   or by_task.get(entry["task_id"]) != aid
+                   for aid, entry in by_id.items())
+            or any(not isinstance(tid, str) or _HEX32.fullmatch(tid) is None
+                   or not isinstance(aid, str)
+                   or not isinstance(by_id.get(aid), dict)
+                   or by_id[aid]["task_id"] != tid
+                   for tid, aid in by_task.items())):
         raise OrchestrationError("Simulation authorization reciprocal index mismatch")
-    # Every registered task must retain its projection. Missing projections
-    # include a crash between the canonical write and the per-task write.
-    for aid, tid in by_id.items():
+    # Every registered task must retain its exact committed projection.
+    # Partial writes or later journal drift remain reconciliation-required.
+    for aid, entry in by_id.items():
+        tid = entry["task_id"]
         projected = root / (tid + ".json")
         if projected.is_symlink() or not projected.is_file():
             raise OrchestrationError("Simulation authorization projection missing")
@@ -93,7 +106,8 @@ def _load_authorization_index(root):
             raise OrchestrationError("Simulation authorization projection unreadable") from exc
         if (not isinstance(body, dict) or body.get("authorization_id") != aid
                 or body.get("task_id") != tid or body.get("status") != _STAGED
-                or body.get("permission_to_dispatch") is not False):
+                or body.get("permission_to_dispatch") is not False
+                or fingerprint_json(body) != entry["journal_sha256"]):
             raise OrchestrationError("Simulation authorization projection mismatch")
     if any(candidate.stem not in by_task or candidate.is_symlink()
            for candidate in projections):
@@ -133,7 +147,8 @@ def inspect_staged_simulation_attempt(orchestrator, task_id):
                 or record["schema_version"] != _VERSION
                 or record["task_id"] != task_id
                 or index["by_task"].get(task_id) != record["authorization_id"]
-                or index["by_id"].get(record["authorization_id"]) != task_id
+                or index["by_id"].get(record["authorization_id"], {}).get(
+                    "task_id") != task_id
                 or record["status"] != _STAGED
                 or record["permission_to_dispatch"] is not False
                 or record["intent_ref"] != str(intent_path.resolve())):
@@ -234,7 +249,10 @@ def stage_simulation_attempt(orchestrator, task_id, model_config,
             # The canonical reciprocal index is published FIRST. Any crash
             # before a complete journal/Intent is RECONCILIATION_REQUIRED;
             # authorization_id and task_id can never be silently reused.
-            index["by_id"][checked["authorization_id"]] = task_id
+            index["by_id"][checked["authorization_id"]] = {
+                "task_id": task_id,
+                "journal_sha256": fingerprint_json(record),
+            }
             index["by_task"][task_id] = checked["authorization_id"]
             atomic_write_json(journal_path.parent / "authorization_index.json", index)
             atomic_write_json(journal_path, record)
