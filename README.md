@@ -460,13 +460,19 @@ are idempotently retried by recovery.
 
 Before an explicitly reviewed production integration, a task and its selected
 model identities can be prepared without opening a BRAIN session or calling a
-model. Both roles must be selected from the model registry, and the effective
-config must include a `model_governance` object (`max_calls`,
-`max_reported_tokens`, `failover: manual`).
+model. Both roles must be selected from the model registry. If the
+default `<state-root>/config/nastu_quant.json` does not exist, **offline
+preparation and inspection only** use built-in research defaults plus a
+conservative model governance policy (`max_calls=1`,
+`max_reported_tokens=4096`, `failover=manual`). This policy is only a
+fingerprinted planning limit; it does not authorize model calls. If a user
+configuration exists (or is explicitly selected via `--config`), it must
+include valid `model_governance`. Missing explicit files are errors.
 
 ```sh
 nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
-  orchestration-prepare --workflow regular --objective "offline preparation only"
+  orchestration-prepare --workflow regular --region CHN \
+  --objective "offline preparation only"
 
 nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-handoff <TASK_ID>
