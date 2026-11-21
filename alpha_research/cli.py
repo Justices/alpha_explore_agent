@@ -47,6 +47,7 @@ from alpha_research.orchestration.execution_identity import (
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.preflight import local_preflight
+from alpha_research.orchestration.readonly_probe import run_readonly_probe
 from alpha_research.progress import write_progress
 
 
@@ -69,6 +70,14 @@ def main(argv=None):
         "preflight", help="check local research/model/BRAIN prerequisites without external calls")
     readiness.add_argument("--region",
                            help="planned research Region; conflicts with fixed scope are blocked")
+    brain_read = sub.add_parser(
+        "brain-readonly-check",
+        help="explicit BRAIN read-only OPTIONS/GET connectivity and Region catalog check")
+    brain_read.add_argument("--region", required=True)
+    brain_read.add_argument("--delay", type=int, choices=(0, 1), required=True)
+    brain_read.add_argument("--universe", required=True)
+    brain_read.add_argument("--allow-brain-read", action="store_true",
+                            help="authorize authentication and two read-only BRAIN calls")
     models = sub.add_parser(
         "models", help="inspect registered models or explicitly probe one model")
     models.add_argument("models_action", choices=(
@@ -302,6 +311,55 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "brain-readonly-check":
+        # This command is separate from domain Dispatch and never constructs
+        # a model client, research agent or simulation authorization.
+        if not args.allow_brain_read:
+            print("BRAIN read-only check requires --allow-brain-read",
+                  file=sys.stderr)
+            return 2
+        if marker_path(root).exists() or marker_path(root).is_symlink():
+            print("BRAIN read-only check forbidden in mock workspace",
+                  file=sys.stderr)
+            return 2
+        credential_location = os.environ.get("BRAIN_CREDENTIALS_FILE")
+        if not credential_location and args.config:
+            try:
+                config = json.loads(args.config.read_text(encoding="utf-8"))
+                variable = (config.get("auth") or {}).get(
+                    "credential_env", "BRAIN_CREDENTIALS_FILE")
+                credential_location = os.environ.get(variable)
+            except (OSError, ValueError, TypeError, AttributeError):
+                pass
+        if not credential_location:
+            print("BRAIN credentials file environment variable is required",
+                  file=sys.stderr)
+            return 2
+        gateway = Gateway(read_only=True)
+        previous_credentials = os.environ.get("BRAIN_CREDENTIALS_FILE")
+        try:
+            os.environ["BRAIN_CREDENTIALS_FILE"] = str(
+                expand_path(credential_location).resolve())
+            gateway.start()
+            result = run_readonly_probe(
+                gateway, region=args.region, delay=args.delay,
+                universe=args.universe)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0 if result["status"] == "READ_ONLY_SCOPE_VERIFIED" else 2
+        except Exception as exc:
+            # Never echo provider errors, account data, credential filenames.
+            print("BRAIN read-only check blocked: " + type(exc).__name__,
+                  file=sys.stderr)
+            return 2
+        finally:
+            try:
+                gateway.shutdown()
+            except Exception:
+                pass
+            if previous_credentials is None:
+                os.environ.pop("BRAIN_CREDENTIALS_FILE", None)
+            else:
+                os.environ["BRAIN_CREDENTIALS_FILE"] = previous_credentials
     if args.command == "preflight":
         config_path = args.config or root / "config" / "nastu_quant.json"
         report = local_preflight(
