@@ -35,6 +35,9 @@ from alpha_research.orchestration.admission_audit import audit_execution_admissi
 from alpha_research.orchestration.execution_authorization import inspect_execution_receipt
 from alpha_research.orchestration.execution_reservation import reserve_non_executable_receipt
 from alpha_research.orchestration.simulation_scope import inspect_simulation_scope
+from alpha_research.orchestration.simulation_attempt_admission import (
+    stage_simulation_attempt, inspect_staged_simulation_attempt,
+)
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
@@ -141,6 +144,16 @@ def main(argv=None):
     simulation_scope.add_argument("task_id")
     simulation_scope.add_argument("--receipt", required=True, type=_path_argument)
     simulation_scope.add_argument("--manifest", required=True, type=_path_argument)
+    sim_stage = sub.add_parser(
+        "orchestration-simulation-stage",
+        help="atomically stage one signed Simulation intent; NO BRAIN dispatch")
+    sim_stage.add_argument("task_id")
+    sim_stage.add_argument("--receipt", required=True, type=_path_argument)
+    sim_stage.add_argument("--manifest", required=True, type=_path_argument)
+    sim_stage_status = sub.add_parser(
+        "orchestration-simulation-stage-status",
+        help="read-only inspection of staged Simulation attempt")
+    sim_stage_status.add_argument("task_id")
     handoff = sub.add_parser(
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
@@ -483,7 +496,9 @@ def main(argv=None):
                         "orchestration-domain-mock", "orchestration-admission-audit",
                         "orchestration-authorization-inspect",
                         "orchestration-authorization-reserve",
-                        "orchestration-simulation-scope-check"}:
+                        "orchestration-simulation-scope-check",
+                        "orchestration-simulation-stage",
+                        "orchestration-simulation-stage-status"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
                 raise OrchestrationError(
@@ -495,6 +510,19 @@ def main(argv=None):
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
             effective = prepared["model"]
+            if args.command == "orchestration-simulation-stage-status":
+                result = inspect_staged_simulation_attempt(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-simulation-stage":
+                receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
+                manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                result = stage_simulation_attempt(
+                    MainOrchestrator(root), args.task_id, effective, policy,
+                    receipt, manifest)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if args.command == "orchestration-simulation-scope-check":
                 # Read-only verifier: no lock, Gateway, model or intent write.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
