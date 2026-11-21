@@ -547,6 +547,27 @@ domain Mock carries `evidence_origin=OFFLINE_DOMAIN_MOCK`. CandidatePool
 omits these records from its index and reuse lookups, even when a user manually
 points a pool reader at the mock root.
 
+P3 also defines an externally signed execution-receipt **verification**
+contract (separate from review-only approvals). Inspection and optional
+single-use audit reservation are available as follows:
+
+```sh
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-authorization-inspect <TASK_ID> --receipt /absolute/path/receipt.json
+
+# Optional; consumes the receipt ID for AUDIT ONLY, never execution:
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-authorization-reserve <TASK_ID> --receipt /absolute/path/receipt.json
+```
+
+These commands require an independently issued HMAC-SHA256 receipt and the
+`ALPHA_RESEARCH_EXECUTION_VERIFY_KEY` verifier environment variable; this
+application does not sign/issue receipts. A valid inspection returns
+`INSPECTED_NOT_EXECUTABLE`; reservation returns
+`RESERVED_INSPECTION_ONLY`. Both always report
+`permission_to_dispatch=false`. Neither command grants model, Simulation,
+readback or submission privileges, and no production adapter is enabled.
+
 Inspect admission blockers for a newly prepared task without making calls:
 
 ```sh
