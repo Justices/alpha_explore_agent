@@ -14,6 +14,7 @@ from alpha_research.qualification.gates import (
 
 WHITELIST = {
     "check_simulation_cache",
+    "readonly_probe_datasets",
     "sync_backtest_cache",
     "tag_alpha",
     "get_platform_setting_options",
@@ -35,24 +36,35 @@ READ_ONLY_COMMANDS = {
 }
 
 
+# Strict probe actions: no state-changing research commands, even if the
+# broader Gateway whitelist grows over time.
+READONLY_PROBE_COMMANDS = frozenset({
+    "get_platform_setting_options", "readonly_probe_datasets",
+})
+
+
 class GatewayError(RuntimeError):
     pass
 
 
 class Gateway:
-    def __init__(self, driver_path: Path = None, alpha_lookup=None, *, credentials=None):
+    def __init__(self, driver_path: Path = None, alpha_lookup=None, *,
+                 credentials=None, read_only=False):
         """alpha_lookup: callable(alpha_id) -> alpha state dict, used for
         the correlation precondition check (design §3.3, second layer)."""
         self.driver_path = driver_path or (Path(__file__).with_name("driver.py"))
         self.alpha_lookup = alpha_lookup
         self._audit_evidence = {}
         self._credentials = credentials
+        self.read_only = bool(read_only)
         self.proc = None
         self.auth_info = None
 
     def start(self) -> dict:
         env = os.environ.copy()
         command = [sys.executable, str(self.driver_path)]
+        if self.read_only:
+            command.append("--read-only")
         if self._credentials is not None:
             command.append("--brain-credentials-stdin")
         self.proc = subprocess.Popen(
@@ -96,6 +108,8 @@ class Gateway:
         return self.call("check_simulation_cache", **params)
 
     def call(self, cmd: str, **params) -> dict:
+        if self.read_only and cmd not in READONLY_PROBE_COMMANDS:
+            raise GatewayError("read-only BRAIN probe forbids this command")
         if cmd not in WHITELIST:
             raise GatewayError(f"command not in whitelist: {cmd}")
         if cmd in {"check_correlation", "check_local_self_correlation"}:
