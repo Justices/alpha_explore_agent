@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.fingerprint import fingerprint_json
+from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
 
 
 class ModelGatewayPermissionError(ValueError):
@@ -46,6 +47,12 @@ class ReadOnlyEvidenceGateway:
             raise ModelGatewayPermissionError("Universe must be specified or None")
         if not callable(getattr(gateway, "call", None)):
             raise ModelGatewayPermissionError("orchestrator Gateway.call required")
+        marker = marker_path(state_root)
+        if marker.exists() or marker.is_symlink():
+            inspect_mock_workspace(state_root)
+            if not getattr(gateway, "is_offline_mock", False):
+                raise ModelGatewayPermissionError(
+                    "live evidence Gateway forbidden in offline mock workspace")
         self._gateway = gateway
         self._root = (Path(state_root).resolve() / "state" /
                       "model_evidence" /
