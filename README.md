@@ -53,7 +53,11 @@ identity and model-budget uncertainty. Incomplete or legacy staging evidence
 requires manual reconciliation and **never** grants BRAIN dispatch.
 See [P4.7 authorization index](docs/P4_7_AUTHORIZATION_INDEX.md) and
 [P4.7.2 external consent audit](docs/P4_7_2_EXTERNAL_CONSENT_AUDIT.md), and
-[P4.7.3 pre-dispatch escrow and guarded boundary](docs/P4_7_3_PREDISPATCH_ESCROW.md).
+[P4.7.3 pre-dispatch escrow](docs/P4_7_3_PREDISPATCH_ESCROW.md), and
+[P4.8 production release audit / remaining gates](docs/P4_8_RELEASE_AUDIT_AND_REMAINING_GATES.md).
+New read-only CLI commands `orchestration-simulation-recovery-audit` and
+`orchestration-release-gate` classify unknown outcomes and explicit production
+blockers without contacting a model or BRAIN.
 The new Ed25519 verification and single-use approval reservation are
 **audit-only**; no trusted approval issuer or executable production grant
 consumer is installed. Real provider calls, BRAIN Simulation and Alpha
