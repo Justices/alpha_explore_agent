@@ -52,7 +52,8 @@ staged request, workflow/Run/Batch/Research IDs, reciprocal authorization
 identity and model-budget uncertainty. Incomplete or legacy staging evidence
 requires manual reconciliation and **never** grants BRAIN dispatch.
 See [P4.7 authorization index](docs/P4_7_AUTHORIZATION_INDEX.md) and
-[P4.7.2 external consent audit](docs/P4_7_2_EXTERNAL_CONSENT_AUDIT.md).
+[P4.7.2 external consent audit](docs/P4_7_2_EXTERNAL_CONSENT_AUDIT.md), and
+[P4.7.3 pre-dispatch escrow and guarded boundary](docs/P4_7_3_PREDISPATCH_ESCROW.md).
 The new Ed25519 verification and single-use approval reservation are
 **audit-only**; no trusted approval issuer or executable production grant
 consumer is installed. Real provider calls, BRAIN Simulation and Alpha
