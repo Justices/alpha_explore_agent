@@ -154,6 +154,47 @@ class AtomicSimulationIntentTests(unittest.TestCase):
         self.assertCountEqual(outcome, ["POSTING", "BLOCKED"])
         self.assertEqual(json.loads(self.path.read_text())["status"], "POSTING")
 
+    def test_unknown_outcome_requires_verified_local_response(self):
+        self.create()
+        transition_simulation_intent(self.path, expected_status="PREPARED",
+                                     status="POSTING")
+        transition_simulation_intent(self.path, expected_status="POSTING",
+                                     status="OUTCOME_UNKNOWN")
+        response_path = self.path.with_name("recovered.json")
+        response = {"results": [{"alpha_id": "OFFLINE"}]}
+        response_path.write_text(json.dumps(response), encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "verified response"):
+            transition_simulation_intent(
+                self.path, expected_status="OUTCOME_UNKNOWN",
+                status="RESPONSE_RECEIVED")
+        with self.assertRaisesRegex(ValueError, "fingerprint changed"):
+            transition_simulation_intent(
+                self.path, expected_status="OUTCOME_UNKNOWN",
+                status="RESPONSE_RECEIVED", response_ref=str(response_path),
+                response_sha256="f" * 64)
+        digest = hashlib.sha256(json.dumps(
+            response, ensure_ascii=False, sort_keys=True,
+            default=str).encode("utf-8")).hexdigest()
+        transition_simulation_intent(
+            self.path, expected_status="OUTCOME_UNKNOWN",
+            status="RESPONSE_RECEIVED", response_ref=str(response_path),
+            response_sha256=digest)
+        self.assertEqual(json.loads(self.path.read_text())["status"],
+                         "RESPONSE_RECEIVED")
+
+    def test_unknown_outcome_rejects_external_response_path(self):
+        self.create()
+        transition_simulation_intent(self.path, expected_status="PREPARED",
+                                     status="POSTING")
+        transition_simulation_intent(self.path, expected_status="POSTING",
+                                     status="OUTCOME_UNKNOWN")
+        external = Path(self.temp.name).parent / "external_recovery.json"
+        with self.assertRaisesRegex(ValueError, "next to Intent"):
+            transition_simulation_intent(
+                self.path, expected_status="OUTCOME_UNKNOWN",
+                status="RESPONSE_RECEIVED", response_ref=str(external),
+                response_sha256="f" * 64)
+
     def test_unknown_outcome_cannot_return_to_posting(self):
         self.create()
         transition_simulation_intent(self.path, expected_status="PREPARED",
