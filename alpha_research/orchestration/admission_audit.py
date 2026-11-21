@@ -56,6 +56,22 @@ def audit_execution_admission(orchestrator, task_id, model_config,
             blockers.append("IDENTITY_NOT_FAIL_CLOSED")
     except (OrchestrationError, OSError, ValueError, TypeError, KeyError, AttributeError):
         blockers.append("MODEL_IDENTITY_MISSING_OR_DRIFTED")
+    # Inspect local SDK/CLI and credential *presence* only. Never return
+    # credential values or claim remote provider/session availability.
+    from alpha_research.agents.doctor import check_registered_roles
+    try:
+        readiness = check_registered_roles(model_config)
+        facts["model_readiness"] = readiness
+        if readiness["status"] != "READY_LOCAL":
+            blockers.append("MODEL_ROLES_NOT_READY_LOCAL")
+    except (OSError, ValueError, TypeError, KeyError, AttributeError,
+            ImportError):
+        blockers.append("MODEL_READINESS_INSPECTION_FAILED")
+    # BRAIN authentication is an external session contract, deliberately
+    # unverified by this read-only operation.
+    facts["brain_session"] = "NOT_STARTED_NOT_VERIFIED"
+    blockers.append("BRAIN_AUTHENTICATION_NOT_VERIFIED")
+    blockers.append("LIVE_GATEWAY_OPERATION_GRANTS_NOT_BOUND")
     facts["config_source"] = config_source
     if config_source != "user_config":
         blockers.append("OFFLINE_DEFAULTS_NOT_LIVE_CONFIG")
