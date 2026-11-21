@@ -100,8 +100,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         result = json.loads(output)
         self.assertEqual(result["status"], "NOT_ESCROWED")
         self.assertFalse(result["permission_to_dispatch"])
-        self.assertFalse(result["automatic_retry_allowed"] if
-                         "automatic_retry_allowed" in result else False)
+        self.assertFalse(result["automatic_retry_allowed"])
         self.assertFalse(escrow_root.exists(),
                          "read-only escrow status must not create lock/index")
 
