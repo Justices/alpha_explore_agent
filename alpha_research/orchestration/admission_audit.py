@@ -11,6 +11,7 @@ from alpha_research.orchestration.execution_proposal import inspect_execution_pr
 from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
 from alpha_research.orchestration.execution_reservation import inspect_non_executable_reservation
 from alpha_research.orchestration.simulation_attempt_admission import inspect_staged_simulation_attempt
+from alpha_research.orchestration.operator_consent import inspect_consent_reservation
 
 
 def audit_execution_admission(orchestrator, task_id, model_config,
@@ -110,6 +111,16 @@ def audit_execution_admission(orchestrator, task_id, model_config,
     except (OrchestrationError, OSError, ValueError, TypeError,
             KeyError, AttributeError):
         blockers.append("SIMULATION_STAGING_LEDGER_UNREADABLE")
+    try:
+        consent = inspect_consent_reservation(orchestrator, task_id)
+        facts["operator_consent_audit"] = consent["status"]
+        if consent["status"] == "RECONCILIATION_REQUIRED":
+            blockers.append("OPERATOR_CONSENT_AUDIT_RECONCILIATION_REQUIRED")
+        elif consent["status"] == "RESERVED_CONSENT_AUDIT_ONLY":
+            blockers.append("OPERATOR_CONSENT_AUDIT_NOT_LIVE_AUTHORIZATION")
+    except (OrchestrationError, OSError, ValueError, TypeError,
+            KeyError, AttributeError):
+        blockers.append("OPERATOR_CONSENT_AUDIT_UNREADABLE")
     # Review receipts cover only proposal review, not model or BRAIN writes.
     blockers.append("TRUSTED_EXECUTION_AUTHORIZATION_NOT_IMPLEMENTED")
     blockers.append("PRODUCTION_DISPATCH_ADAPTER_DISABLED")
