@@ -230,6 +230,22 @@ class ResearchRecordStore:
         lineage cannot be changed by a replacement.
         """
         validate_record(kind, record)
+        # Record-store enforcement is independent of the CLI mock adapter.
+        # A marked workspace can never persist records claiming live origin.
+        from alpha_research.orchestration.mock_workspace import (
+            is_mock_workspace, marker_path,
+        )
+        state_root = self.root.parent.parent
+        marker = marker_path(state_root)
+        if marker.exists() or marker.is_symlink():
+            if not is_mock_workspace(state_root):
+                raise ValueError("invalid offline mock workspace marker")
+            if record.get("evidence_origin") != "OFFLINE_DOMAIN_MOCK":
+                raise ValueError(
+                    "offline mock workspace requires mock evidence provenance")
+        elif record.get("evidence_origin") == "OFFLINE_DOMAIN_MOCK":
+            raise ValueError(
+                "offline mock evidence cannot be persisted in an unmarked workspace")
         path = self.path_for(kind, record[RECORD_IDS[kind]])
         try:
             previous = self.get(kind, record[RECORD_IDS[kind]])
