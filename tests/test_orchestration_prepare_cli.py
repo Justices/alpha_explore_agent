@@ -123,6 +123,27 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(report["automatic_retry_allowed"])
         self.assertEqual(before, sorted(str(p) for p in state_root.rglob("*")))
 
+    def test_p4_8_production_release_gate_cli_is_read_only(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "release readiness"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        status, output, error = self._call(
+            self.prefix + ["orchestration-release-gate", task_id])
+        self.assertEqual(status, 0, error)
+        result = json.loads(output)
+        self.assertIn(result["status"], {
+            "PRODUCTION_BLOCKED", "RECONCILIATION_BLOCKED"})
+        self.assertIn("EXTERNAL_OPERATOR_CONSENT_ISSUER_NOT_PROVISIONED",
+                      result["blockers"])
+        self.assertFalse(result["production_authorized"])
+        self.assertFalse(result["brain_invoked"])
+        self.assertFalse(result["provider_invoked"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")),
+                         "release audit must not mutate state")
+
     def test_recovery_check_is_read_only_for_unstarted_task(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
