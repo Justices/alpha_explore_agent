@@ -36,10 +36,19 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
     facts["staging_status"] = staged["status"]
     if staged["status"] != "STAGED_NO_DISPATCH":
         blockers.append("SIMULATION_INTENT_NOT_STAGED_OR_UNSAFE")
-    research_id = task.get("research_identity")
+    # Task bindings are structured objects; they are not plain strings.
+    # Inspecting the real persisted shape is required to see unresolved
+    # model attempts, particularly while auditing a blocked RUNNING task.
+    binding = task.get("research_identity")
+    research_id = (binding.get("research_id")
+                   if isinstance(binding, dict)
+                   and binding.get("workflow") == task["workflow"] else None)
     if not isinstance(research_id, str) or not research_id.strip():
         blockers.append("RESEARCH_ID_NOT_BOUND")
     else:
+        if (staged["status"] == "STAGED_NO_DISPATCH"
+                and staged.get("research_id") != research_id):
+            blockers.append("SIMULATION_RESEARCH_ID_MISMATCH")
         try:
             # The ordinary status() takes a writer lock and updates its
             # metadata file. Audit must remain genuinely read-only.
