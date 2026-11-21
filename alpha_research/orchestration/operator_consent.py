@@ -69,6 +69,10 @@ def _utc(value):
 
 def _require_safe_root(orchestrator):
     root = Path(orchestrator.state_root)
+    # Never create a lock or journal through an untrusted state directory.
+    audit_root = _root(orchestrator)
+    if audit_root.is_symlink() or (audit_root.exists() and not audit_root.is_dir()):
+        raise OrchestrationError("operator consent audit directory unsafe")
     marker = marker_path(root)
     stop = root / "state" / "stop.flag"
     if marker.exists() or marker.is_symlink():
@@ -117,25 +121,32 @@ def _load_index(root):
     if not index_path.exists():
         if projections:
             raise OrchestrationError("operator consent index missing with projections")
-        return {"schema_version": 1, "by_grant": {}, "by_task": {}}
+        return {"schema_version": 2, "by_grant": {},
+                "by_task": {}, "by_approval": {}}
     try:
         index = json.loads(index_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise OrchestrationError("operator consent index unreadable") from exc
     if (not isinstance(index, dict)
-            or set(index) != {"schema_version", "by_grant", "by_task"}
+            or set(index) != {"schema_version", "by_grant",
+                                 "by_task", "by_approval"}
             or type(index["schema_version"]) is not int
-            or index["schema_version"] != 1
+            or index["schema_version"] != 2
             or not isinstance(index["by_grant"], dict)
             or not isinstance(index["by_task"], dict)
-            or len(index["by_grant"]) != len(index["by_task"])):
+            or not isinstance(index["by_approval"], dict)
+            or len(index["by_grant"]) != len(index["by_task"])
+            or len(index["by_grant"]) != len(index["by_approval"])):
         raise OrchestrationError("operator consent index schema invalid")
     for gid, entry in index["by_grant"].items():
         if (not isinstance(gid, str) or _HEX32.fullmatch(gid) is None
                 or not isinstance(entry, dict)
-                or set(entry) != {"task_id", "record_sha256"}
+                or set(entry) != {"task_id", "approval_id", "record_sha256"}
                 or not isinstance(entry["task_id"], str)
                 or _HEX32.fullmatch(entry["task_id"]) is None
+                or not isinstance(entry["approval_id"], str)
+                or _HEX32.fullmatch(entry["approval_id"]) is None
+                or index["by_approval"].get(entry["approval_id"]) != gid
                 or not isinstance(entry["record_sha256"], str)
                 or _HEX64.fullmatch(entry["record_sha256"]) is None
                 or index["by_task"].get(entry["task_id"]) != gid):
@@ -150,6 +161,7 @@ def _load_index(root):
         if (not isinstance(record, dict)
                 or record.get("grant_id") != gid
                 or record.get("task_id") != entry["task_id"]
+                or record.get("operator_approval_id") != entry["approval_id"]
                 or record.get("status") != _RESERVED
                 or record.get("permission_to_dispatch") is not False
                 or fingerprint_json(record) != entry["record_sha256"]):
@@ -160,6 +172,13 @@ def _load_index(root):
                 or not isinstance(index["by_grant"].get(gid), dict)
                 or index["by_grant"][gid]["task_id"] != tid):
             raise OrchestrationError("operator consent reverse index invalid")
+    if any(not isinstance(approval_id, str)
+           or _HEX32.fullmatch(approval_id) is None
+           or not isinstance(gid, str)
+           or not isinstance(index["by_grant"].get(gid), dict)
+           or index["by_grant"][gid]["approval_id"] != approval_id
+           for approval_id, gid in index["by_approval"].items()):
+        raise OrchestrationError("operator approval reverse index invalid")
     if any(p.stem not in index["by_task"] or p.is_symlink()
            for p in projections):
         raise OrchestrationError("operator consent orphan projection")
@@ -294,6 +313,7 @@ def reserve_consent_for_audit(orchestrator, task_id, model_config,
             index = _load_index(root)
             gid = checked["grant_id"]
             if (gid in index["by_grant"] or task_id in index["by_task"]
+                    or checked["operator_approval_id"] in index["by_approval"]
                     or record_path.exists() or record_path.is_symlink()):
                 raise OrchestrationError("operator consent grant/task already reserved")
             record = {
@@ -306,9 +326,12 @@ def reserve_consent_for_audit(orchestrator, task_id, model_config,
                 "reserved_at": datetime.now(timezone.utc).isoformat(),
             }
             index["by_grant"][gid] = {
-                "task_id": task_id, "record_sha256": fingerprint_json(record),
+                "task_id": task_id,
+                "approval_id": checked["operator_approval_id"],
+                "record_sha256": fingerprint_json(record),
             }
             index["by_task"][task_id] = gid
+            index["by_approval"][checked["operator_approval_id"]] = gid
             atomic_write_json(index_path, index)  # canonical-first
             atomic_write_json(record_path, record)
             return inspect_consent_reservation(orchestrator, task_id)
