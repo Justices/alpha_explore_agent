@@ -9,6 +9,7 @@ from pathlib import Path
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 MARKER = "domain_mock_workspace.json"
 SCHEMA_VERSION = 1
@@ -64,15 +65,24 @@ def inspect_mock_workspace(state_root):
 
 
 def claim_mock_workspace(state_root):
-    report = inspect_mock_workspace(state_root)
-    if report["status"] == "FRESH_EMPTY_MOCK_ROOT":
-        path = marker_path(state_root)
-        atomic_write_json(path, {
-            "schema_version": SCHEMA_VERSION,
-            "kind": "OFFLINE_DOMAIN_MOCK_ONLY",
-            "canonical_state_root": str(Path(state_root).resolve()),
-        })
-    return report
+    """Claim under an OS lock and recheck after acquisition, fail closed."""
+    root = Path(state_root).resolve()
+    # Do not create lock files until the initial evidence safety preflight.
+    inspect_mock_workspace(root)
+    path = marker_path(root)
+    try:
+        with SingleWriterLock(path.with_suffix(".claim.lock")):
+            report = inspect_mock_workspace(root)
+            if report["status"] == "FRESH_EMPTY_MOCK_ROOT":
+                atomic_write_json(path, {
+                    "schema_version": SCHEMA_VERSION,
+                    "kind": "OFFLINE_DOMAIN_MOCK_ONLY",
+                    "canonical_state_root": str(root),
+                })
+            return report
+    except WriterLockError as exc:
+        raise OrchestrationError(
+            "another process is claiming the offline mock workspace") from exc
 
 
 def is_mock_workspace(state_root):
