@@ -1,8 +1,9 @@
-"""P4.5.2 crash-conservative Simulation attempt staging (NO dispatch grant).
+"""P4.7 crash-conservative Simulation attempt staging (NO dispatch grant).
 
 An externally signed scoped receipt can be verified and its identity staged
-once. The journal is written FIRST, ahead of a local Simulation Intent.
-A crash at any point must never permit an automatic second staging or POST.
+once. A canonical one-use authorization index is written FIRST, followed by
+the task journal and local Simulation Intent. A crash at any point must never
+permit an automatic second staging or POST.
 
 This module does not establish consent, issue a signed receipt, create a
 platform session or return an executable capability. Production dispatch
@@ -166,6 +167,7 @@ def inspect_staged_simulation_attempt(orchestrator, task_id):
             raise ValueError("Simulation Intent and staging journal disagree")
         return {"task_id": task_id, "status": _STAGED,
                 "authorization_id": record["authorization_id"],
+                "research_id": record["research_id"],
                 "simulation_sha256": record["simulation_sha256"],
                 "permission_to_dispatch": False}
     except (OSError, ValueError, TypeError, KeyError, AttributeError):
