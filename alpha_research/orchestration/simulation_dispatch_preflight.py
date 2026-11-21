@@ -10,6 +10,7 @@ from alpha_research.agents.governance import ModelBudgetError, ModelCallLedger
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.operator_consent import inspect_consent_reservation
+from alpha_research.orchestration.pre_dispatch_escrow import inspect_pre_dispatch_escrow
 from alpha_research.orchestration.simulation_attempt_admission import (
     inspect_staged_simulation_attempt,
 )
@@ -47,6 +48,14 @@ def inspect_simulation_dispatch_gate(orchestrator, task_id, policy):
         blockers.append("OPERATOR_CONSENT_AUDIT_NOT_LIVE_AUTHORIZATION")
     else:
         blockers.append("OPERATOR_CONSENT_NOT_RESERVED")
+    escrow = inspect_pre_dispatch_escrow(orchestrator, task_id, policy)
+    facts["pre_dispatch_escrow_status"] = escrow["status"]
+    if escrow["status"] == "RECONCILIATION_REQUIRED":
+        blockers.append("PREDISPATCH_ESCROW_RECONCILIATION_REQUIRED")
+    elif escrow["status"] == "PREDISPATCH_ESCROW_NOT_EXECUTABLE":
+        blockers.append("PREDISPATCH_ESCROW_NOT_DISPATCH_PERMISSION")
+    else:
+        blockers.append("PREDISPATCH_ESCROW_NOT_RESERVED")
     # Task bindings are structured objects; they are not plain strings.
     # Inspecting the real persisted shape is required to see unresolved
     # model attempts, particularly while auditing a blocked RUNNING task.
