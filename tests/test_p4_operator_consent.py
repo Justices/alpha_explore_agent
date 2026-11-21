@@ -615,6 +615,62 @@ class ExternalConsentTests(unittest.TestCase):
         self.assertIn("INTENT_UNREADABLE_OR_DRIFTED", result["blockers"])
         self.assertFalse(result["permission_to_dispatch"])
 
+    def test_p4_8_full_offline_evidence_does_not_complete_production_gate(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow,
+        )
+        from alpha_research.orchestration.release_gate import (
+            inspect_production_release_gate,
+        )
+        self.reserve()
+        reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        before = sorted(str(item) for item in self.root.rglob("*"))
+        report = inspect_production_release_gate(
+            self.runner, self.task["task_id"],
+            self.model, self.policy, config_source="user_config")
+        self.assertIn("EXTERNAL_OPERATOR_CONSENT_ISSUER_NOT_PROVISIONED",
+                      report["blockers"])
+        self.assertIn("DRIVER_BOUND_REMOTE_OPERATION_GRANT_NOT_IMPLEMENTED",
+                      report["blockers"])
+        self.assertEqual(
+            report["components"]["simulation_dispatch"]["facts"][
+                "pre_dispatch_escrow_status"],
+            "PREDISPATCH_ESCROW_NOT_EXECUTABLE")
+        self.assertEqual(
+            report["components"]["simulation_recovery"]["status"],
+            "OFFLINE_ESCROW_ONLY_NO_POST_EVIDENCE")
+        self.assertFalse(report["brain_simulation_authorized"])
+        self.assertFalse(report["production_authorized"])
+        self.assertFalse(report["automatic_retry_allowed"])
+        self.assertEqual(before, sorted(str(item) for item in self.root.rglob("*")))
+
+    def test_p4_8_consent_tamper_propagates_into_release_reconciliation(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow,
+        )
+        from alpha_research.orchestration.release_gate import (
+            inspect_production_release_gate,
+        )
+        self.reserve()
+        reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        path = (self.root / "state" / "research_v1_1" /
+                "operator_consent_audit" /
+                (self.task["task_id"] + ".json"))
+        record = json.loads(path.read_text())
+        record["operator_approval_id"] = "0" * 32
+        path.write_text(json.dumps(record))
+        report = inspect_production_release_gate(
+            self.runner, self.task["task_id"],
+            self.model, self.policy, config_source="user_config")
+        self.assertEqual(report["status"], "RECONCILIATION_BLOCKED")
+        self.assertIn("OPERATOR_CONSENT_AUDIT_RECONCILIATION_REQUIRED",
+                      report["blockers"])
+        self.assertIn("PREDISPATCH_ESCROW_RECONCILIATION_REQUIRED",
+                      report["blockers"])
+        self.assertFalse(report["production_authorized"])
+
     def test_p4_7_3_gateway_does_not_accept_escrow_receipt(self):
         from alpha_research.integrations.brain.gateway import Gateway, GatewayError
         from alpha_research.orchestration.pre_dispatch_escrow import (
