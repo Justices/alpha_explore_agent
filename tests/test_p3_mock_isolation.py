@@ -45,6 +45,27 @@ class DomainMockIsolationTests(unittest.TestCase):
                     pool.submit(_ACTIVE_EVIDENCE_ORIGIN.get).result())
         self.assertIsNone(_ACTIVE_EVIDENCE_ORIGIN.get())
 
+    def test_direct_dispatch_refuses_real_gateway_in_mock_root(self):
+        from types import SimpleNamespace
+        from alpha_research.orchestration.dispatch import dispatch
+        claim_mock_workspace(self.root)
+        class LiveGateway:
+            def call(self, *args, **kwargs):
+                raise AssertionError("real gateway must never be called")
+        with self.assertRaisesRegex(ValueError, "live Gateway forbidden"):
+            dispatch("plan-regular", SimpleNamespace(region="CHN"), {},
+                     self.root, LiveGateway())
+
+    def test_runtime_context_refuses_live_objects_in_mock_root(self):
+        from alpha_research.orchestration.runtime_context import CliRuntimeContext
+        from alpha_research.state.writer_lock import SingleWriterLock
+        claim_mock_workspace(self.root)
+        with SingleWriterLock(self.root / "state" / "agent.lock") as lock:
+            with self.assertRaisesRegex(OrchestrationError,
+                                        "live CLI runtime forbidden"):
+                CliRuntimeContext.from_active_cli(
+                    self.root, {}, object(), object(), object(), lock)
+
     def test_second_claim_reuses_same_mock_workspace_identity(self):
         first = claim_mock_workspace(self.root)
         second = claim_mock_workspace(self.root)
