@@ -72,6 +72,26 @@ class NonExecutableReservationTests(unittest.TestCase):
         with self.assertRaisesRegex(OrchestrationError, "canonical ledger missing"):
             self.reserve()
 
+    def test_missing_ledger_with_other_task_projection_requires_reconciliation(self):
+        other = "d" * 32
+        path = self.root / "tasks" / (other + ".json")
+        path.parent.mkdir(parents=True)
+        path.write_text('{"interrupted":true}', encoding="utf-8")
+        self.assertEqual(
+            inspect_non_executable_reservation(self.runner, self.task_id)["status"],
+            "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "canonical ledger missing"):
+            self.reserve()
+
+    def test_unindexed_task_projection_requires_reconciliation(self):
+        self.reserve()
+        other = "d" * 32
+        path = self.root / "tasks" / (other + ".json")
+        path.write_text('{"interrupted":true}', encoding="utf-8")
+        self.assertEqual(
+            inspect_non_executable_reservation(self.runner, other)["status"],
+            "RECONCILIATION_REQUIRED")
+
     def test_mock_workspace_forbids_receipt_reservation(self):
         from alpha_research.orchestration.mock_workspace import claim_mock_workspace
         claim_mock_workspace(self.tmp.name)
