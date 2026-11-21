@@ -53,10 +53,12 @@ def main():
                 # production admission boundary. This option is NOT a live
                 # enablement; unimplemented trusted grant consumption means
                 # every mutating research command is refused by construction.
-                if guarded and command in {
-                    "simulate_batch", "simulate_super",
-                    "tag_alpha", "sync_backtest_cache",
-                    "resume_simulation_batch",
+                if guarded and command not in {
+                    "get_platform_setting_options",
+                    "get_simulation_settings_schema",
+                    "readonly_probe_datasets", "get_dataset_details",
+                    "get_alpha_details", "get_alpha_pnl",
+                    "get_alpha_yearly_stats", "get_user_alphas",
                 }:
                     write({"ok": False, "error":
                            "orchestration live admission is not implemented"})
