@@ -415,6 +415,13 @@ def main(argv=None):
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
             effective = prepared["model"]
+            if args.command == "orchestration-admission-audit":
+                # A read-only audit must not create a writer/execution lock file.
+                result = audit_execution_admission(
+                    MainOrchestrator(root), args.task_id, effective, policy,
+                    config_source=config_source)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             with SingleWriterLock(root / "state" / "agent.lock"):
                 runner = MainOrchestrator(root)
                 if args.command == "orchestration-prepare":
@@ -513,10 +520,6 @@ def main(argv=None):
                         "brain_provider_invoked": False,
                         "execution": completed,
                     }
-                elif args.command == "orchestration-admission-audit":
-                    result = audit_execution_admission(
-                        runner, args.task_id, effective, policy,
-                        config_source=config_source)
                 elif args.command == "orchestration-handoff":
                     result = inspect_domain_research_handoff(
                         runner, args.task_id, effective, policy)
