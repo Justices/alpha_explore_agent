@@ -246,7 +246,7 @@ class ResearchRecordStore:
         lineage cannot be changed by a replacement.
         """
         origin = _ACTIVE_EVIDENCE_ORIGIN.get()
-        if origin == "OFFLINE_DOMAIN_MOCK":
+        if origin == "OFFLINE_DOMAIN_MOCK" and isinstance(record, dict):
             # Copy rather than mutating the domain-owned record object.
             record = {**record, "evidence_origin": origin}
         validate_record(kind, record)
