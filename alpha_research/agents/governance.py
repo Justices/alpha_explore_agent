@@ -60,6 +60,10 @@ class ModelCallLedger:
     @contextmanager
     def _ledger_guard(lock_path):
         """Bounded wait for a short local ledger transaction, never a model retry."""
+        # Check BEFORE the lock is created: a linked ledger directory/lock
+        # must not cause even an incidental lockfile write outside state root.
+        if lock_path.is_symlink() or lock_path.parent.is_symlink():
+            raise ModelBudgetError("model budget ledger lock symlink forbidden")
         deadline = time.monotonic() + 2.0
         while True:
             guard = SingleWriterLock(lock_path)
