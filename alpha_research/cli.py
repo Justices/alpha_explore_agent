@@ -42,6 +42,7 @@ from alpha_research.orchestration.simulation_dispatch_preflight import inspect_s
 from alpha_research.orchestration.operator_consent import inspect_consent_reservation
 from alpha_research.orchestration.pre_dispatch_escrow import inspect_pre_dispatch_escrow
 from alpha_research.orchestration.simulation_recovery_audit import inspect_simulation_recovery_evidence
+from alpha_research.orchestration.release_gate import inspect_production_release_gate
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
@@ -170,6 +171,10 @@ def main(argv=None):
         "orchestration-simulation-recovery-audit",
         help="inspect persisted Simulation unknown outcomes; no BRAIN/model calls")
     recovery_audit.add_argument("task_id")
+    release_gate = sub.add_parser(
+        "orchestration-release-gate",
+        help="integrated read-only production release checklist; NEVER authorize")
+    release_gate.add_argument("task_id")
     sim_dispatch_audit = sub.add_parser(
         "orchestration-simulation-dispatch-audit",
         help="read-only full Simulation write admission blockers; never dispatch")
@@ -522,6 +527,7 @@ def main(argv=None):
                         "orchestration-consent-status",
                         "orchestration-predispatch-escrow-status",
                         "orchestration-simulation-recovery-audit",
+                        "orchestration-release-gate",
                         "orchestration-simulation-dispatch-audit"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
@@ -537,6 +543,12 @@ def main(argv=None):
             if args.command == "orchestration-simulation-dispatch-audit":
                 result = inspect_simulation_dispatch_gate(
                     MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-release-gate":
+                result = inspect_production_release_gate(
+                    MainOrchestrator(root), args.task_id,
+                    effective, policy, config_source=config_source)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-recovery-audit":
