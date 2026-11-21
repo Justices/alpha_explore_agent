@@ -85,6 +85,26 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(ledger_dir.exists(),
                          "read-only status must not create a consent journal")
 
+    def test_p4_7_3_predispatch_status_read_only_no_implicit_escrow(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline pre-dispatch status"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        escrow_root = (self.root / "state" / "research_v1_1"
+                       / "simulation_predispatch_escrow")
+        self.assertFalse(escrow_root.exists())
+        status, output, error = self._call(
+            self.prefix + ["orchestration-predispatch-escrow-status", task_id])
+        self.assertEqual(status, 0, error)
+        result = json.loads(output)
+        self.assertEqual(result["status"], "NOT_ESCROWED")
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(result["automatic_retry_allowed"] if
+                         "automatic_retry_allowed" in result else False)
+        self.assertFalse(escrow_root.exists(),
+                         "read-only escrow status must not create lock/index")
+
     def test_recovery_check_is_read_only_for_unstarted_task(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
