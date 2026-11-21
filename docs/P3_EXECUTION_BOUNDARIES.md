@@ -71,6 +71,17 @@ This strict parser and verifier is only a prerequisite for a future trusted
 authorization service; key possession alone is not proof of actual user
 consent. ProductionWorkflowAdapter remains disabled.
 
+`orchestration-authorization-reserve TASK_ID --receipt PATH` performs
+**one-time audit registration**, never execution. It uses a global
+`reservations.lock`, re-verifies the receipt while locked, then persists an
+authoritative by-task/by-authorization ledger before writing secondary
+projections. If the process crashes after the primary write, an ambiguous
+reservation is held for explicit reconciliation and cannot be replayed or
+refunded automatically. The persisted status is
+`RESERVED_INSPECTION_ONLY` with `permission_to_dispatch=false`, not a live
+execution grant. The read-only admission audit reports this reservation
+status without consuming or authorizing anything.
+
 ## 3. Future production admission (not implemented)
 
 Before enabling the first live BRAIN operation, independently review and
@@ -79,8 +90,10 @@ implement all of the following:
 1. A trusted **execution** approval issuer, distinct from review-only
    approval. The signed receipt verification contract is now implemented,
    but the trusted issuer and independent consent/permission check are not.
-2. An atomic admission journal and single-writer reservation before any
-   model or BRAIN I/O; reconcile crashes without refunding unknown attempts.
+2. An atomic **live admission** journal and real single-writer dispatch
+   reservation before any model or BRAIN I/O. The implemented
+   `RESERVED_INSPECTION_ONLY` ledger is non-executable and must not be
+   mistaken for this future live execution journal.
 3. Gateway ownership, credentials and provider routing transferred only from
    the authorized CLI runtime; no untrusted adapter or arbitrary dispatcher.
 4. One idempotency/recovery contract per BRAIN write, including durable
@@ -117,6 +130,8 @@ including Python 3.11 and 3.13, and validate these assertions:
   including when a review-only receipt is valid.
 - Signed execution receipt parsing rejects malformed envelopes, timestamps,
   signing keys, policy drift and replay conditions, yet never enables dispatch.
+- Repeated reservations of the same Task or receipt ID are rejected across
+  processes; interrupted derived projections require manual reconciliation.
 - Native macOS temporary-path aliases and symlink/TOCTOU attack cases
   still fail closed (not just canonical `TMPDIR` happy path).
 
