@@ -10,6 +10,12 @@ if str(IMPORT_ROOT) not in sys.path:
 
 from alpha_research.integrations.brain.runtime import PlatformRuntime, WorldQuantClient  # noqa: E402
 
+# Enforced independently of Gateway; raw driver stdin is not a grant channel.
+_GUARDED_FORBIDDEN_CLAIMS = frozenset({
+    "allow", "live", "authorization_id", "operator_approval_id",
+    "grant_id", "attempt_id", "permission_to_dispatch", "dispatch_authorized",
+})
+
 
 def write(payload):
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
@@ -66,6 +72,10 @@ def main():
                 }:
                     write({"ok": False, "error":
                            "orchestration live admission is not implemented"})
+                    continue
+                if guarded and _GUARDED_FORBIDDEN_CLAIMS.intersection(request):
+                    write({"ok": False, "error":
+                           "untrusted orchestration authorization claims refused"})
                     continue
                 # Independent driver-side authorization barrier: a caller
                 # cannot bypass Gateway.read_only by writing raw JSON to stdin.
