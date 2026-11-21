@@ -34,7 +34,11 @@ def main():
         else:
             runtime = PlatformRuntime()
     except Exception as exc:
-        write({"ok": False, "stage": "configuration", "error": str(exc)[:1000]})
+        # Do not reflect credential/account/provider details in guarded
+        # orchestration session responses. The Gateway also redacts errors.
+        error = ("guarded platform configuration failed" if guarded
+                 else str(exc)[:1000])
+        write({"ok": False, "stage": "configuration", "error": error})
         return 2
 
     write({"ok": True, "stage": "ready"})
@@ -75,7 +79,9 @@ def main():
                 result = runtime.dispatch(command, params)
                 write({"ok": True, "result": result})
             except Exception as exc:
-                write({"ok": False, "error": f"{type(exc).__name__}: {str(exc)[:4000]}"})
+                error = ("guarded platform operation failed" if guarded
+                         else f"{type(exc).__name__}: {str(exc)[:4000]}")
+                write({"ok": False, "error": error})
     finally:
         runtime.close()
     return 0
