@@ -209,5 +209,137 @@ class StagingTests(unittest.TestCase):
         self.assertFalse(journal.exists())
 
 
+    def test_canonical_index_precedes_projection_and_is_reciprocal(self):
+        self.stage()
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        index = json.loads((location / "authorization_index.json").read_text())
+        task_id = self.task["task_id"]
+        authorization_id = self.scope_result["authorization_id"]
+        self.assertEqual(index["by_task"], {task_id: authorization_id})
+        self.assertEqual(index["by_id"], {authorization_id: task_id})
+        self.assertEqual(inspect_staged_simulation_attempt(
+            self.orchestrator, task_id)["status"], "STAGED_NO_DISPATCH")
+
+    def test_missing_canonical_index_requires_reconciliation(self):
+        self.stage()
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        (location / "authorization_index.json").unlink()
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "index missing"):
+            self.stage()
+
+    def test_crash_after_index_before_projection_fails_closed(self):
+        from alpha_research.state.store import atomic_write_json
+        from alpha_research.orchestration import simulation_attempt_admission as mod
+        target = self.task["task_id"] + ".json"
+
+        def interrupted(path, value):
+            if Path(path).name == target:
+                raise OSError("simulated disk failure after canonical index")
+            return atomic_write_json(path, value)
+
+        with patch.object(mod, "inspect_simulation_scope",
+                          return_value=self.scope_result), patch.object(
+                              mod, "atomic_write_json", side_effect=interrupted):
+            with self.assertRaisesRegex(OSError, "simulated disk failure"):
+                mod.stage_simulation_attempt(
+                    self.orchestrator, self.task["task_id"],
+                    {}, {}, {"synthetic": True}, self.plan)
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        index = json.loads((location / "authorization_index.json").read_text())
+        self.assertIn(self.scope_result["authorization_id"], index["by_id"])
+        status = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(status["status"], "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "projection missing"):
+            self.stage()
+
+    def test_tampered_request_is_not_accepted_from_original_digest(self):
+        self.stage()
+        intent_path = (self.root / "state" / "research_v1_1" /
+                       "simulation_attempt_admission" / "intents" /
+                       (self.task["task_id"] + ".intent.json"))
+        saved = json.loads(intent_path.read_text())
+        saved["request"]["selection"] = "rank(tampered)"
+        intent_path.write_text(json.dumps(saved), encoding="utf-8")
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(result["permission_to_dispatch"])
+
+    def test_tampered_intent_run_and_research_id_require_reconciliation(self):
+        for field, new in (("run_id", "wrong-run"), ("metadata", {
+                "task_id": self.task["task_id"],
+                "authorization_id": self.scope_result["authorization_id"],
+                "research_id": "super:" + "f" * 32,
+                "dispatch_authorized": False})):
+            with self.subTest(field=field):
+                if not (self.root / "state" / "research_v1_1" /
+                        "simulation_attempt_admission" /
+                        (self.task["task_id"] + ".json")).exists():
+                    self.stage()
+                intent_path = (self.root / "state" / "research_v1_1" /
+                               "simulation_attempt_admission" / "intents" /
+                               (self.task["task_id"] + ".intent.json"))
+                original = intent_path.read_text(encoding="utf-8")
+                saved = json.loads(original)
+                saved[field] = new
+                intent_path.write_text(json.dumps(saved), encoding="utf-8")
+                self.assertEqual(inspect_staged_simulation_attempt(
+                    self.orchestrator, self.task["task_id"])["status"],
+                    "RECONCILIATION_REQUIRED")
+                intent_path.write_text(original, encoding="utf-8")
+
+    def test_intent_dispatch_permission_cannot_be_elevated(self):
+        self.stage()
+        intent_path = (self.root / "state" / "research_v1_1" /
+                       "simulation_attempt_admission" / "intents" /
+                       (self.task["task_id"] + ".intent.json"))
+        saved = json.loads(intent_path.read_text())
+        saved["metadata"]["dispatch_authorized"] = True
+        intent_path.write_text(json.dumps(saved), encoding="utf-8")
+        self.assertEqual(inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])["status"],
+            "RECONCILIATION_REQUIRED")
+
+    def test_reciprocal_index_corruption_rejects_any_task(self):
+        self.stage()
+        location = self.root / "state" / "research_v1_1" / "simulation_attempt_admission"
+        path = location / "authorization_index.json"
+        body = json.loads(path.read_text())
+        body["by_task"][self.task["task_id"]] = "f" * 32
+        path.write_text(json.dumps(body), encoding="utf-8")
+        second = self.orchestrator.create(
+            "super", {"objective": "second", "region": "USA",
+                      "delay": 1, "universe": "TOP3000"})
+        self.assertEqual(inspect_staged_simulation_attempt(
+            self.orchestrator, second["task_id"])["status"],
+            "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "reciprocal index"):
+            self.stage(task=second, authorization_id="e" * 32)
+
+    def test_inspection_never_creates_or_repairs_index(self):
+        location = (self.root / "state" / "research_v1_1" /
+                    "simulation_attempt_admission")
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "NOT_STAGED")
+        self.assertFalse(location.exists())
+        self.stage()
+        journal = location / (self.task["task_id"] + ".json")
+        journal.unlink()
+        before = sorted(str(p) for p in location.rglob("*"))
+        result = inspect_staged_simulation_attempt(
+            self.orchestrator, self.task["task_id"])
+        self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertEqual(before, sorted(str(p) for p in location.rglob("*")))
+
+
+
 if __name__ == "__main__":
     unittest.main()
