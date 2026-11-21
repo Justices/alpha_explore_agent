@@ -489,6 +489,21 @@ nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
 nq --state-root "$STATE_ROOT" orchestration-status <TASK_ID>
 ```
 
+macOS full-suite verification (particularly Homebrew Python 3.13) should
+use a canonical, writable temp directory. The macOS CI job runs Python
+3.11 and 3.13 with this same `TMPDIR` normalization:
+
+```sh
+mkdir -p "$HOME/.cache/alpha-research-tmp"
+export TMPDIR="$(cd "$HOME/.cache/alpha-research-tmp" && pwd -P)/"
+python3 -m unittest discover -s tests -v
+```
+
+This avoids the macOS `/var` versus `/private/var` temporary-path alias
+in local test fixtures; it does not relax path/symlink security checks.
+The dedicated mock workspace must be disposable; do not execute any
+`orchestration-domain-mock` task in the real research evidence root.
+
 For a **new** prepared task, run the domain-level offline integration
 through the actual Regular Campaign scheduler or Super/Optimization workflow
 code, using scripted mock catalog data, batch results, model decisions and
