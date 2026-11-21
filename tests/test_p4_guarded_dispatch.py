@@ -120,7 +120,7 @@ class GuardedGatewayTests(unittest.TestCase):
             {"cmd": "shutdown"},
         ]
         input_stream = io.StringIO(
-            "".join(json.dumps(row) + "\\n" for row in requests))
+            "".join(json.dumps(row) + "\n" for row in requests))
         output = io.StringIO()
         with (patch.object(driver.sys, "argv",
                            ["driver.py", "--orchestration-guarded"]),
