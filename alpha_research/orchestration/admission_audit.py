@@ -24,6 +24,21 @@ def audit_execution_admission(orchestrator, task_id, model_config,
         blockers.append("TASK_NOT_UNSTARTED")
     if task["budget"] != {"limit": 1, "used": 0, "reserved": 0}:
         blockers.append("EXECUTION_BUDGET_NOT_FRESH")
+    from pathlib import Path
+    root = Path(orchestrator.state_root)
+    if (root / "state" / "stop.flag").exists():
+        blockers.append("GLOBAL_STOP_SIGNAL_PRESENT")
+    if task.get("recovery_target") is not None:
+        blockers.append("UNRESOLVED_RECOVERY_TARGET")
+    if task.get("research_identity") is not None:
+        blockers.append("DOMAIN_RESEARCH_ID_ALREADY_BOUND")
+    from alpha_research.agents.governance import validate_policy
+    try:
+        validate_policy(governance_policy)
+        facts["model_governance_valid"] = True
+    except (ValueError, TypeError, KeyError):
+        blockers.append("MODEL_GOVERNANCE_INVALID")
+        facts["model_governance_valid"] = False
     try:
         proposal = inspect_execution_proposal(orchestrator, task_id)
         facts["proposal_sha256"] = proposal["proposal_sha256"]
@@ -53,6 +68,8 @@ def audit_execution_admission(orchestrator, task_id, model_config,
     try:
         review = inspect_review_reservation(orchestrator, task_id)
         facts["review_status"] = review["status"]
+        if review["status"] == "RECONCILIATION_REQUIRED":
+            blockers.append("REVIEW_LEDGER_RECONCILIATION_REQUIRED")
     except (OrchestrationError, OSError, ValueError, TypeError, KeyError, AttributeError):
         blockers.append("REVIEW_LEDGER_UNREADABLE")
     # Review receipts cover only proposal review, not model or BRAIN writes.
