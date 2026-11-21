@@ -10,6 +10,7 @@ from alpha_research.orchestration.execution_identity import inspect_execution_id
 from alpha_research.orchestration.execution_proposal import inspect_execution_proposal
 from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
 from alpha_research.orchestration.execution_reservation import inspect_non_executable_reservation
+from alpha_research.orchestration.simulation_attempt_admission import inspect_staged_simulation_attempt
 
 
 def audit_execution_admission(orchestrator, task_id, model_config,
@@ -98,6 +99,16 @@ def audit_execution_admission(orchestrator, task_id, model_config,
             blockers.append("EXECUTION_RECEIPT_NOT_DISPATCH_AUTHORIZATION")
     except (OrchestrationError, OSError, ValueError, TypeError, KeyError, AttributeError):
         blockers.append("EXECUTION_RECEIPT_LEDGER_UNREADABLE")
+    try:
+        staged = inspect_staged_simulation_attempt(orchestrator, task_id)
+        facts["simulation_attempt_staging"] = staged["status"]
+        if staged["status"] == "RECONCILIATION_REQUIRED":
+            blockers.append("SIMULATION_STAGING_RECONCILIATION_REQUIRED")
+        elif staged["status"] == "STAGED_NO_DISPATCH":
+            blockers.append("SIMULATION_STAGED_NOT_DISPATCH_AUTHORIZATION")
+    except (OrchestrationError, OSError, ValueError, TypeError,
+            KeyError, AttributeError):
+        blockers.append("SIMULATION_STAGING_LEDGER_UNREADABLE")
     # Review receipts cover only proposal review, not model or BRAIN writes.
     blockers.append("TRUSTED_EXECUTION_AUTHORIZATION_NOT_IMPLEMENTED")
     blockers.append("PRODUCTION_DISPATCH_ADAPTER_DISABLED")
