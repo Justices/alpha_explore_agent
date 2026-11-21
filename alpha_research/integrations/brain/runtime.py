@@ -1450,7 +1450,25 @@ class PlatformRuntime:
         atomic_write_json(audit_path, results)
         return {"results": results, "audit_path": str(audit_path)}
 
+    def readonly_probe_datasets(self, params):
+        """One GET page only; no case, cache, history or Alpha mutation."""
+        scope = self._scope(params)
+        page = self._json(self._request(
+            "GET", "/data-sets",
+            params={**scope, "limit": 1, "offset": 0}))
+        if (not isinstance(page, dict)
+                or type(page.get("count")) is not int
+                or page["count"] < 0
+                or not isinstance(page.get("results"), list)
+                or len(page["results"]) > 1
+                or (page["count"] > 0 and not page["results"])):
+            raise PlatformError("read-only dataset catalog response invalid")
+        return {"scope": scope, "dataset_count": page["count"],
+                "catalog_readable": True}
+
     def dispatch(self, command, params):
+        if command == "readonly_probe_datasets":
+            return self.readonly_probe_datasets(params)
         if command == "check_simulation_cache":
             return self.check_simulation_cache(params)
         if command == "sync_backtest_cache":
