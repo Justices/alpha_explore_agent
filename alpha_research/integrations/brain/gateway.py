@@ -48,6 +48,12 @@ GUARDED_ORCHESTRATION_READS = frozenset({
     "readonly_probe_datasets", "get_dataset_details", "get_alpha_details",
     "get_alpha_pnl", "get_alpha_yearly_stats", "get_user_alphas",
 })
+# Only platform read parameters may cross guarded mode. Locally staged
+# grant IDs, escrow digests or caller-provided allow=True are NOT live tokens.
+GUARDED_FORBIDDEN_CLAIMS = frozenset({
+    "allow", "live", "authorization_id", "operator_approval_id",
+    "grant_id", "attempt_id", "permission_to_dispatch", "dispatch_authorized",
+})
 
 
 class GatewayError(RuntimeError):
@@ -130,6 +136,9 @@ class Gateway:
             raise GatewayError(
                 "orchestrated BRAIN write requires trusted live admission "
                 "consumer; dispatch disabled")
+        if self.orchestration_guarded and GUARDED_FORBIDDEN_CLAIMS.intersection(params):
+            raise GatewayError(
+                "orchestrated BRAIN read refuses untrusted execution claims")
         if self.read_only and cmd not in READONLY_PROBE_COMMANDS:
             raise GatewayError("read-only BRAIN probe forbids this command")
         if cmd not in WHITELIST:
