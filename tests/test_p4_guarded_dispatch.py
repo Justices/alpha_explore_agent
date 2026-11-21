@@ -86,6 +86,54 @@ class GuardedGatewayTests(unittest.TestCase):
         self.assertIn("admission", responses[1]["error"])
         self.assertEqual(calls, [])
 
+    def test_p4_7_3_guarded_gateway_rejects_grant_fields_on_reads(self):
+        gateway = Gateway(orchestration_guarded=True)
+        forged = (
+            {"grant_id": "a" * 32},
+            {"attempt_id": "b" * 64},
+            {"permission_to_dispatch": True},
+            {"dispatch_authorized": True},
+            {"allow": True},
+        )
+        for params in forged:
+            with self.subTest(params=params):
+                with self.assertRaisesRegex(GatewayError, "untrusted execution claims"):
+                    gateway.call("get_alpha_details", alpha_id="offline-alpha",
+                                 **params)
+        self.assertIsNone(gateway.proc)
+
+    def test_p4_7_3_guarded_driver_rejects_grant_fields_on_reads(self):
+        calls = []
+
+        class FakeRuntime:
+            def dispatch(self, command, params):
+                calls.append(command)
+                return {"ok": "offline"}
+            def close(self):
+                pass
+
+        requests = [
+            {"cmd": "get_alpha_details", "alpha_id": "offline-alpha",
+             "grant_id": "a" * 32},
+            {"cmd": "get_platform_setting_options",
+             "permission_to_dispatch": True},
+            {"cmd": "shutdown"},
+        ]
+        input_stream = io.StringIO(
+            "".join(json.dumps(row) + "\\n" for row in requests))
+        output = io.StringIO()
+        with (patch.object(driver.sys, "argv",
+                           ["driver.py", "--orchestration-guarded"]),
+              patch.object(driver.sys, "stdin", input_stream),
+              patch.object(driver.sys, "stdout", output),
+              patch.object(driver, "PlatformRuntime", return_value=FakeRuntime())):
+            self.assertEqual(driver.main(), 0)
+        responses = [json.loads(row) for row in output.getvalue().splitlines()]
+        self.assertFalse(responses[1]["ok"])
+        self.assertFalse(responses[2]["ok"])
+        self.assertIn("untrusted orchestration", responses[1]["error"])
+        self.assertEqual(calls, [])
+
     def test_guarded_driver_redacts_provider_exception(self):
         class FakeRuntime:
             def dispatch(self, command, params):
