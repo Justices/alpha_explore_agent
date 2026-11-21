@@ -8,6 +8,12 @@ on:
 permissions:
   contents: read
 
+# Keep complete cross-platform coverage for the latest branch head. During
+# iterative work, superseded pushes should not occupy all runner capacity.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   offline:
     strategy:
