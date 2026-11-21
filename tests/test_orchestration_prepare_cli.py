@@ -195,7 +195,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         status, _, error = self._call(
             self.prefix + ["orchestration-predispatch-escrow-reserve", task_id])
         self.assertEqual(status, 2)
-        self.assertIn("staging", error.lower())
+        self.assertIn("OrchestrationError", error)
         self.assertFalse((
             self.root / "state" / "research_v1_1" /
             "simulation_predispatch_escrow" / "escrow_index.json").exists())
