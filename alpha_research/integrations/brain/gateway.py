@@ -11,6 +11,10 @@ from pathlib import Path
 from alpha_research.qualification.gates import (
     assert_correlation_allowed, local_self_correlation_state, ra_correlation_check_state,
 )
+from alpha_research.integrations.brain.guarded_protocol import (
+    GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
+    guarded_request_allowed,
+)
 
 WHITELIST = {
     "check_simulation_cache",
@@ -43,19 +47,6 @@ READONLY_PROBE_COMMANDS = frozenset({
 })
 # Orchestration production mode defaults to a minimal *positive* read
 # allowlist. Future commands cannot silently become authorized writes.
-GUARDED_ORCHESTRATION_READS = frozenset({
-    "get_platform_setting_options", "get_simulation_settings_schema",
-    "readonly_probe_datasets", "get_dataset_details", "get_alpha_details",
-    "get_alpha_pnl", "get_alpha_yearly_stats", "get_user_alphas",
-})
-# Only platform read parameters may cross guarded mode. Locally staged
-# grant IDs, escrow digests or caller-provided allow=True are NOT live tokens.
-GUARDED_FORBIDDEN_CLAIMS = frozenset({
-    "allow", "live", "authorization_id", "operator_approval_id",
-    "grant_id", "attempt_id", "permission_to_dispatch", "dispatch_authorized",
-})
-
-
 class GatewayError(RuntimeError):
     pass
 
@@ -130,13 +121,11 @@ class Gateway:
 
     def call(self, cmd: str, **params) -> dict:
         if self.orchestration_guarded and cmd not in GUARDED_ORCHESTRATION_READS:
-            # Positive allowlist: any new write command remains denied
-            # until an independently reviewed trusted authorization consumer
-            # and pre-POST budget reservation are implemented in both layers.
+            # Negative admission is independently rechecked by the driver.
             raise GatewayError(
                 "orchestrated BRAIN write requires trusted live admission "
                 "consumer; dispatch disabled")
-        if self.orchestration_guarded and GUARDED_FORBIDDEN_CLAIMS.intersection(params):
+        if self.orchestration_guarded and not guarded_request_allowed(cmd, params):
             raise GatewayError(
                 "orchestrated BRAIN read refuses untrusted execution claims")
         if self.read_only and cmd not in READONLY_PROBE_COMMANDS:
