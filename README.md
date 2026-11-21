@@ -51,9 +51,12 @@ the staged journal and PREPARED Intent. Read-only audits cross-check the exact
 staged request, workflow/Run/Batch/Research IDs, reciprocal authorization
 identity and model-budget uncertainty. Incomplete or legacy staging evidence
 requires manual reconciliation and **never** grants BRAIN dispatch.
-See [P4.7 authorization index and remaining production gates](docs/P4_7_AUTHORIZATION_INDEX.md).
-Real provider calls, BRAIN Simulation and Alpha submission remain independently
-disabled without separate trusted operator consent and production admission.
+See [P4.7 authorization index](docs/P4_7_AUTHORIZATION_INDEX.md) and
+[P4.7.2 external consent audit](docs/P4_7_2_EXTERNAL_CONSENT_AUDIT.md).
+The new Ed25519 verification and single-use approval reservation are
+**audit-only**; no trusted approval issuer or executable production grant
+consumer is installed. Real provider calls, BRAIN Simulation and Alpha
+submission remain independently disabled.
 
 ## Current boundary
 
