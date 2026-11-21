@@ -28,6 +28,7 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
+from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
 )
@@ -93,6 +94,11 @@ def main(argv=None):
     prepare.add_argument("--category")
     prepare.add_argument("--universe")
     prepare.add_argument("--ppa", action="store_true")
+    mock_run = sub.add_parser(
+        "orchestration-run",
+        help="run a prepared task with built-in synthetic fixtures only; no model/BRAIN")
+    mock_run.add_argument("task_id")
+    mock_run.add_argument("--mode", choices=("mock",), required=True)
     handoff = sub.add_parser(
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
@@ -365,7 +371,7 @@ def main(argv=None):
         print(json.dumps({"stopped": args.command == "stop"}))
         return 0
     if args.command in {"orchestration-prepare", "orchestration-handoff",
-                        "orchestration-recovery-check"}:
+                        "orchestration-recovery-check", "orchestration-run"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
                 raise OrchestrationError(
@@ -421,6 +427,27 @@ def main(argv=None):
                         "identity_sha256": identity["identity_sha256"],
                         "model_call_authorized": False,
                         "brain_invoked": False,
+                    }
+                elif args.command == "orchestration-run":
+                    from alpha_research.orchestration.execution_identity import inspect_execution_identity
+                    from alpha_research.orchestration.execution_proposal import inspect_execution_proposal
+                    task = runner.load(args.task_id)
+                    if task["status"] != "CREATED":
+                        raise OrchestrationError(
+                            "synthetic run requires a CREATED task; never replay existing execution")
+                    inspect_execution_proposal(runner, args.task_id)
+                    inspect_execution_identity(
+                        runner, args.task_id, effective, policy)
+                    adapter = build_prepared_mock_adapter(
+                        task["workflow"], task["request"])
+                    runner.adapter = adapter
+                    result = runner.execute(args.task_id)
+                    result = {
+                        "status": result["status"], "task_id": result["task_id"],
+                        "mode": "synthetic_fixture",
+                        "domain_dispatch_invoked": False,
+                        "model_invoked": False, "brain_invoked": False,
+                        "task": result,
                     }
                 elif args.command == "orchestration-handoff":
                     result = inspect_domain_research_handoff(
