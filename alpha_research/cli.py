@@ -467,7 +467,7 @@ def main(argv=None):
                     inspect_execution_proposal(runner, args.task_id)
                     inspect_execution_identity(
                         runner, args.task_id, effective, policy)
-                    adapter, mock_gateway = build_domain_mock_adapter(
+                    adapter, mock_gateway, mock_agent = build_domain_mock_adapter(
                         root, task, fault=args.fault)
                     runner.adapter = adapter
                     with mock_domain_boundary(task["request"]["region"]):
@@ -478,7 +478,9 @@ def main(argv=None):
                         "mode": "offline_domain_mock",
                         "workflow": completed["workflow"],
                         "gateway_calls": mock_gateway.calls,
-                        "mock_simulation_attempts": mock_gateway.calls.count("simulate_super"),
+                        "mock_simulation_attempts": (
+                            mock_gateway.calls.count("simulate_super")
+                            if task["workflow"] != "regular" else mock_agent.calls),
                         "model_provider_invoked": False,
                         "brain_provider_invoked": False,
                         "execution": completed,
