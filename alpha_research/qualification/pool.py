@@ -57,9 +57,13 @@ class CandidatePool:
         self.index_path = record_store.root / "pool_index.json"
 
     def build_index(self, current_policy_sha256=None):
-        candidates = self.store.list("candidate")
+        # Mock evidence can exist in the same record layout, but must never
+        # influence live Candidate / Preferred admission or reusable verdicts.
+        candidates = [row for row in self.store.list("candidate")
+                      if row.get("evidence_origin") != "OFFLINE_DOMAIN_MOCK"]
         preferred = {row["candidate_id"]: row
-                     for row in self.store.list("preferred")}
+                     for row in self.store.list("preferred")
+                     if row.get("evidence_origin") != "OFFLINE_DOMAIN_MOCK"}
         grouped = {}
         for row in candidates:
             grouped.setdefault(row["alpha_id"], []).append(row)
@@ -148,7 +152,8 @@ class CandidatePool:
                    for v in (evidence_sha256, policy_sha256)):
             return None
         matches = [row for row in self.store.list("candidate")
-                   if row["alpha_id"] == alpha_id]
+                   if row["alpha_id"] == alpha_id
+                   and row.get("evidence_origin") != "OFFLINE_DOMAIN_MOCK"]
         if not matches:
             return None
         # An older successful assessment cannot be reused after a newer
