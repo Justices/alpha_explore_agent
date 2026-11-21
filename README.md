@@ -489,6 +489,38 @@ nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
 nq --state-root "$STATE_ROOT" orchestration-status <TASK_ID>
 ```
 
+For a **new** prepared task, run the domain-level offline integration
+through the actual Regular Campaign scheduler or Super/Optimization workflow
+code, using scripted mock catalog data, batch results, model decisions and
+simulation responses. Keep this separate from the synthetic control-plane
+dry run (both consume the task).
+
+```sh
+# Prepare a NEW task for each experiment; Regular requires Delay 1.
+nq --lead deepseek --executor deepseek orchestration-prepare \
+  --workflow regular --region CHN --objective "offline Regular domain mock"
+
+# Use the task_id from the immediately preceding result:
+nq --lead deepseek --executor deepseek \
+  orchestration-domain-mock <TASK_ID> --mode mock
+
+# To test an unknown simulation outcome, use ANOTHER new task:
+nq --lead deepseek --executor deepseek \
+  orchestration-domain-mock <NEW_TASK_ID> --mode mock \
+  --fault lost-simulation-response
+```
+
+The mock command verifies the saved immutable model identity and proposal.
+Regular uses actual catalog scope discovery and Campaign persistence with a
+scripted `run_once` batch, **not** a real ResearchAgent generation loop.
+Super/Optimization run their actual domain functions and write local mock
+Simulation Intents and research records. The mock Gateway/Model never reach
+external providers, and the output explicitly labels this as
+`offline_domain_mock`. Its records are testing artifacts, **not live Alpha
+evidence**. Always use a dedicated disposable `--state-root` for tests, not
+your production evidence directory. Unknown mock outcomes remain `BLOCKED`
+with reserved execution budget and cannot be retried automatically.
+
 This dry run is **not** a BRAIN research Simulation or a domain end-to-end
 Mock run. It validates the prepared immutable execution identity and proposal,
 then advances Validate / Execute / Qualify / Collect using synthetic checkpoints.
