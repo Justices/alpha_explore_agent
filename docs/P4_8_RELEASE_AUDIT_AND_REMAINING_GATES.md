@@ -31,6 +31,36 @@ creates a platform session, or calls a model. Output remains
 `PRODUCTION_BLOCKED` or `RECONCILIATION_BLOCKED` and contains
 `production_authorized=false`, `automatic_retry_allowed=false`.
 
+## Non-executable preparation CLI (mutates audit files only)
+
+The CLI now exposes the complete **offline** P4.7.2/3 preparation sequence
+after a P4.7.1 scoped Simulation has been staged:
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-consent-verify <TASK_ID> \\
+  --receipt /secure/path/external-consent.json \\
+  --trust-policy /secure/path/public-issuer-policy.json
+
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-consent-reserve <TASK_ID> \\
+  --receipt /secure/path/external-consent.json \\
+  --trust-policy /secure/path/public-issuer-policy.json
+
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-predispatch-escrow-reserve <TASK_ID>
+```
+
+The verify command performs no state mutation. The two reserve commands
+make one-shot durable local audit/escrow records and must fail closed on
+replay or inconsistent evidence; none has any capability to send a BRAIN
+POST. A caller-provided public trust policy is strictly an offline audit
+input, **not independently provisioned operator trust**. These commands
+neither issue receipts nor grant live model, BRAIN, or Alpha rights.
+
+The same model registry/profile and governance settings used for the original
+proposal and staging must be selected when inspecting the signed evidence.
+
 ## Recovery semantics
 
 `simulation_recovery_audit.py` reports the saved Intent status without
