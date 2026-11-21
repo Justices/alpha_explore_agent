@@ -333,5 +333,172 @@ class ExternalConsentTests(unittest.TestCase):
             self.reserve()
 
 
+    def test_p4_7_3_escrow_requires_consent_reservation(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow, inspect_pre_dispatch_escrow)
+        with self.assertRaisesRegex(OrchestrationError, "consent audit"):
+            reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+        result = inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(result["status"], "NOT_ESCROWED")
+        self.assertFalse(result["permission_to_dispatch"])
+
+    def test_p4_7_3_escrow_binds_evidence_and_never_posts(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow, inspect_pre_dispatch_escrow)
+        self.reserve()
+        intent_path = (self.root / "state" / "research_v1_1" /
+                       "simulation_attempt_admission" / "intents" /
+                       (self.task["task_id"] + ".intent.json"))
+        before = intent_path.read_bytes()
+        with patch("alpha_research.integrations.brain.gateway.Gateway",
+                   side_effect=AssertionError("no Gateway permitted")), patch(
+                       "alpha_research.integrations.model.build_model_client",
+                       side_effect=AssertionError("no model permitted")):
+            status = reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(status["status"], "PREDISPATCH_ESCROW_NOT_EXECUTABLE")
+        self.assertFalse(status["permission_to_dispatch"])
+        self.assertFalse(status["automatic_retry_allowed"])
+        self.assertEqual(before, intent_path.read_bytes(),
+                         "escrow cannot transition Intent to POSTING")
+        self.assertEqual(json.loads(before)["status"], "PREPARED")
+        self.assertEqual(inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)["status"],
+            "PREDISPATCH_ESCROW_NOT_EXECUTABLE")
+        directory = (self.root / "state" / "research_v1_1" /
+                     "simulation_predispatch_escrow")
+        record = json.loads((directory / (self.task["task_id"] + ".json")).read_text())
+        index = json.loads((directory / "escrow_index.json").read_text())
+        self.assertEqual(index["by_task"][self.task["task_id"]],
+                         record["attempt_id"])
+        self.assertEqual(index["by_grant"][self.claims["grant_id"]],
+                         record["attempt_id"])
+        self.assertEqual(record["intent_sha256"],
+                         self.claims["intent_sha256"])
+        self.assertEqual(record["model_budget_attempts"], 0)
+        self.assertFalse(record["permission_to_dispatch"])
+
+    def test_p4_7_3_escrow_is_one_shot(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow)
+        self.reserve()
+        reserve_pre_dispatch_escrow(self.runner, self.task["task_id"], self.policy)
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+
+    def test_p4_7_3_escrow_canonical_first_crash_blocks_replay(self):
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        original = atomic_write_json
+
+        def fail_after_index(path, obj):
+            if Path(path).name == self.task["task_id"] + ".json":
+                raise OSError("synthetic escrow crash after canonical commit")
+            return original(path, obj)
+
+        with patch.object(escrow, "atomic_write_json", side_effect=fail_after_index):
+            with self.assertRaisesRegex(OSError, "synthetic escrow crash"):
+                escrow.reserve_pre_dispatch_escrow(
+                    self.runner, self.task["task_id"], self.policy)
+        status = escrow.inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(status["status"], "RECONCILIATION_REQUIRED")
+        self.assertFalse(status["automatic_retry_allowed"])
+        with self.assertRaisesRegex(OrchestrationError, "projection missing"):
+            escrow.reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+
+    def test_p4_7_3_escrow_concurrent_reservations_single_winner(self):
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow)
+        self.reserve()
+
+        def attempt(_):
+            try:
+                return reserve_pre_dispatch_escrow(
+                    self.runner, self.task["task_id"], self.policy)["status"]
+            except (ValueError, OrchestrationError):
+                return "BLOCKED"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(attempt, range(2)))
+        self.assertCountEqual(
+            outcomes, ["PREDISPATCH_ESCROW_NOT_EXECUTABLE", "BLOCKED"])
+
+    def test_p4_7_3_escrow_detects_tampered_projection(self):
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        escrow.reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        directory = (self.root / "state" / "research_v1_1" /
+                     "simulation_predispatch_escrow")
+        projection = directory / (self.task["task_id"] + ".json")
+        record = json.loads(projection.read_text())
+        record["permission_to_dispatch"] = True
+        projection.write_text(json.dumps(record))
+        self.assertEqual(escrow.inspect_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)["status"],
+            "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "projection drift"):
+            escrow.reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+
+    def test_p4_7_3_escrow_rejects_preexisting_model_call(self):
+        from alpha_research.agents.governance import ModelCallLedger
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow)
+        self.reserve()
+        ModelCallLedger(self.root, self.policy).reserve(
+            self.plan["research_id"], "preexisting-model-call",
+            task="offline", role="research_lead",
+            backend="registry:deepseek", backend_sha256="a" * 64)
+        with self.assertRaisesRegex(OrchestrationError, "budget not fresh"):
+            reserve_pre_dispatch_escrow(
+                self.runner, self.task["task_id"], self.policy)
+
+    def test_p4_7_3_stop_activated_inside_transaction_blocks_write(self):
+        from alpha_research.orchestration import pre_dispatch_escrow as escrow
+        self.reserve()
+        stop = self.root / "state" / "stop.flag"
+        original = escrow._evidence
+        calls = []
+
+        def inject(*args, **kwargs):
+            calls.append(True)
+            if len(calls) == 2:
+                stop.parent.mkdir(parents=True, exist_ok=True)
+                stop.write_text("stop")
+            return original(*args, **kwargs)
+
+        with patch.object(escrow, "_evidence", side_effect=inject):
+            with self.assertRaisesRegex(OrchestrationError, "stop signal"):
+                escrow.reserve_pre_dispatch_escrow(
+                    self.runner, self.task["task_id"], self.policy)
+        self.assertEqual(len(calls), 2)
+        directory = self.root / "state" / "research_v1_1" / "simulation_predispatch_escrow"
+        self.assertFalse((directory / "escrow_index.json").exists())
+
+    def test_p4_7_3_gateway_does_not_accept_escrow_receipt(self):
+        from alpha_research.integrations.brain.gateway import Gateway, GatewayError
+        from alpha_research.orchestration.pre_dispatch_escrow import (
+            reserve_pre_dispatch_escrow)
+        self.reserve()
+        record = reserve_pre_dispatch_escrow(
+            self.runner, self.task["task_id"], self.policy)
+        gateway = Gateway(orchestration_guarded=True)
+        for cmd in ("simulate_super", "simulate_batch", "resume_simulation_batch"):
+            with self.subTest(cmd=cmd), self.assertRaisesRegex(
+                    GatewayError, "trusted live admission"):
+                gateway.call(
+                    cmd, task_id=self.task["task_id"],
+                    attempt_id=record["attempt_id"], allow=True,
+                    permission_to_dispatch=True)
+        self.assertIsNone(gateway.proc)
+
+
+
 if __name__ == "__main__":
     unittest.main()
