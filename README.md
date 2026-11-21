@@ -511,16 +511,19 @@ simulation responses. Keep this separate from the synthetic control-plane
 dry run (both consume the task).
 
 ```sh
+# Use a new, disposable state-root; do NOT use the default research root.
+STATE_ROOT="$(mktemp -d)"
 # Prepare a NEW task for each experiment; Regular requires Delay 1.
-nq --lead deepseek --executor deepseek orchestration-prepare \
-  --workflow regular --region CHN --objective "offline Regular domain mock"
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-prepare --workflow regular --region CHN \
+  --objective "offline Regular domain mock"
 
 # Use the task_id from the immediately preceding result:
-nq --lead deepseek --executor deepseek \
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-domain-mock <TASK_ID> --mode mock
 
-# To test an unknown simulation outcome, use ANOTHER new task:
-nq --lead deepseek --executor deepseek \
+# To test an unknown simulation outcome, prepare ANOTHER new task:
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-domain-mock <NEW_TASK_ID> --mode mock \
   --fault lost-simulation-response
 ```
@@ -535,6 +538,27 @@ external providers, and the output explicitly labels this as
 evidence**. Always use a dedicated disposable `--state-root` for tests, not
 your production evidence directory. Unknown mock outcomes remain `BLOCKED`
 with reserved execution budget and cannot be retried automatically.
+
+P3 mock isolation is **enforced in code**: only a dedicated, initially
+evidence-free, non-default state root may enter domain Mock mode; a persistent
+`OFFLINE_DOMAIN_MOCK_ONLY` workspace marker prevents live workflow commands
+from operating on that root. Every research record written during a CLI
+domain Mock carries `evidence_origin=OFFLINE_DOMAIN_MOCK`. CandidatePool
+omits these records from its index and reuse lookups, even when a user manually
+points a pool reader at the mock root.
+
+Inspect admission blockers for a newly prepared task without making calls:
+
+```sh
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-admission-audit <TASK_ID>
+```
+
+The audit result is always `NOT_AUTHORIZED`. It checks proposal/identity,
+budget, config provenance, review receipt state and mock isolation, but cannot
+create execution permission or a provider token. The production adapter
+remains fail-closed. See `docs/P3_EXECUTION_BOUNDARIES.md` for the contract
+and implementation gaps.
 
 This dry run is **not** a BRAIN research Simulation or a domain end-to-end
 Mock run. It validates the prepared immutable execution identity and proposal,
