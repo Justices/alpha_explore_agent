@@ -143,6 +143,37 @@ class ModelLedgerTests(unittest.TestCase):
             with self.assertRaisesRegex(ModelBudgetError, "invalid"):
                 ledger.status("R1")
 
+    def test_dangling_budget_ledger_symlink_is_not_empty_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = ModelCallLedger(folder, POLICY)
+            path, _ = ledger._paths("R1")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                path.symlink_to(path.with_name("missing-original.json"))
+            except (OSError, NotImplementedError):
+                self.skipTest("filesystem symlinks unavailable")
+            self.assertFalse(path.exists(), "dangling symlinks exist() == False")
+            with self.assertRaisesRegex(ModelBudgetError, "symlink forbidden"):
+                ledger._load(path, "R1")
+            with self.assertRaisesRegex(ModelBudgetError, "symlink forbidden"):
+                ledger.reserve("R1", "C1", task="plan_experiments")
+
+    def test_budget_ledger_symlinked_parent_refused_read_only(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ledger = ModelCallLedger(folder, POLICY)
+            external = Path(folder) / "elsewhere"
+            external.mkdir()
+            root = Path(folder) / "logs"
+            root.mkdir()
+            target = root / "model_budget"
+            try:
+                target.symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("directory symlink unavailable")
+            path, _ = ledger._paths("R2")
+            with self.assertRaisesRegex(ModelBudgetError, "symlink forbidden"):
+                ledger._load(path, "R2")
+
     def test_automatic_failover_policy_is_disallowed(self):
         with self.assertRaisesRegex(ModelBudgetError, "automatic model failover"):
             validate_policy(dict(POLICY, failover="automatic"))
