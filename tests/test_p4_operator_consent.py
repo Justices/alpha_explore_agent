@@ -259,6 +259,10 @@ class ExternalConsentTests(unittest.TestCase):
             self.skipTest("directory symlink unavailable")
         with self.assertRaisesRegex(OrchestrationError, "directory unsafe"):
             self.reserve()
+        self.assertEqual(
+            inspect_consent_reservation(
+                self.runner, self.task["task_id"])["status"],
+            "RECONCILIATION_REQUIRED")
 
     def test_crash_after_canonical_index_refuses_replay(self):
         from alpha_research.orchestration import operator_consent as module
