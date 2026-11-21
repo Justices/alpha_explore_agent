@@ -478,6 +478,25 @@ nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-handoff <TASK_ID>
 ```
 
+After preparing the Task ID, exercise its persisted four-stage control plane
+with a built-in **synthetic fixture** (no domain Dispatch, no model, no
+Gateway and no Candidate Pool mutations):
+
+```sh
+nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
+  orchestration-run <TASK_ID> --mode mock
+
+nq --state-root "$STATE_ROOT" orchestration-status <TASK_ID>
+```
+
+This dry run is **not** a BRAIN research Simulation or a domain end-to-end
+Mock run. It validates the prepared immutable execution identity and proposal,
+then advances Validate / Execute / Qualify / Collect using synthetic checkpoints.
+Only `CREATED` tasks are admissible; the prepared task becomes `COMPLETED`
+and cannot later be turned into a live run. Create a separate task for
+further tests or eventual independently authorized execution. The output
+explicitly records `domain_dispatch_invoked=false` and `brain_invoked=false`.
+
 For Optimization, add `--workflow optimization --alpha-id <SOURCE_ALPHA_ID>`.
 These commands only write a `CREATED` task, an
 `execution_proposals/` record and an `execution_identities/` record, or
