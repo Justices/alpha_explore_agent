@@ -57,6 +57,41 @@ jobs:
           python -m alpha_research.research_cycle --config config.mock.example.json --fixtures tests/fixtures/research_cycle_simulations.json --research-id R1 --objective "offline demo" --region CHN --state-root .alpha-ci-runtime --durable --max-rounds 1
 
 
+  macos-prepared-domain-mock:
+    runs-on: macos-latest
+    timeout-minutes: 15
+    env:
+      BRAIN_USERNAME: ""
+      BRAIN_PASSWORD: ""
+      BRAIN_API_TOKEN: ""
+      DEEPSEEK_API_KEY: ""
+      ZAI_API_KEY: ""
+      MOONSHOT_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+      OPENAI_API_KEY: ""
+      BRAIN_CREDENTIALS_FILE: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Normalize macOS temporary-directory alias
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.cache/alpha-research-ci-tmp"
+          echo "TMPDIR=$(cd "$HOME/.cache/alpha-research-ci-tmp" && pwd -P)/" >> "$GITHUB_ENV"
+      - name: Install package
+        run: python -m pip install -e .
+      - name: Compile
+        run: python -m compileall -q alpha_research tests
+      - name: Prepared task and real offline domain CLI integration (no network)
+        run: |
+          python -m unittest discover -s tests -p 'test_orchestration_prepare_cli.py' -v
+          python -m unittest discover -s tests -p 'test_orchestration_run_cli.py' -v
+          python -m unittest discover -s tests -p 'test_orchestration_domain_mock_cli.py' -v
+          python -m unittest discover -s tests -p 'test_full_mock_orchestration.py' -v
+
+
   agy-sdk-contract:
     runs-on: ubuntu-latest
     timeout-minutes: 15
