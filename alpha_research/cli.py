@@ -31,6 +31,8 @@ from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
 from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
 from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
 from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
+from alpha_research.orchestration.admission_audit import audit_execution_admission
+from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
 )
@@ -107,6 +109,10 @@ def main(argv=None):
     domain_mock.add_argument("task_id")
     domain_mock.add_argument("--mode", choices=("mock",), required=True)
     domain_mock.add_argument("--fault", choices=("lost-simulation-response",))
+    admission = sub.add_parser(
+        "orchestration-admission-audit",
+        help="inspect production authorization blockers without provider or BRAIN calls")
+    admission.add_argument("task_id")
     handoff = sub.add_parser(
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
@@ -255,6 +261,23 @@ def main(argv=None):
     args = parser.parse_args(argv)
     root = args.state_root.resolve()
     stop_flag = root / "state" / "stop.flag"
+    # A mock workspace is permanently excluded from every existing live
+    # workflow entrypoint; the marker is not a dispatch authorization.
+    live_commands = {
+        "run-once", "run", "run-campaign", "run-super", "run-optimization",
+        "plan-super", "plan-regular", "plan-optimization",
+        "recover", "recover-research", "recover-workflow", "recover-task",
+        "sync-backtest-cache", "tag-alpha",
+    }
+    if args.command in live_commands and (
+            marker_path(root).exists() or marker_path(root).is_symlink()):
+        print("live workflow refused: offline mock workspace cannot be used for real research",
+              file=sys.stderr)
+        return 2
+    if args.command == "models" and getattr(args, "allow_model_call", False) and (
+            marker_path(root).exists() or marker_path(root).is_symlink()):
+        print("live model probe refused: offline mock workspace", file=sys.stderr)
+        return 2
 
     registry_path = args.registry or (
         root / "config" / "model_registry.json" if
@@ -380,7 +403,7 @@ def main(argv=None):
         return 0
     if args.command in {"orchestration-prepare", "orchestration-handoff",
                         "orchestration-recovery-check", "orchestration-run",
-                        "orchestration-domain-mock"}:
+                        "orchestration-domain-mock", "orchestration-admission-audit"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
                 raise OrchestrationError(
@@ -490,6 +513,10 @@ def main(argv=None):
                         "brain_provider_invoked": False,
                         "execution": completed,
                     }
+                elif args.command == "orchestration-admission-audit":
+                    result = audit_execution_admission(
+                        runner, args.task_id, effective, policy,
+                        config_source=config_source)
                 elif args.command == "orchestration-handoff":
                     result = inspect_domain_research_handoff(
                         runner, args.task_id, effective, policy)
