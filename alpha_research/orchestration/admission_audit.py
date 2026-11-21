@@ -12,6 +12,7 @@ from alpha_research.orchestration.mock_workspace import marker_path, inspect_moc
 from alpha_research.orchestration.execution_reservation import inspect_non_executable_reservation
 from alpha_research.orchestration.simulation_attempt_admission import inspect_staged_simulation_attempt
 from alpha_research.orchestration.operator_consent import inspect_consent_reservation
+from alpha_research.orchestration.pre_dispatch_escrow import inspect_pre_dispatch_escrow
 
 
 def audit_execution_admission(orchestrator, task_id, model_config,
@@ -121,6 +122,17 @@ def audit_execution_admission(orchestrator, task_id, model_config,
     except (OrchestrationError, OSError, ValueError, TypeError,
             KeyError, AttributeError):
         blockers.append("OPERATOR_CONSENT_AUDIT_UNREADABLE")
+    try:
+        escrow = inspect_pre_dispatch_escrow(
+            orchestrator, task_id, governance_policy)
+        facts["pre_dispatch_escrow"] = escrow["status"]
+        if escrow["status"] == "RECONCILIATION_REQUIRED":
+            blockers.append("PREDISPATCH_ESCROW_RECONCILIATION_REQUIRED")
+        elif escrow["status"] == "PREDISPATCH_ESCROW_NOT_EXECUTABLE":
+            blockers.append("PREDISPATCH_ESCROW_NOT_DISPATCH_PERMISSION")
+    except (OrchestrationError, OSError, ValueError, TypeError,
+            KeyError, AttributeError):
+        blockers.append("PREDISPATCH_ESCROW_LEDGER_UNREADABLE")
     # Review receipts cover only proposal review, not model or BRAIN writes.
     blockers.append("TRUSTED_EXECUTION_AUTHORIZATION_NOT_IMPLEMENTED")
     blockers.append("PRODUCTION_DISPATCH_ADAPTER_DISABLED")
