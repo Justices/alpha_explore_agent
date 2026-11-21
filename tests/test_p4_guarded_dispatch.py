@@ -204,5 +204,31 @@ class GuardedDispatchAuditTests(unittest.TestCase):
 
 
 
+    def test_p4_7_unknown_token_usage_is_not_treated_as_free(self):
+        from alpha_research.agents.governance import ModelCallLedger
+        research_id = self._bind_domain_research_for_audit()
+        ledger = ModelCallLedger(self.root, self.policy)
+        ledger.reserve(
+            research_id, "completed-unknown-tokens",
+            task="offline-audit", role="research_lead",
+            backend="registry:deepseek", backend_sha256="a" * 64)
+        ledger.settle(
+            research_id, "completed-unknown-tokens", success=True,
+            token_in=None, token_out=None)
+        with patch(
+            "alpha_research.orchestration.simulation_dispatch_preflight.inspect_staged_simulation_attempt",
+            return_value={"status": "STAGED_NO_DISPATCH",
+                          "research_id": research_id},
+        ):
+            result = inspect_simulation_dispatch_gate(
+                self.orchestrator, self.task["task_id"], self.policy)
+        self.assertIn("MODEL_USAGE_UNVERIFIED", result["blockers"])
+        self.assertIn("MODEL_BUDGET_BLOCKED", result["blockers"])
+        self.assertEqual(
+            result["facts"]["model_budget"]["unknown_usage_attempts"], 1)
+        self.assertFalse(result["permission_to_dispatch"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
