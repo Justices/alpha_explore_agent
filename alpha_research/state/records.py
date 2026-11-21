@@ -7,10 +7,26 @@ operations. This module does not schedule work or post simulations.
 import copy
 import json
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import datetime
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
+
+
+# Context-local mock origin, never process-wide monkey-patching.
+# The store still verifies the persistent workspace marker independently.
+_ACTIVE_EVIDENCE_ORIGIN = ContextVar("active_research_evidence_origin", default=None)
+
+
+@contextmanager
+def offline_mock_record_scope():
+    token = _ACTIVE_EVIDENCE_ORIGIN.set("OFFLINE_DOMAIN_MOCK")
+    try:
+        yield
+    finally:
+        _ACTIVE_EVIDENCE_ORIGIN.reset(token)
 
 
 SCHEMA_VERSIONS = {
@@ -229,6 +245,10 @@ class ResearchRecordStore:
         The caller holds SingleWriterLock. Existing identity and source
         lineage cannot be changed by a replacement.
         """
+        origin = _ACTIVE_EVIDENCE_ORIGIN.get()
+        if origin == "OFFLINE_DOMAIN_MOCK":
+            # Copy rather than mutating the domain-owned record object.
+            record = {**record, "evidence_origin": origin}
         validate_record(kind, record)
         # Record-store enforcement is independent of the CLI mock adapter.
         # A marked workspace can never persist records claiming live origin.
