@@ -41,6 +41,11 @@ def _paths(orchestrator, task_id):
 def inspect_staged_simulation_attempt(orchestrator, task_id):
     """Read-only state; no gateway, receipt issuer, consent or model."""
     journal_path, intent_path, _ = _paths(orchestrator, task_id)
+    # exists() is false for a dangling symlink; treat it as corrupt evidence,
+    # never as a fresh, unstaged attempt.
+    if journal_path.is_symlink():
+        return {"task_id": task_id, "status": _RECONCILE,
+                "permission_to_dispatch": False}
     if not journal_path.exists():
         if intent_path.exists() or intent_path.is_symlink():
             return {"task_id": task_id, "status": _RECONCILE,
@@ -82,6 +87,20 @@ def inspect_staged_simulation_attempt(orchestrator, task_id):
                 "permission_to_dispatch": False}
 
 
+def _assert_staging_environment(orchestrator):
+    """Check both before receipt inspection and under the reservation lock.
+
+    A stop signal or Mock marker can appear while scope verification runs.
+    Neither a dangling symlink nor a concurrent marker may be ignored.
+    """
+    marker = marker_path(orchestrator.state_root)
+    if marker.exists() or marker.is_symlink():
+        raise OrchestrationError("cannot stage Simulation in mock workspace")
+    stop = Path(orchestrator.state_root) / "state" / "stop.flag"
+    if stop.exists() or stop.is_symlink():
+        raise OrchestrationError("global research stop flag is active")
+
+
 def stage_simulation_attempt(orchestrator, task_id, model_config,
                              governance_policy, receipt, plan, *,
                              environ=None, now=None):
@@ -92,11 +111,7 @@ def stage_simulation_attempt(orchestrator, task_id, model_config,
     partial failures are held for manual reconciliation, not retried.
     """
     journal_path, intent_path, lock_path = _paths(orchestrator, task_id)
-    marker = marker_path(orchestrator.state_root)
-    if marker.exists() or marker.is_symlink():
-        raise OrchestrationError("cannot stage Simulation in mock workspace")
-    if (Path(orchestrator.state_root) / "state" / "stop.flag").exists():
-        raise OrchestrationError("global research stop flag is active")
+    _assert_staging_environment(orchestrator)
     checked = inspect_simulation_scope(
         orchestrator, task_id, model_config, governance_policy,
         receipt, plan, environ=environ, now=now)
@@ -106,6 +121,7 @@ def stage_simulation_attempt(orchestrator, task_id, model_config,
             checked = inspect_simulation_scope(
                 orchestrator, task_id, model_config, governance_policy,
                 receipt, plan, environ=environ, now=now)
+            _assert_staging_environment(orchestrator)
             if (journal_path.exists() or journal_path.is_symlink()
                     or intent_path.exists() or intent_path.is_symlink()):
                 raise OrchestrationError(
