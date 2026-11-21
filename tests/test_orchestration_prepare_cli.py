@@ -104,6 +104,25 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(escrow_root.exists(),
                          "read-only escrow status must not create lock/index")
 
+    def test_p4_7_4_recovery_audit_cli_is_offline_and_no_writes(self):
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "offline recovery classification"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        state_root = self.root / "state" / "research_v1_1"
+        before = sorted(str(p) for p in state_root.rglob("*"))
+        status, output, error = self._call(
+            self.prefix + ["orchestration-simulation-recovery-audit", task_id])
+        self.assertEqual(status, 0, error)
+        report = json.loads(output)
+        self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("INTENT_MISSING_OR_SYMLINKED", report["blockers"])
+        self.assertFalse(report["brain_invoked"])
+        self.assertFalse(report["provider_invoked"])
+        self.assertFalse(report["automatic_retry_allowed"])
+        self.assertEqual(before, sorted(str(p) for p in state_root.rglob("*")))
+
     def test_recovery_check_is_read_only_for_unstarted_task(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
