@@ -17,8 +17,16 @@ def write(payload):
 
 
 def main():
+    args = sys.argv[1:]
+    read_only = "--read-only" in args
+    remaining = [arg for arg in args if arg != "--read-only"]
+    if (len(remaining) != len(args) - int(read_only)
+            or remaining not in ([], ["--brain-credentials-stdin"])):
+        write({"ok": False, "stage": "configuration",
+               "error": "invalid driver options"})
+        return 2
     try:
-        if sys.argv[1:] == ["--brain-credentials-stdin"]:
+        if remaining == ["--brain-credentials-stdin"]:
             credentials = json.loads(sys.stdin.readline())
             runtime = PlatformRuntime(client=WorldQuantClient(credentials=credentials))
         else:
@@ -39,6 +47,14 @@ def main():
                 if command == "shutdown":
                     write({"ok": True, "stage": "shutdown"})
                     break
+                # Independent driver-side authorization barrier: a caller
+                # cannot bypass Gateway.read_only by writing raw JSON to stdin.
+                if read_only and command not in {
+                    "get_platform_setting_options", "readonly_probe_datasets",
+                }:
+                    write({"ok": False, "error":
+                           "read-only driver refuses this command"})
+                    continue
                 params = {key: value for key, value in request.items() if key != "cmd"}
                 result = runtime.dispatch(command, params)
                 write({"ok": True, "result": result})
