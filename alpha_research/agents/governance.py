@@ -80,6 +80,10 @@ class ModelCallLedger:
         write_sealed_json(path, state)
 
     def _load(self, path, research_id):
+        # A dangling symlink reports exists() == False. Treat it as corrupt
+        # budget evidence, never as proof of zero previous model attempts.
+        if path.is_symlink() or path.parent.is_symlink():
+            raise ModelBudgetError("model budget ledger symlink forbidden")
         if not path.exists():
             return {
                 "schema_version": self.SCHEMA_VERSION,
