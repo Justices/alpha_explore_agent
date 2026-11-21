@@ -144,5 +144,65 @@ class GuardedDispatchAuditTests(unittest.TestCase):
         self.assertFalse(result["brain_invoked"])
 
 
+    def _bind_domain_research_for_audit(self):
+        task = self.orchestrator.load(self.task["task_id"])
+        previous = task["updated_at"]
+        task["status"] = "RUNNING"
+        task["steps"]["execute"] = "RUNNING"
+        self.orchestrator._save(task, expected=previous)
+        research_id = "super:" + "e" * 32
+        self.orchestrator.bind_research_identity(
+            self.task["task_id"], research_id)
+        return research_id
+
+    def test_p4_7_structured_research_binding_reads_real_model_budget(self):
+        research_id = self._bind_domain_research_for_audit()
+        with patch(
+            "alpha_research.orchestration.simulation_dispatch_preflight.inspect_staged_simulation_attempt",
+            return_value={"status": "STAGED_NO_DISPATCH",
+                          "research_id": research_id},
+        ):
+            result = inspect_simulation_dispatch_gate(
+                self.orchestrator, self.task["task_id"], self.policy)
+        self.assertNotIn("RESEARCH_ID_NOT_BOUND", result["blockers"])
+        self.assertNotIn("SIMULATION_RESEARCH_ID_MISMATCH", result["blockers"])
+        self.assertEqual(result["facts"]["model_budget"]["attempts"], 0)
+        self.assertIn("TASK_NOT_FRESH", result["blockers"])
+        self.assertFalse(result["permission_to_dispatch"])
+
+    def test_p4_7_mismatched_staging_research_id_refuses_dispatch(self):
+        self._bind_domain_research_for_audit()
+        with patch(
+            "alpha_research.orchestration.simulation_dispatch_preflight.inspect_staged_simulation_attempt",
+            return_value={"status": "STAGED_NO_DISPATCH",
+                          "research_id": "super:" + "f" * 32},
+        ):
+            result = inspect_simulation_dispatch_gate(
+                self.orchestrator, self.task["task_id"], self.policy)
+        self.assertIn("SIMULATION_RESEARCH_ID_MISMATCH", result["blockers"])
+        self.assertFalse(result["permission_to_dispatch"])
+
+    def test_p4_7_unresolved_model_attempt_is_visible_and_blocks(self):
+        from alpha_research.agents.governance import ModelCallLedger
+        research_id = self._bind_domain_research_for_audit()
+        ModelCallLedger(self.root, self.policy).reserve(
+            research_id, "test-inflight-model-attempt",
+            task="offline-audit", role="research_lead",
+            backend="registry:deepseek", backend_sha256="a" * 64)
+        with patch(
+            "alpha_research.orchestration.simulation_dispatch_preflight.inspect_staged_simulation_attempt",
+            return_value={"status": "STAGED_NO_DISPATCH",
+                          "research_id": research_id},
+        ):
+            result = inspect_simulation_dispatch_gate(
+                self.orchestrator, self.task["task_id"], self.policy)
+        self.assertIn("MODEL_ATTEMPT_RECONCILIATION_REQUIRED", result["blockers"])
+        self.assertIn("MODEL_BUDGET_BLOCKED", result["blockers"])
+        self.assertEqual(result["facts"]["model_budget"]["unresolved"], 1)
+        self.assertFalse(result["provider_invoked"])
+        self.assertFalse(result["brain_invoked"])
+
+
+
 if __name__ == "__main__":
     unittest.main()
