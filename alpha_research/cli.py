@@ -28,7 +28,9 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
-from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
+from alpha_research.orchestration.runtime_config import (
+    prepare_registered_model_runtime, load_preparation_config,
+)
 from alpha_research.orchestration.runtime_context import CliRuntimeContext
 from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
@@ -369,9 +371,8 @@ def main(argv=None):
                 raise OrchestrationError(
                     "both --lead and --executor registrations are required")
             config_path = args.config or root / "config" / "nastu_quant.json"
-            cfg = json.loads(config_path.read_text(encoding="utf-8"))
-            if not isinstance(cfg, dict):
-                raise OrchestrationError("research configuration must be an object")
+            cfg, config_source = load_preparation_config(
+                config_path, explicit=args.config is not None)
             prepared = prepare_registered_model_runtime(
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
@@ -414,6 +415,7 @@ def main(argv=None):
                         runner, task["task_id"], effective, policy)
                     result = {
                         "status": "PREPARED_NOT_AUTHORIZED",
+                        "config_source": config_source,
                         "task_id": task["task_id"],
                         "proposal_sha256": proposal["proposal_sha256"],
                         "identity_sha256": identity["identity_sha256"],
@@ -427,9 +429,17 @@ def main(argv=None):
                     result = inspect_task_recovery_preflight(
                         runner, args.task_id, effective, policy)
         except (OSError, ValueError, TypeError, KeyError, WriterLockError) as exc:
-            # Avoid exposing raw model/provider configuration or secret values.
-            print(f"orchestration preparation failed: {type(exc).__name__}",
-                  file=sys.stderr)
+            # Show safe configuration-path diagnostics without echoing credentials,
+            # model backend payloads or provider errors.
+            if isinstance(exc, FileNotFoundError):
+                print(f"orchestration preparation failed: {exc}", file=sys.stderr)
+            elif isinstance(exc, ValueError) and str(exc).startswith(
+                    ("research configuration is ", "research configuration must ",
+                     "research configuration file ", "research configuration is missing")):
+                print(f"orchestration preparation failed: {exc}", file=sys.stderr)
+            else:
+                print(f"orchestration preparation failed: {type(exc).__name__}",
+                      file=sys.stderr)
             return 2
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
