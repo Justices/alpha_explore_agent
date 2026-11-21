@@ -38,6 +38,7 @@ from alpha_research.orchestration.simulation_scope import inspect_simulation_sco
 from alpha_research.orchestration.simulation_attempt_admission import (
     stage_simulation_attempt, inspect_staged_simulation_attempt,
 )
+from alpha_research.orchestration.simulation_dispatch_preflight import inspect_simulation_dispatch_gate
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
@@ -154,6 +155,10 @@ def main(argv=None):
         "orchestration-simulation-stage-status",
         help="read-only inspection of staged Simulation attempt")
     sim_stage_status.add_argument("task_id")
+    sim_dispatch_audit = sub.add_parser(
+        "orchestration-simulation-dispatch-audit",
+        help="read-only full Simulation write admission blockers; never dispatch")
+    sim_dispatch_audit.add_argument("task_id")
     handoff = sub.add_parser(
         "orchestration-handoff",
         help="inspect prepared identity and existing domain model ledger without external calls")
@@ -498,7 +503,8 @@ def main(argv=None):
                         "orchestration-authorization-reserve",
                         "orchestration-simulation-scope-check",
                         "orchestration-simulation-stage",
-                        "orchestration-simulation-stage-status"}:
+                        "orchestration-simulation-stage-status",
+                        "orchestration-simulation-dispatch-audit"}:
         try:
             if set(registry_assignments) != {"research_lead", "research_executor"}:
                 raise OrchestrationError(
@@ -510,6 +516,11 @@ def main(argv=None):
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
             effective = prepared["model"]
+            if args.command == "orchestration-simulation-dispatch-audit":
+                result = inspect_simulation_dispatch_gate(
+                    MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if args.command == "orchestration-simulation-stage-status":
                 result = inspect_staged_simulation_attempt(
                     MainOrchestrator(root), args.task_id)
