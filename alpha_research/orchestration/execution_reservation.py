@@ -27,6 +27,16 @@ def _root(orchestrator):
 
 def _load_ledger(path):
     if not path.exists():
+        # Never reconstruct an apparently empty ledger when ANY other task's
+        # projection survived an interrupted write or ledger loss.
+        root = path.parent
+        orphan_ids = any(root.glob("[0-9a-f]" * 32 + ".json"))
+        tasks_root = root / "tasks"
+        orphan_tasks = (tasks_root.exists() and (
+            not tasks_root.is_dir() or any(tasks_root.iterdir())))
+        if orphan_ids or orphan_tasks:
+            raise OrchestrationError(
+                "execution receipt canonical ledger missing with orphan projections")
         return {"schema_version": SCHEMA_VERSION, "by_id": {}, "by_task": {}}
     try:
         ledger = json.loads(path.read_text(encoding="utf-8"))
