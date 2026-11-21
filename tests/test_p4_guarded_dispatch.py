@@ -233,6 +233,18 @@ class GuardedDispatchAuditTests(unittest.TestCase):
         self.assertFalse((self.root / "logs" / "model_budget").exists(),
                          "read-only audit must not create budget lock files")
 
+    def test_missing_model_budget_history_is_explicitly_not_provable(self):
+        status = inspect_simulation_dispatch_gate(
+            self.orchestrator, self.task["task_id"], self.policy)
+        self.assertIn("RESEARCH_ID_NOT_BOUND", status["blockers"])
+        research_id = self._bind_domain_research_for_audit()
+        self.assertTrue(research_id.startswith("super:"))
+        status = inspect_simulation_dispatch_gate(
+            self.orchestrator, self.task["task_id"], self.policy)
+        self.assertIn("MODEL_BUDGET_HISTORY_NOT_PROVABLE", status["blockers"])
+        self.assertFalse(status["facts"]["model_budget"]["history_present"])
+        self.assertFalse(status["permission_to_dispatch"])
+
     def test_stop_flag_blocks_dispatch_without_network(self):
         stop = self.root / "state" / "stop.flag"
         stop.parent.mkdir(parents=True, exist_ok=True)
