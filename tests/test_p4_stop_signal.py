@@ -1,8 +1,10 @@
 """System-wide stop signals must not ignore dangling or malicious symlinks."""
+import io
 import os
 import tempfile
 import unittest
 from pathlib import Path
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from alpha_research.state.store import StopSignals, stop_requested, update_stop_flag
@@ -36,6 +38,20 @@ class StopSignalSymlinkTests(unittest.TestCase):
         with patch.dict(os.environ, {"ALPHA_RESEARCH_LAUNCH_STOP": str(launch)}):
             self.assertTrue(StopSignals(self.root).exists())
         self.assertFalse(self.stop.exists())
+
+    def test_cli_stop_reports_symlink_violation_without_traceback(self):
+        from alpha_research.cli import main
+        flag = self.root / "state" / "stop.flag"
+        flag.parent.mkdir(parents=True)
+        sentinel = self.root / "sensitive-file.txt"
+        sentinel.write_text("UNCHANGED")
+        self.link(flag, sentinel)
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with redirect_stderr(stderr), redirect_stdout(stdout):
+            status = main(["--state-root", str(self.root), "stop"])
+        self.assertEqual(status, 1)
+        self.assertIn("symlinked stop flag", stderr.getvalue())
+        self.assertEqual(sentinel.read_text(), "UNCHANGED")
 
     def test_stop_flag_set_does_not_follow_symlink(self):
         sentinel = self.root / "sentinel.txt"
