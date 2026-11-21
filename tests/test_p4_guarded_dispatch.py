@@ -21,6 +21,7 @@ class GuardedGatewayTests(unittest.TestCase):
         for command in (
             "simulate_batch", "simulate_super", "tag_alpha",
             "sync_backtest_cache", "resume_simulation_batch",
+            "set_case", "future_mutation_not_in_whitelist",
         ):
             with self.subTest(command=command):
                 with self.assertRaisesRegex(
@@ -36,6 +37,7 @@ class GuardedGatewayTests(unittest.TestCase):
                 pass
         fake_stdin = io.StringIO(
             '{"cmd":"simulate_super","allow":true,"authorization_id":"foo"}\n'
+            '{"cmd":"future_mutation_not_in_whitelist","allow":true}\n'
             '{"cmd":"shutdown"}\n')
         out = io.StringIO()
         with (patch.object(driver.sys, "argv",
@@ -48,6 +50,7 @@ class GuardedGatewayTests(unittest.TestCase):
         responses = [json.loads(row) for row in out.getvalue().splitlines()]
         self.assertFalse(responses[1]["ok"])
         self.assertIn("admission", responses[1]["error"])
+        self.assertFalse(responses[2]["ok"])
 
     def test_gateway_spawns_guarded_driver_flag(self):
         gateway = Gateway(orchestration_guarded=True)
