@@ -52,6 +52,9 @@ from alpha_research.orchestration.manifest_builder import (
 from alpha_research.orchestration.research_preparation import (
     prepare_offline_research, inspect_research_preparation,
 )
+from alpha_research.orchestration.research_only_admission import (
+    build_research_issuer_request, inspect_research_live_readiness,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -226,6 +229,16 @@ def main(argv=None):
         "orchestration-consent-issuer-request",
         help="read-only operator approval handoff; requires staged Intent")
     consent_handoff.add_argument("task_id")
+    research_issuer = sub.add_parser(
+        "orchestration-research-issuer-request",
+        help="read-only independent research-only approval request; no model/BRAIN")
+    research_issuer.add_argument("task_id")
+    research_gate = sub.add_parser(
+        "orchestration-research-live-readiness",
+        help="read-only model/price/issuer readiness audit; live dispatch disabled")
+    research_gate.add_argument("task_id")
+    research_gate.add_argument("--receipt", type=_path_argument)
+    research_gate.add_argument("--trust-policy", type=_path_argument)
     for command, help_text in (
         ("orchestration-consent-verify",
          "verify external Ed25519 consent evidence without creating authorization"),
@@ -612,6 +625,8 @@ def main(argv=None):
                         "orchestration-domain-mock",
                         "orchestration-research-prepare",
                         "orchestration-research-prepare-status",
+                        "orchestration-research-issuer-request",
+                        "orchestration-research-live-readiness",
                         "orchestration-admission-audit",
                         "orchestration-authorization-inspect",
                         "orchestration-authorization-reserve",
@@ -643,6 +658,25 @@ def main(argv=None):
             if args.command == "orchestration-research-prepare-status":
                 result = inspect_research_preparation(
                     MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-issuer-request":
+                result = build_research_issuer_request(
+                    MainOrchestrator(root), args.task_id, effective, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-live-readiness":
+                if (args.receipt is None) != (args.trust_policy is None):
+                    raise OrchestrationError(
+                        "research receipt and issuer trust policy must be paired")
+                receipt = (json.loads(args.receipt.read_text(encoding="utf-8"))
+                           if args.receipt is not None else None)
+                trust = (json.loads(args.trust_policy.read_text(encoding="utf-8"))
+                         if args.trust_policy is not None else None)
+                result = inspect_research_live_readiness(
+                    MainOrchestrator(root), args.task_id, effective, policy,
+                    config_source=config_source,
+                    receipt=receipt, trust_policy=trust)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-dispatch-audit":
@@ -929,7 +963,8 @@ def main(argv=None):
                      "Super/Optimization Simulation requires explicit Universe",
                      "Dataset, Category and PPA apply only to Regular",
                      "Agent Simulation manifest not ready;",
-                     "external manifest conflicts with Agent-pinned")):
+                     "external manifest conflicts with Agent-pinned",
+                     "research receipt and issuer trust policy must be paired")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
