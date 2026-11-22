@@ -707,9 +707,6 @@ def main(argv=None):
                         # Pin the Universe here, not during later staging.
                         request["universe"] = _constraint(
                             args.universe, fixed_scope.get("universe"), "Universe")
-                        if not request["universe"]:
-                            raise OrchestrationError(
-                                "Super/Optimization Simulation requires explicit Universe")
                         if not request["region"]:
                             raise OrchestrationError("Region is required")
                         if args.workflow == "optimization":
