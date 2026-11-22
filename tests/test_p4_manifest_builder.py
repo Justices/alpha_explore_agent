@@ -254,6 +254,35 @@ class AutoManifestCliTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["status"], "GENERATED_LOCAL_NOT_AUTHORIZED")
 
+        # An old external manifest cannot override the one the Agent pinned.
+        source = read_generated_manifest(MainOrchestrator(self.root), task_id)
+        source["request"]["selection"] = "rank(tampered_expression)"
+        override = self.root / "conflicting-manifest.json"
+        override.write_text(json.dumps(source), encoding="utf-8")
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        code, out, err = self.call([
+            "orchestration-scope-issuer-request", task_id,
+            "--manifest", str(override)])
+        self.assertEqual(code, 2)
+        self.assertEqual(out, "")
+        self.assertIn("conflicts with Agent-pinned", err)
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
+        receipt = self.root / "untrusted-scope-receipt.json"
+        receipt.write_text(json.dumps({"claims": {}, "signature": "invalid"}),
+                           encoding="utf-8")
+        for cmd in ("orchestration-simulation-scope-check",
+                    "orchestration-simulation-stage"):
+            with self.subTest(command=cmd):
+                code, out, err = self.call([
+                    cmd, task_id, "--receipt", str(receipt),
+                    "--manifest", str(override)])
+                self.assertEqual(code, 2)
+                self.assertEqual(out, "")
+                self.assertIn("conflicts with Agent-pinned", err)
+        self.assertIsNone(
+            MainOrchestrator(self.root).load(task_id).get("research_identity"))
+
 
 if __name__ == "__main__":
     unittest.main()
