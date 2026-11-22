@@ -61,6 +61,47 @@ class ReleaseGateOfflineTests(unittest.TestCase):
         self.assertEqual(before, sorted(str(x) for x in self.root.rglob("*")),
                          "release inspection must not write even a lock")
 
+    def test_p4_12_unstaged_fresh_super_is_preparation_not_reconciliation(self):
+        before = sorted(str(x) for x in self.root.rglob("*"))
+        with (patch("alpha_research.integrations.brain.gateway.Gateway",
+                    side_effect=AssertionError("recovery inspection cannot contact BRAIN")),
+              patch("alpha_research.integrations.model.build_model_client",
+                    side_effect=AssertionError("recovery inspection cannot call a model"))):
+            report = inspect_production_release_gate(
+                self.runner, self.super["task_id"], {}, _POLICY,
+                config_source="builtin_offline_defaults")
+        recovery = report["components"]["simulation_recovery"]
+        self.assertEqual(recovery["status"], "AWAITING_OFFLINE_STAGING")
+        self.assertEqual(recovery["facts"]["intent_status"], "NOT_CREATED")
+        self.assertIn("SIMULATION_INTENT_NOT_STAGED", recovery["blockers"])
+        self.assertNotIn("INTENT_MISSING_OR_SYMLINKED", recovery["blockers"])
+        self.assertEqual(report["status"], "PRODUCTION_BLOCKED")
+        self.assertFalse(report["production_authorized"])
+        self.assertFalse(recovery["permission_to_dispatch"])
+        self.assertFalse(recovery["automatic_retry_allowed"])
+        self.assertEqual(before, sorted(str(x) for x in self.root.rglob("*")))
+
+    def test_p4_12_unexpected_intent_requires_reconciliation_not_preparation(self):
+        path = (self.root / "state" / "research_v1_1" /
+                "simulation_attempt_admission" / "intents" /
+                (self.super["task_id"] + ".intent.json"))
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"status":"POSTING"}', encoding="utf-8")
+        from alpha_research.orchestration.simulation_recovery_audit import (
+            inspect_simulation_recovery_evidence,
+        )
+        report = inspect_simulation_recovery_evidence(
+            self.runner, self.super["task_id"], _POLICY)
+        self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("SIMULATION_STAGING_RECONCILIATION_REQUIRED",
+                      report["blockers"])
+        self.assertFalse(report["permission_to_dispatch"])
+        release = inspect_production_release_gate(
+            self.runner, self.super["task_id"], {}, _POLICY,
+            config_source="builtin_offline_defaults")
+        self.assertEqual(release["status"], "RECONCILIATION_BLOCKED")
+        self.assertFalse(release["production_authorized"])
+
     def test_regular_alpha_production_is_independently_disabled(self):
         regular = self.runner.create(
             "regular", {"objective": "offline", "region": "USA", "delay": 1})
