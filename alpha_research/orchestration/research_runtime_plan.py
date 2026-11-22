@@ -16,6 +16,9 @@ from alpha_research.orchestration.research_grant_audit import (
 from alpha_research.orchestration.research_model_cost_boundary import (
     inspect_model_request_cost,
 )
+from alpha_research.orchestration.research_global_consumer import (
+    verify_global_consumption_ack,
+)
 from alpha_research.orchestration.research_only_admission import (
     verify_research_grant,
 )
@@ -34,6 +37,7 @@ def inspect_research_runtime_plan(orchestrator, task_id, model_config,
                                   governance_policy, *, receipt=None,
                                   trust_policy=None,
                                   input_tokens=None, max_output_tokens=None,
+                                  global_ack=None, consumer_trust=None,
                                   now=None):
     """Read-only composite readiness; full local receipt binding, always NO LIVE."""
     task = orchestrator.load(task_id)
@@ -42,6 +46,10 @@ def inspect_research_runtime_plan(orchestrator, task_id, model_config,
     blockers = list(_EXTERNAL_BLOCKERS)
     signed = None
     model_request = None
+    global_verification = None
+    if (global_ack is None) != (consumer_trust is None):
+        raise OrchestrationError(
+            "global consumption ACK and consumer trust must be paired")
     if (receipt is None) != (trust_policy is None):
         raise OrchestrationError("research receipt and trust must be supplied together")
     if receipt is None:
@@ -61,6 +69,18 @@ def inspect_research_runtime_plan(orchestrator, task_id, model_config,
                 max_output_tokens=max_output_tokens, now=now)
             if model_request["receipt_sha256"] != signed["receipt_sha256"]:
                 raise OrchestrationError("model price and signed receipt binding drift")
+    if global_ack is not None:
+        if receipt is None or trust_policy is None:
+            raise OrchestrationError(
+                "global consumption ACK requires signed research grant and trust")
+        global_verification = verify_global_consumption_ack(
+            orchestrator, task_id, model_config, governance_policy,
+            receipt, trust_policy, global_ack, consumer_trust, now=now)
+        if global_verification["grant_id"] != signed["grant_id"]:
+            raise OrchestrationError("global research ACK not bound to signed Task grant")
+        # Even a verified local signature is not proof of independent issuer
+        # custody or globally atomic remote consumption.
+        blockers.append("RESEARCH_GLOBAL_ACK_NOT_INDEPENDENTLY_ATTESTED")
     if local_claim["status"] != "RESERVED_RESEARCH_GRANT_AUDIT_ONLY":
         blockers.append("RESEARCH_GRANT_NOT_LOCALLY_AUDITED")
         if local_claim["status"] == "RECONCILIATION_REQUIRED":
@@ -85,6 +105,7 @@ def inspect_research_runtime_plan(orchestrator, task_id, model_config,
         "local_claim": local_claim,
         "signed_receipt": signed,
         "model_request_cost": model_request,
+        "global_consumption_ack_audit": global_verification,
         "blockers": sorted(set(blockers)),
         "external_consumer_attested": False,
         "model_hard_cost_enforced": False,
