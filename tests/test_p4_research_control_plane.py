@@ -141,6 +141,99 @@ class ResearchControlPlaneTests(unittest.TestCase):
         self.assertFalse(summary["automatic_retry_allowed"])
         self.assertEqual(self.runner.load(task_id)["budget"]["used"], 0)
 
+    def test_manifest_without_verified_model_chain_is_not_authorization_ready(self):
+        task_id = self.fresh()
+        # A separately pinned artifact can exist without a completed Agent
+        # journal; the aggregate must not mistake it for trusted readiness.
+        stub = {
+            "schema_version": 1, "task_id": task_id,
+            "status": "GENERATED_LOCAL_NOT_AUTHORIZED",
+            "permission_to_dispatch": False,
+        }
+        with patch(
+            "alpha_research.orchestration.research_control_plane.inspect_generated_manifest",
+            return_value=stub,
+        ):
+            report = self.summary(task_id)
+        self.assertEqual(report["status"],
+                         "RESEARCH_OUTPUT_NOT_READY_LIVE_BLOCKED")
+        self.assertEqual(report["next_required"],
+                         "VERIFY_RESEARCH_PREPARATION_CHAIN")
+        self.assertFalse(report["permission_to_dispatch"])
+
+    def test_orphan_completed_model_attempt_requires_reconciliation(self):
+        task_id = self.fresh()
+        stub = {
+            "schema_version": 1, "task_id": task_id,
+            "status": "MODEL_MOCK_COMPLETED",
+            "permission_to_dispatch": False,
+        }
+        with patch(
+            "alpha_research.orchestration.research_control_plane.inspect_runtime_attempt",
+            return_value=stub,
+        ):
+            report = self.summary(task_id)
+        self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("model_attempt", report["reconciliation_components"])
+
+    def test_terminal_preparation_without_model_and_manifest_fails_closed(self):
+        task_id = self.fresh()
+        stub = {
+            "schema_version": 1, "task_id": task_id,
+            "status": "RESEARCH_PREPARED_OFFLINE",
+            "permission_to_dispatch": False,
+        }
+        with patch(
+            "alpha_research.orchestration.research_control_plane.inspect_research_preparation",
+            return_value=stub,
+        ):
+            report = self.summary(task_id)
+        self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("research_preparation", report["reconciliation_components"])
+
+    def test_unrecognized_or_cross_task_component_verdict_fails_closed(self):
+        task_id = self.fresh()
+        for status, claimed_task_id in (
+            ("UNEXPECTED_READY", task_id),
+            ("NOT_RESERVED", "0" * 32),
+            ("NOT_RESERVED", task_id),
+        ):
+            with self.subTest(status=status, task_id=claimed_task_id):
+                fake = {
+                    "schema_version": True if claimed_task_id == task_id
+                    and status == "NOT_RESERVED" else 1,
+                    "task_id": claimed_task_id,
+                    "status": status,
+                    "permission_to_dispatch": False,
+                }
+                with patch(
+                    "alpha_research.orchestration.research_control_plane.inspect_research_grant_claim",
+                    return_value=fake,
+                ):
+                    report = self.summary(task_id)
+                self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+                self.assertIn("grant_audit", report["reconciliation_components"])
+
+    def test_live_plan_must_prove_negative_permission_and_scope(self):
+        task_id = self.fresh()
+        for claimed_task_id, permission in ((task_id, True), ("f" * 32, False)):
+            with self.subTest(claimed_task_id=claimed_task_id, permission=permission):
+                fake = {
+                    "schema_version": 1, "task_id": claimed_task_id,
+                    "status": "RESEARCH_RUNTIME_LIVE_BLOCKED",
+                    "blockers": ["EXTERNAL_APPROVAL_REQUIRED"],
+                    "permission_to_dispatch": permission,
+                    "live_research_authorized": False,
+                }
+                with patch(
+                    "alpha_research.orchestration.research_control_plane.inspect_research_runtime_plan",
+                    return_value=fake,
+                ):
+                    report = self.summary(task_id)
+                self.assertEqual(report["status"], "RECONCILIATION_REQUIRED")
+                self.assertIn("live_plan", report["reconciliation_components"])
+                self.assertFalse(report["permission_to_dispatch"])
+
     def test_cli_one_command_never_builds_gateway_or_model(self):
         prefix = [
             "--state-root", str(self.root),
