@@ -25,7 +25,7 @@ from alpha_research.state.fingerprint import fingerprint_json
 from alpha_research.state.sealed import is_sealed_state, write_sealed_json
 
 _RUNTIME = ContextVar("offline_research_runtime", default=None)
-_HEX32 = re.compile(r"[0-9a-f]{32}\\Z")
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _FINAL = "MODEL_MOCK_COMPLETED"
 
 
