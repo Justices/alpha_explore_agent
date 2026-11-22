@@ -407,6 +407,18 @@ class ResearchGrantCliTests(unittest.TestCase):
                          "AWAITING_INDEPENDENT_RESEARCH_APPROVAL")
         self.assertFalse(request["permission_to_dispatch"])
         code, out, err = self.call([
+            "orchestration-research-grant-audit-status", task_id])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["status"], "NOT_RESERVED")
+        code, out, err = self.call([
+            "orchestration-research-catalog-contract", task_id])
+        self.assertEqual(code, 0, err)
+        contract = json.loads(out)
+        self.assertEqual(contract["status"],
+                         "CATALOG_PROTOCOL_VALIDATED_NO_LIVE_DRIVER")
+        self.assertNotIn("get_alpha_details", contract["allowed_read_actions"])
+        self.assertFalse(contract["driver_authorized"])
+        code, out, err = self.call([
             "orchestration-research-live-readiness", task_id])
         self.assertEqual(code, 0, err)
         report = json.loads(out)
