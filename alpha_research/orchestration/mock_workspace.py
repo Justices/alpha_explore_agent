@@ -21,6 +21,7 @@ EVIDENCE_FOLDERS = (
     "platform_read_evidence", "generated_simulation_manifests",
     "simulation_attempt_admission", "operator_consent_audit",
     "pre_dispatch_escrow", "research_preparation",
+    "research_runtime_attempts",
 )
 
 
