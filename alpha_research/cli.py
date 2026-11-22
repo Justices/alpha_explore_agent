@@ -864,6 +864,10 @@ def main(argv=None):
                     inspect_execution_proposal(runner, args.task_id)
                     inspect_execution_identity(
                         runner, args.task_id, effective, policy)
+                    stop = root / "state" / "stop.flag"
+                    if stop.exists() or stop.is_symlink():
+                        raise OrchestrationError(
+                            "research preparation blocked by stop signal")
                     inspect_mock_workspace(root)
                     claim_mock_workspace(root)
                     result = prepare_offline_research(runner, args.task_id)
@@ -910,7 +914,8 @@ def main(argv=None):
                 else:
                     result = inspect_task_recovery_preflight(
                         runner, args.task_id, effective, policy)
-        except (OSError, ValueError, TypeError, KeyError, WriterLockError) as exc:
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError,
+                WriterLockError) as exc:
             # Show safe configuration-path diagnostics without echoing credentials,
             # model backend payloads or provider errors.
             if isinstance(exc, FileNotFoundError):
