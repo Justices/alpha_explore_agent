@@ -222,6 +222,17 @@ def verify_research_grant(orchestrator, task_id, model_config,
             or set(receipt["claims"]) != _CLAIMS):
         raise OrchestrationError("research grant receipt schema invalid")
     claims = receipt["claims"]
+    # Python bool compares equal to integer 1/0. The signed schema must never
+    # admit that ambiguity for budgets, scope, or the prohibited operations.
+    if (type(claims["schema_version"]) is not int
+            or type(claims["max_model_calls"]) is not int
+            or type(claims["max_reported_tokens"]) is not int
+            or not isinstance(claims["scope"], dict)
+            or set(claims["scope"]) != set(_SCOPE)
+            or type(claims["scope"]["delay"]) is not int
+            or claims["allow_brain_simulation"] is not False
+            or claims["allow_alpha_submission"] is not False):
+        raise OrchestrationError("research grant typed immutable schema invalid")
     if any(claims.get(k) != v for k, v in fixed.items()):
         raise OrchestrationError("research grant not bound to prepared Task/role/scope")
     for field in ("grant_id", "operator_approval_id"):
