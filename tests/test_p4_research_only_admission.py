@@ -182,7 +182,7 @@ class ResearchOnlyGrantTests(unittest.TestCase):
             {"max_total_cost_usd_micros": 1000},
             {"max_total_cost_usd_micros": True},
             {"max_total_cost_usd_micros": 100_000_001},
-            {"max_input_tokens_per_call": 2000},
+            {"max_input_tokens_per_call": 2001},
         ]
         for update in mutations:
             with self.subTest(update=update):
