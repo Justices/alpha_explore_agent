@@ -107,6 +107,71 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.18 — Connected Research Runtime Adapter (isolated offline integration)
+
+P4.18 connects the **existing Super/Optimization planning workflows** to
+an explicit, non-executable research runtime adapter. During
+`orchestration-research-prepare <TEST_TASK_ID> --mode mock` the runtime:
+
+1. Requires a permanently marked, isolated `OFFLINE_DOMAIN_MOCK_ONLY`
+   workspace and **exact** built-in `DomainMockGateway` /
+   `DomainMockModel` types (not a real SDK, subprocess or user-supplied
+   adapter).
+2. Routes Catalog reads through the exact P4.17 scoped allowlist before
+   reaching the in-memory scripted gateway. `get_user_alphas` is limited
+   to submitted OS-stage records, with page size 1–100 and bounded offsets.
+   Optimization source Alpha details must match the pinned Alpha ID.
+3. Handles `set_case` **locally** for research bookkeeping. It is *not*
+   included in the BRAIN read-only wire contract, nor passed to the
+   underlying scripted catalog transport.
+4. Writes a sealed `MODEL_CALL_MAY_HAVE_STARTED` attempt **before** the
+   scripted `DecisionRecorder` returns its proposal. A completed attempt
+   moves to `MODEL_MOCK_COMPLETED` with response SHA256. Missing, unknown,
+   corrupted or cross-task evidence requires reconciliation and cannot be
+   automatically replayed. This audit is intentionally **not** a provider
+   billing receipt or remote outcome attestation.
+5. Verifies model attempt evidence and the internal Manifest together
+   before marking the existing preparation journal
+   `RESEARCH_PREPARED_OFFLINE`. The Task is still `CREATED`; the
+   Simulation budget stays `used=0`, `reserved=0`, and there is
+   no Simulation Intent, paid model request or BRAIN POST.
+
+The read-only model attempt status is available without any Manifest file:
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-runtime-status <TEST_TASK_ID>
+```
+
+P4.18 also combines the *distinct* non-mock approval contracts in a
+single read-only runtime plan: exact Task/Model/Policy/signed receipt,
+locally reserved Grant ID and operator approval ID, Catalog scope and
+per-model-request signed USD-micro cost envelope must all match.
+A missing, corrupt, mismatched or re-used receipt cannot be promoted to
+an executable plan.
+
+```sh
+# No issuer file required for a negative readiness report
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-runtime-plan <TASK_ID>
+
+# Optional independently issued research-only receipt (AUDIT ONLY)
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-runtime-plan <TASK_ID> \\
+  --receipt /secure/research-grant.json \\
+  --trust-policy /secure/research-trust.json \\
+  --input-tokens 700 --max-output-tokens 900
+```
+
+Even with perfect local signatures, this report remains
+`RESEARCH_RUNTIME_LIVE_BLOCKED`. The system does not have an
+independently attested global consumer, a production read-only Catalog
+driver, an SDK-enforced hard output/token/USD cap, verified current tariffs,
+or remote outcome recovery. The *offline* adapter cannot be switched into
+production by flags or a local receipt. Simulations and Alpha submissions
+remain independently disabled. The user's real BRAIN-read-evidence Task
+must **not** be used as a synthetic mock workspace.
+
 ## P4.17 — Local claim journal, exact Catalog read policy, request cost preflight
 
 These interfaces address **non-executable** parts of research preparation
