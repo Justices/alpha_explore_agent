@@ -26,6 +26,14 @@ _COMMON = frozenset({
 _TRUST = {"schema_version", "issuers", "revoked_evidence"}
 
 
+def _exact_json_equal(actual, expected):
+    try:
+        return (type(actual) is type(expected)
+                and canonical_json_bytes(actual) == canonical_json_bytes(expected))
+    except (TypeError, ValueError, OverflowError):
+        return False
+
+
 def inspect_signed_research_evidence(evidence, trust, *, domain, operation,
                                      fields, expected, now=None):
     """Validate an exact signed schema and immutable, typed claim binding.
@@ -55,7 +63,7 @@ def inspect_signed_research_evidence(evidence, trust, *, domain, operation,
             or not isinstance(claims["research_receipt_sha256"], str)
             or not _HEX64.fullmatch(claims["research_receipt_sha256"])):
         raise OrchestrationError("external research evidence identity invalid")
-    if any(type(claims[k]) is not type(v) or claims[k] != v
+    if any(not _exact_json_equal(claims[k], v)
            for k, v in expected.items()):
         raise OrchestrationError("external research evidence Task or receipt binding drift")
     for name in ("issuer_id", "key_id"):
@@ -101,6 +109,7 @@ def inspect_signed_research_evidence(evidence, trust, *, domain, operation,
         "schema_version": 1,
         "task_id": claims["task_id"],
         "evidence_id": claims["evidence_id"],
+        "research_receipt_sha256": claims["research_receipt_sha256"],
         "evidence_sha256": fingerprint_json(evidence),
         "status": "EXTERNAL_SIGNATURE_VERIFIED_AUDIT_ONLY",
         "independent_key_custody_attested": False,
