@@ -62,6 +62,9 @@ from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.preflight import local_preflight
 from alpha_research.orchestration.readonly_probe import run_readonly_probe
+from alpha_research.orchestration.platform_read_evidence import (
+    record_platform_read_evidence, inspect_platform_read_evidence,
+)
 from alpha_research.progress import write_progress
 
 
@@ -92,6 +95,12 @@ def main(argv=None):
     brain_read.add_argument("--universe", required=True)
     brain_read.add_argument("--allow-brain-read", action="store_true",
                             help="authorize authentication and two read-only BRAIN calls")
+    brain_read.add_argument("--record-evidence", action="store_true",
+                            help="append local read result evidence; NO live authorization")
+    read_evidence = sub.add_parser(
+        "brain-read-evidence-status",
+        help="inspect local read probe evidence; never contact BRAIN")
+    read_evidence.add_argument("record_id")
     models = sub.add_parser(
         "models", help="inspect registered models or explicitly probe one model")
     models.add_argument("models_action", choices=(
@@ -377,6 +386,10 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "brain-read-evidence-status":
+        result = inspect_platform_read_evidence(root, args.record_id)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0 if result["local_integrity_verified"] else 2
     if args.command == "brain-readonly-check":
         # This command is separate from domain Dispatch and never constructs
         # a model client, research agent or simulation authorization.
@@ -410,6 +423,10 @@ def main(argv=None):
             result = run_readonly_probe(
                 gateway, region=args.region, delay=args.delay,
                 universe=args.universe)
+            if args.record_evidence and result["status"] == "READ_ONLY_SCOPE_VERIFIED":
+                receipt = record_platform_read_evidence(root, result)
+                result = {**result, "evidence_record_id": receipt["record_id"],
+                          "evidence_status": receipt["status"]}
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0 if result["status"] == "READ_ONLY_SCOPE_VERIFIED" else 2
         except Exception as exc:
