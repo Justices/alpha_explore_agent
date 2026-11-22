@@ -139,6 +139,7 @@ def mock_domain_boundary(region):
             result = super().complete_json(task, context, **kwargs)
             if task == "construct_super":
                 result["settings"]["region"] = region
+                result["settings"]["instrument_type"] = "EQUITY"
             return result
 
     with ExitStack() as stack:
