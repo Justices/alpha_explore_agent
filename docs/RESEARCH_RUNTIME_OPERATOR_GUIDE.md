@@ -1,4 +1,4 @@
-# Research Runtime — Unified Operator Guide (P4.19–P4.20)
+# Research Runtime — Unified Operator Guide (P4.19–P4.21)
 
 This is the **current operational entrypoint** for orchestrated Super Alpha
 construction and Optimization. Earlier P4.x documents describe incremental
@@ -32,6 +32,27 @@ If any component needs reconciliation, the overall status is
 `RECONCILIATION_REQUIRED`. The command never silently clears, replaces,
 replays or consumes any journal or receipt. A valid Manifest does not
 authorize Simulation; it is an immutable snapshot of a validated candidate.
+
+## P4.21 — A verified evidence chain, not just an existing file
+
+The aggregate reports `AWAITING_INDEPENDENT_RESEARCH_AUTHORIZATION` **only**
+when all three independent observations are consistent:
+
+- Research coordinator: `RESEARCH_PREPARED_OFFLINE`
+- Model attempt: `MODEL_MOCK_COMPLETED`
+- Immutable Manifest: `GENERATED_LOCAL_NOT_AUTHORIZED`
+
+A Manifest without a completed preparation journal is still
+`RESEARCH_OUTPUT_NOT_READY_LIVE_BLOCKED`, with
+`next_required=VERIFY_RESEARCH_PREPARATION_CHAIN`. A terminal preparation
+without the required model/Manifest evidence, or an orphaned completed
+model attempt, requires manual reconciliation. Do not replay an ambiguous
+or already completed paid model call to repair an incomplete journal.
+
+Every component verdict must match the current Task ID, schema and negative
+permission assertion. Unknown states, mismatched identities and invalid
+live-plan claims fail closed to `RECONCILIATION_REQUIRED`. These checks are
+read-only and do not create additional authorization or issue new grants.
 
 ## Run a complete local research rehearsal
 
