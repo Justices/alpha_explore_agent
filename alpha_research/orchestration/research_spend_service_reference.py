@@ -4,11 +4,15 @@ The service must be deployed and provisioned independently; the research
 application does NOT instantiate it. Atomic reservations are held through
 uncertain outcomes. No caller-supplied report can increase signed ceilings.
 """
+import json
 import sqlite3
+from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
 
 from alpha_research.orchestration.engine import OrchestrationError
+from alpha_research.orchestration.research_only_admission import _utc
+from alpha_research.state.fingerprint import fingerprint_json
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS research_model_spend_limits (
@@ -90,7 +94,8 @@ class ReferenceExternalSpendLedger:
             raise OrchestrationError(
                 "external spend ledger limits differ from persisted policy")
 
-    def reserve_once(self, *, task_id, attempt_id, worst_case_usd_micros):
+    def reserve_once(self, *, task_id, attempt_id, worst_case_usd_micros,
+                     expected_grant_ack_sha256=None):
         if (not isinstance(task_id, str) or len(task_id) != 32
                 or any(c not in "0123456789abcdef" for c in task_id)
                 or not isinstance(attempt_id, str) or len(attempt_id) != 32
@@ -103,6 +108,31 @@ class ReferenceExternalSpendLedger:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 self._verify_limits(db)
+                if expected_grant_ack_sha256 is not None:
+                    if (not isinstance(expected_grant_ack_sha256, str)
+                            or len(expected_grant_ack_sha256) != 64
+                            or any(c not in "0123456789abcdef"
+                                   for c in expected_grant_ack_sha256)):
+                        raise OrchestrationError("spend reservation ACK digest invalid")
+                    grant = db.execute(
+                        "SELECT receipt_sha256,receipt_json,ack_json"
+                        " FROM research_grant_consumptions WHERE grant_id=?",
+                        (self.grant_id,)).fetchone()
+                    revoked = db.execute(
+                        "SELECT 1 FROM research_grant_revocations WHERE grant_id=?",
+                        (self.grant_id,)).fetchone()
+                    if not grant or revoked or not grant[2]:
+                        raise OrchestrationError("grant not consumed or revoked")
+                    ack = json.loads(grant[2])
+                    receipt = json.loads(grant[1])
+                    if (fingerprint_json(ack) != expected_grant_ack_sha256
+                            or fingerprint_json(receipt) != grant[0]
+                            or ack["claims"]["task_id"] != task_id
+                            or ack["claims"]["grant_id"] != self.grant_id
+                            or ack["claims"]["research_receipt_sha256"] != grant[0]
+                            or _utc(ack["claims"]["expires_at"])
+                               <= datetime.now(timezone.utc)):
+                        raise OrchestrationError("grant ACK expired or scope mismatch")
                 row = db.execute(
                     "SELECT COUNT(*), COALESCE(SUM(reserved_usd_micros),0)"
                     " FROM research_model_spend WHERE grant_id=?",
