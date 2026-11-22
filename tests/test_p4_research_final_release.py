@@ -326,7 +326,8 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 result = inspect_research_remote_reconciliation(
                     self.task_id, self.receipt, self.ack, "f" * 32,
                     evidence, trust, max_input_tokens=1000,
-                    max_output_tokens=1000, now=self.now)
+                    max_output_tokens=1000,
+                    max_total_cost_usd_micros=15_000, now=self.now)
                 self.assertEqual(result["status"], expected)
                 self.assertFalse(result["safe_to_retry"])
                 self.assertFalse(result["permission_to_dispatch"])
@@ -337,12 +338,15 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             inspect_research_remote_reconciliation(
                 self.task_id, self.receipt, self.ack, "a" * 32,
                 evidence, trust, max_input_tokens=1000,
-                max_output_tokens=1000, now=self.now)
+                max_output_tokens=1000,
+                    max_total_cost_usd_micros=15_000, now=self.now)
         with self.assertRaisesRegex(OrchestrationError, "expired"):
             inspect_research_remote_reconciliation(
                 self.task_id, self.receipt, self.ack, "f" * 32,
                 evidence, trust, max_input_tokens=1000,
-                max_output_tokens=1000, now=self.now + timedelta(minutes=10))
+                max_output_tokens=1000,
+                    max_total_cost_usd_micros=15_000,
+                    now=self.now + timedelta(minutes=10))
 
     def test_p4_29_integrated_canary_stays_blocked_even_with_four_audits(self):
         before = sorted(str(p) for p in self.root.rglob("*"))
@@ -370,7 +374,8 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         outcome = inspect_research_remote_reconciliation(
             self.task_id, self.receipt, self.ack, "f" * 32,
             readback_evidence, readback_trust,
-            max_input_tokens=1000, max_output_tokens=1000, now=self.now)
+            max_input_tokens=1000, max_output_tokens=1000,
+                    max_total_cost_usd_micros=15_000, now=self.now)
         components = {
             "grant_ledger": ledger, "driver_session": driver,
             "model_pricing": price, "remote_reconciliation": outcome,
