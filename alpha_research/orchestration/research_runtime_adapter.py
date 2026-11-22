@@ -18,6 +18,7 @@ from alpha_research.orchestration.domain_mock import (
 )
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.mock_workspace import is_mock_workspace
+from alpha_research.orchestration.research_task_contract import is_fresh_research_task
 from alpha_research.orchestration.research_catalog_protocol import (
     research_catalog_request_allowed,
 )
@@ -29,15 +30,6 @@ _RUNTIME = ContextVar("offline_research_runtime", default=None)
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _FINAL = "MODEL_MOCK_COMPLETED"
 _TASK_MODEL_ACTION = {"super": "construct_super", "optimization": "optimize_alpha"}
-
-
-def _fresh_task(task):
-    return (task.get("workflow") in _TASK_MODEL_ACTION
-            and task.get("status") == "CREATED"
-            and task.get("budget") == {"limit": 1, "used": 0, "reserved": 0}
-            and task.get("checkpoints") == {}
-            and task.get("research_identity") is None
-            and task.get("recovery_target") is None)
 
 
 def active_offline_runtime():
@@ -179,7 +171,7 @@ class OfflineResearchRuntimeAdapter:
         if type(model) is not DomainMockModel:
             raise OrchestrationError("offline runtime refuses a real model client")
         task = orchestrator.load(task_id)
-        if not _fresh_task(task):
+        if not is_fresh_research_task(task):
             raise OrchestrationError(
                 "offline research runtime requires an unexecuted scoped Task")
         policy = validate_policy(governance_policy)
