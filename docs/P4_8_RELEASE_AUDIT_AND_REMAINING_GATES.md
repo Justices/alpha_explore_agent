@@ -63,6 +63,36 @@ a model/Simulation/Alpha authorization. Any later external issuer,
 cost limits, gateway grants and platform readback requirements remain
 mandatory. `--record-evidence` does not expand the command allowlist.
 
+## P4.10 — Bind local read evidence to an exact research Task
+
+After P4.9 records a **local** read observation, the negative-only release
+audit can optionally compare its recorded `region/delay/universe` with the
+Task's exact scoped request or a separately verified, staged and still
+`PREPARED` Simulation Intent:
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-release-gate <TASK_ID> \\
+  --platform-read-evidence-id <EVIDENCE_RECORD_ID>
+```
+
+The record must exist in the **same state root** as the Task (select the
+same `--state-root` when needed). This command reads only and never contacts
+BRAIN or any model provider. It requires local-checksum integrity, an
+observation timestamp no older than 24 hours, and an exact scope match.
+For Super/Optimization, an omitted Universe in the prepared Task is never
+silently inferred from a probe: it must come from a separately staged
+Simulation Intent. If staging is missing, invalid or cannot be reconciled,
+the audit remains blocked.
+
+`LOCAL_SCOPE_MATCH_UNATTESTED` means ONLY that two locally persisted
+scope descriptions match. The report explicitly retains
+`PLATFORM_READ_LOCAL_ONLY_NOT_INDEPENDENTLY_ATTESTED` plus every actual
+production authorization, spending, gateway and recovery blocker.
+Missing, stale, mismatched and modified records never grant permissions.
+This is **not** a remote BRAIN account attestation or proof of issuer
+control. No change to the independently disabled production adapter.
+
 ## Non-executable preparation CLI (mutates audit files only)
 
 The CLI now exposes the complete **offline** P4.7.2/3 preparation sequence
