@@ -107,6 +107,64 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.17 — Local claim journal, exact Catalog read policy, request cost preflight
+
+These interfaces address **non-executable** parts of research preparation
+runtime safety; they do **not** authorize real BRAIN reads or paid LLM calls.
+
+**Claim audit:** `research_grant_audit.py` has a single, atomically written,
+integrity-sealed claim journal protected by a cross-process OS lock. It
+verifies the short-lived research-only Ed25519 receipt again inside the lock
+before recording a unique `task_id`, `grant_id` and
+`operator_approval_id`. A duplicate claim fails; a corrupted or symlinked
+journal requires manual reconciliation. No grant can be *dispatched* as a
+result of this local claim. The local journal is not a remotely trusted
+global consumer: a separate independently controlled single-use consumer
+is still required across machines.
+
+```sh
+# Reads metadata only (does not require a grant file)
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-grant-audit-status <TASK_ID>
+
+# Optional audit-only reservation of a separately signed receipt
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-grant-audit-reserve <TASK_ID> \\
+  --receipt /secure/research-consent.json \\
+  --trust-policy /secure/trusted-research-issuers.json
+```
+
+**Catalog scope:** `research_catalog_protocol.py` positively lists only
+read commands and requires exact, typed Region/Delay/Universe/EQUITY
+parameters; DataField and source-Alpha identifiers are separately validated.
+Simulation POST, resume, tagging, `set_case`, mutation claims, extra request
+parameters and cross-scope reads fail. The policy is currently a pure,
+read-only contract. The existing Gateway/driver do **not** gain a new live
+Catalog mode; the separately authorized, driver-enforced read profile and
+read-only case/snapshot handling still have to be implemented.
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-catalog-contract <TASK_ID>
+```
+
+**Paid-model cost:** `research_model_cost_boundary.py` re-verifies the
+research-only signed receipt for each *proposed* model request and checks
+strict integer input/output token ceilings and the upper USD-micro charge.
+Its result is always `MODEL_REQUEST_ENVELOPE_VALIDATED_NOT_EXECUTABLE`.
+The actual model SDK has not been integrated with hard maximum output tokens,
+provider-exact tokenization, verified tariff provenance, global spend
+reservations or trusted invoice/readback recovery. An **estimate** must
+never be interpreted as a hard financial ceiling.
+
+All new interfaces are offline-testable, contain no actual signing keys
+outside ephemeral test fixtures and have `permission_to_dispatch=false`.
+Only the dedicated mock preparation mode can generate a candidate today.
+These are prerequisites toward a live, read-only Agent, **not** a switch
+to live execution. `RESEARCH_LIVE_BLOCKED` and `PRODUCTION_BLOCKED`
+remain binding until independent external admission and provider controls
+are deployed, reviewed and expressly approved.
+
 ## P4.16 — Independently scoped read-only research approval and cost envelope
 
 The **research preparation** operation must never borrow an existing
