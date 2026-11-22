@@ -103,6 +103,153 @@ class ResearchOnlyGrantTests(unittest.TestCase):
             now=self.now,
         )
 
+    def test_p4_19_global_consumer_ack_signature_is_only_an_audit(self):
+        from alpha_research.orchestration.research_global_consumer import (
+            _CONTEXT as GLOBAL_CONTEXT,
+            build_global_consumption_request, verify_global_consumption_ack,
+            consume_global_research_grant,
+        )
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        grant = self.receipt()
+        handoff = build_global_consumption_request(
+            self.runner, self.id, self.model, self.policy,
+            grant, self.trust, now=self.now)
+        self.assertEqual(handoff["status"], "AWAITING_INDEPENDENT_GLOBAL_CONSUMER")
+        self.assertEqual(handoff["fixed_claims"]["grant_id"], "a" * 32)
+        self.assertFalse(handoff["model_call_authorized"])
+        self.assertFalse(handoff["global_single_use_attested"])
+        consumer_key = Ed25519PrivateKey.generate()
+        consumer_pub = base64.b64encode(consumer_key.public_key().public_bytes(
+            serialization.Encoding.Raw, serialization.PublicFormat.Raw)).decode()
+        consumer_trust = {
+            "schema_version": 1,
+            "consumers": {
+                "independent-consumer-test": {
+                    "key_id": "consumption-test-key",
+                    "public_key_b64": consumer_pub,
+                    "enabled": True,
+                    "operation": "consume_research_grant_once",
+                }
+            },
+            "revoked_consumptions": [],
+        }
+        claims = {
+            **handoff["fixed_claims"],
+            "consumer_id": "independent-consumer-test",
+            "key_id": "consumption-test-key",
+            "consumption_id": "d" * 32,
+            "ledger_id": "remote-ledger-test",
+            "ledger_sequence": 13,
+            "consumed_at": (self.now - timedelta(seconds=20)).isoformat(),
+            "expires_at": (self.now + timedelta(minutes=1)).isoformat(),
+            "outcome": "CONSUMED_ONCE",
+        }
+        def signed(current):
+            return {
+                "claims": current,
+                "signature": base64.b64encode(consumer_key.sign(
+                    GLOBAL_CONTEXT + canonical_json_bytes(current))).decode(),
+            }
+        def verify(ack, trusted=consumer_trust):
+            return verify_global_consumption_ack(
+                self.runner, self.id, self.model, self.policy,
+                grant, self.trust, ack, trusted, now=self.now)
+        result = verify(signed(claims))
+        self.assertEqual(result["status"],
+                         "GLOBAL_ACK_SIGNATURE_VERIFIED_AUDIT_ONLY")
+        self.assertFalse(result["global_single_use_attested"])
+        self.assertFalse(result["model_call_authorized"])
+        self.assertFalse(result["brain_read_authorized"])
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+        for changed in (
+            {"grant_id": "e" * 32},
+            {"task_id": "f" * 32},
+            {"research_scope_sha256": "f" * 64},
+            {"model_profile_sha256": "f" * 64},
+            {"operator_approval_id": "f" * 32},
+            {"max_total_cost_usd_micros": 15001},
+            {"ledger_sequence": True},
+            {"outcome": "APPROVED_FOR_SIMULATION"},
+            {"consumed_at": (self.now + timedelta(seconds=2)).isoformat()},
+            {"expires_at": (self.now + timedelta(minutes=5)).isoformat()},
+        ):
+            with self.subTest(change=changed):
+                with self.assertRaises(OrchestrationError):
+                    verify(signed({**claims, **changed}))
+        wrong = signed(claims)
+        wrong["signature"] = "invalid"
+        with self.assertRaisesRegex(OrchestrationError, "signature invalid"):
+            verify(wrong)
+        revoked = {**consumer_trust, "revoked_consumptions": ["d" * 32]}
+        with self.assertRaisesRegex(OrchestrationError, "revoked"):
+            verify(signed(claims), revoked)
+        with self.assertRaisesRegex(OrchestrationError, "not configured"):
+            consume_global_research_grant()
+
+    def test_p4_19_openai_sdk_plan_and_provider_usage_audit_never_dispatch(self):
+        from alpha_research.orchestration.research_sdk_boundary import (
+            build_research_sdk_request_plan, inspect_research_sdk_usage,
+            dispatch_paid_research_model,
+        )
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        plan = build_research_sdk_request_plan(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust,
+            task_name="construct_super", declared_input_tokens=700,
+            max_output_tokens=900, now=self.now)
+        self.assertEqual(
+            plan["status"], "SDK_REQUEST_SHAPE_VALIDATED_NOT_EXECUTABLE")
+        self.assertEqual(plan["fixed_sdk_options"]["max_tokens"], 900)
+        self.assertEqual(plan["fixed_sdk_options"]["stream"], False)
+        self.assertEqual(plan["fixed_sdk_options"]["n"], 1)
+        self.assertEqual(
+            set(plan["fixed_sdk_options"]),
+            {"model", "max_tokens", "stream", "n"})
+        self.assertEqual(plan["provider"], "openai_sdk")
+        self.assertEqual(plan["worst_case_request_usd_micros"], 5000)
+        self.assertFalse(plan["provider_tokenizer_attested"])
+        self.assertFalse(plan["model_call_authorized"])
+        self.assertFalse(plan["permission_to_dispatch"])
+        usage = inspect_research_sdk_usage(plan, {
+            "prompt_tokens": 600, "completion_tokens": 800,
+            "total_tokens": 1400})
+        self.assertEqual(
+            usage["status"],
+            "PROVIDER_REPORTED_USAGE_WITHIN_DECLARED_CAPS_AUDIT_ONLY")
+        self.assertFalse(usage["provider_usage_reconciled"])
+        for u, expected in (
+            (None, "PROVIDER_USAGE_UNKNOWN_RECONCILIATION_REQUIRED"),
+            ({"prompt_tokens": 600, "completion_tokens": 800},
+             "PROVIDER_USAGE_UNKNOWN_RECONCILIATION_REQUIRED"),
+            ({"prompt_tokens": 701, "completion_tokens": 800,
+              "total_tokens": 1501}, "PROVIDER_TOKEN_CEILING_VIOLATION"),
+            ({"prompt_tokens": 600, "completion_tokens": 901,
+              "total_tokens": 1501}, "PROVIDER_TOKEN_CEILING_VIOLATION"),
+            ({"prompt_tokens": True, "completion_tokens": 800,
+              "total_tokens": 801},
+             "PROVIDER_USAGE_UNKNOWN_RECONCILIATION_REQUIRED"),
+        ):
+            with self.subTest(usage=u):
+                self.assertEqual(inspect_research_sdk_usage(plan, u)["status"],
+                                 expected)
+        for task_name, in_tokens, out_tokens in (
+            ("optimize_alpha", 700, 900),
+            ("construct_super", 1001, 900),
+            ("construct_super", 700, 1001),
+            ("construct_super", True, 900),
+        ):
+            with self.subTest(task=task_name, tin=in_tokens, tout=out_tokens):
+                with self.assertRaises(OrchestrationError):
+                    build_research_sdk_request_plan(
+                        self.runner, self.id, self.model, self.policy,
+                        self.receipt(), self.trust,
+                        task_name=task_name, declared_input_tokens=in_tokens,
+                        max_output_tokens=out_tokens, now=self.now)
+        with self.assertRaisesRegex(OrchestrationError, "independently attested"):
+            dispatch_paid_research_model()
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
     def test_issuer_request_pins_scope_roles_and_budget_without_credentials(self):
         before = sorted(str(p) for p in self.root.rglob("*"))
         request = build_research_issuer_request(
