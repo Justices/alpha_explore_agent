@@ -579,6 +579,7 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 max_total_cost_usd_micros=7_000,
                 global_max_total_cost_usd_micros=7_000)
         ledger("a" * 32).initialize_schema()
+        ledger("b" * 32).initialize_schema()
         ledger("a" * 32).reserve_once(
             task_id=self.task_id, attempt_id="1" * 32,
             worst_case_usd_micros=4_000)
@@ -590,6 +591,26 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             ledger("b" * 32).snapshot()["global_committed_reservation_usd_micros"],
             4_000)
         self.assertFalse(ledger("b" * 32).snapshot()["permission_to_dispatch"])
+
+
+    def test_p4_27_reopened_ledger_cannot_raise_persisted_caps(self):
+        from alpha_research.orchestration.research_spend_service_reference import (
+            ReferenceExternalSpendLedger,
+        )
+        path = self.root / "persistent-policy.sqlite3"
+        def ledger(grant_cap, global_cap):
+            return ReferenceExternalSpendLedger(
+                path, grant_id="a" * 32, max_model_calls=1,
+                max_total_cost_usd_micros=grant_cap,
+                global_max_total_cost_usd_micros=global_cap)
+        ledger(3_000, 5_000).initialize_schema()
+        with self.assertRaises(OrchestrationError):
+            ledger(10_000, 20_000).initialize_schema()
+        with self.assertRaises(OrchestrationError):
+            ledger(10_000, 20_000).reserve_once(
+                task_id=self.task_id, attempt_id="9" * 32,
+                worst_case_usd_micros=9_000)
+        self.assertEqual(ledger(3_000, 5_000).snapshot()["reserved_attempts"], 0)
 
 
 if __name__ == "__main__":
