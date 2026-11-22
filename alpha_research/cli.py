@@ -61,6 +61,9 @@ from alpha_research.orchestration.research_grant_audit import (
 from alpha_research.orchestration.research_catalog_protocol import (
     inspect_catalog_read_contract,
 )
+from alpha_research.orchestration.research_runtime_adapter import (
+    inspect_runtime_attempt,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -182,6 +185,10 @@ def main(argv=None):
         "orchestration-research-prepare-status",
         help="read-only Agent preparation journal status; no provider calls")
     research_status.add_argument("task_id")
+    runtime_status = sub.add_parser(
+        "orchestration-research-runtime-status",
+        help="read-only scripted model attempt recovery; never starts any provider")
+    runtime_status.add_argument("task_id")
     admission = sub.add_parser(
         "orchestration-admission-audit",
         help="inspect production authorization blockers without provider or BRAIN calls")
@@ -645,6 +652,7 @@ def main(argv=None):
                         "orchestration-domain-mock",
                         "orchestration-research-prepare",
                         "orchestration-research-prepare-status",
+                        "orchestration-research-runtime-status",
                         "orchestration-research-issuer-request",
                         "orchestration-research-live-readiness",
                         "orchestration-research-grant-audit-reserve",
@@ -680,6 +688,11 @@ def main(argv=None):
             effective = prepared["model"]
             if args.command == "orchestration-research-prepare-status":
                 result = inspect_research_preparation(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-runtime-status":
+                result = inspect_runtime_attempt(
                     MainOrchestrator(root), args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
