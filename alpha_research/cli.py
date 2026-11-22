@@ -43,6 +43,9 @@ from alpha_research.orchestration.operator_consent import (
     inspect_consent_reservation, verify_external_consent,
     reserve_consent_for_audit,
 )
+from alpha_research.orchestration.authorization_handoff import (
+    build_scope_issuer_request, build_operator_consent_issuer_request,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -177,6 +180,15 @@ def main(argv=None):
         "orchestration-consent-status",
         help="read-only one-shot operator consent audit status; NEVER grant execution")
     consent_status.add_argument("task_id")
+    scope_handoff = sub.add_parser(
+        "orchestration-scope-issuer-request",
+        help="read-only scope-signature request; does NOT sign or authorize")
+    scope_handoff.add_argument("task_id")
+    scope_handoff.add_argument("--manifest", required=True, type=_path_argument)
+    consent_handoff = sub.add_parser(
+        "orchestration-consent-issuer-request",
+        help="read-only operator approval handoff; requires staged Intent")
+    consent_handoff.add_argument("task_id")
     for command, help_text in (
         ("orchestration-consent-verify",
          "verify external Ed25519 consent evidence without creating authorization"),
@@ -569,6 +581,8 @@ def main(argv=None):
                         "orchestration-consent-status",
                         "orchestration-consent-verify",
                         "orchestration-consent-reserve",
+                        "orchestration-scope-issuer-request",
+                        "orchestration-consent-issuer-request",
                         "orchestration-predispatch-escrow-reserve",
                         "orchestration-predispatch-escrow-status",
                         "orchestration-simulation-recovery-audit",
@@ -605,6 +619,18 @@ def main(argv=None):
             if args.command == "orchestration-predispatch-escrow-reserve":
                 result = reserve_pre_dispatch_escrow(
                     MainOrchestrator(root), args.task_id, policy)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-scope-issuer-request":
+                manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                result = build_scope_issuer_request(
+                    MainOrchestrator(root), args.task_id,
+                    effective, policy, manifest)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-consent-issuer-request":
+                result = build_operator_consent_issuer_request(
+                    MainOrchestrator(root), args.task_id, effective, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command in {"orchestration-consent-verify",
