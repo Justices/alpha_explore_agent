@@ -246,22 +246,48 @@ class OfflineResearchRuntimeAdapter:
                 "research model reservation busy; no automatic retry") from exc
 
     def conclude_scripted_model_call(self, response=None, *, unknown=False):
+        """Single-writer terminal transition; a later callback cannot overwrite it.
+
+        Reserve and conclude share the same OS lock. An interrupted or
+        ambiguous call remains unreplayable, even from another runtime.
+        """
         _check_path(self._attempt)
         if self._model_calls != 1:
             raise OrchestrationError("offline model completion without reservation")
-        raw = json.loads(self._attempt.read_text(encoding="utf-8"))
-        if (not is_sealed_state(raw)
-                or raw["status"] != "MODEL_CALL_MAY_HAVE_STARTED"
-                or raw["task_id"] != self.task_id):
-            raise OrchestrationError("offline model reservation changed")
-        if unknown:
-            raw["status"] = "MODEL_MOCK_UNKNOWN"
-        else:
-            if not isinstance(response, dict):
-                raise OrchestrationError("offline model response must be a JSON object")
-            raw["response_sha256"] = fingerprint_json(response)
-            raw["status"] = _FINAL
-        write_sealed_json(self._attempt, raw)
+        lock_path = self._attempt.with_suffix(".lock")
+        if lock_path.is_symlink():
+            raise OrchestrationError("research runtime writer lock is unsafe")
+        try:
+            with SingleWriterLock(lock_path):
+                _check_path(self._attempt)
+                snapshot = inspect_runtime_attempt(
+                    self.orchestrator, self.task_id)
+                if (snapshot["status"] != "MODEL_CALL_MAY_HAVE_STARTED"
+                        or snapshot.get("policy_sha256") != fingerprint_json(self.policy)):
+                    raise OrchestrationError(
+                        "offline model reservation changed; no terminal replay")
+                # Full schema, seal, scope, task and policy were validated
+                # while holding the lock. Recheck that no other writer
+                # changed this exact reservation before transition.
+                raw = json.loads(self._attempt.read_text(encoding="utf-8"))
+                if (not is_sealed_state(raw)
+                        or raw["status"] != "MODEL_CALL_MAY_HAVE_STARTED"
+                        or raw["task_id"] != self.task_id
+                        or raw["call_id"] != snapshot["call_id"]
+                        or raw["policy_sha256"] != snapshot["policy_sha256"]):
+                    raise OrchestrationError("offline model reservation changed")
+                if unknown:
+                    raw["status"] = "MODEL_MOCK_UNKNOWN"
+                else:
+                    if not isinstance(response, dict):
+                        raise OrchestrationError(
+                            "offline model response must be a JSON object")
+                    raw["response_sha256"] = fingerprint_json(response)
+                    raw["status"] = _FINAL
+                write_sealed_json(self._attempt, raw)
+        except WriterLockError as exc:
+            raise OrchestrationError(
+                "research model completion busy; no automatic retry") from exc
 
     def verify_completed(self):
         result = inspect_runtime_attempt(self.orchestrator, self.task_id)
