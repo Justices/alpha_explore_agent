@@ -29,6 +29,27 @@ def research_catalog_frame_allowed(request, scope, *, source_alpha_id=None):
     )
 
 
+def inspect_research_catalog_evidence_frame(
+        orchestrator, task_id, model_config, governance_policy,
+        receipt, operator_trust, global_ack, consumer_trust,
+        ledger_readback, ledger_trust, driver_evidence,
+        driver_trust, frame, *, now=None):
+    """P5.2 driver-side signed evidence and read-frame audit, never dispatch.
+
+    Keep this check in the driver module so an external Gateway caller cannot
+    substitute an unchecked boolean. Real research startup still
+    refuses before credentials; future transport must recheck here.
+    """
+    from alpha_research.orchestration.research_driver_read_gate import (
+        inspect_evidence_bound_driver_frame,
+    )
+    return inspect_evidence_bound_driver_frame(
+        orchestrator, task_id, model_config, governance_policy,
+        receipt, operator_trust, global_ack, consumer_trust,
+        ledger_readback, ledger_trust, driver_evidence,
+        driver_trust, frame, now=now)
+
+
 def write(payload):
     sys.stdout.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
     sys.stdout.flush()
