@@ -23,6 +23,10 @@ from alpha_research.orchestration.manifest_builder import (
     read_generated_manifest,
 )
 from alpha_research.orchestration.mock_workspace import is_mock_workspace
+from alpha_research.orchestration.research_runtime_adapter import (
+    OfflineResearchRuntimeAdapter, inspect_runtime_attempt,
+)
+from alpha_research.orchestration.runtime_config import OFFLINE_PREPARATION_POLICY
 from alpha_research.state.store import atomic_write_json
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
@@ -120,6 +124,12 @@ def inspect_research_preparation(orchestrator, task_id):
             "research preparation task identity drift; manual review required")
     if report["status"] == _TERMINAL:
         snapshot = inspect_generated_manifest(orchestrator, task_id)
+        if "model_response_sha256" in report:
+            attempt = inspect_runtime_attempt(orchestrator, task_id)
+            if (attempt["status"] != "MODEL_MOCK_COMPLETED"
+                    or attempt["response_sha256"] != report["model_response_sha256"]):
+                raise OrchestrationError(
+                    "research model attempt evidence drift; reconciliation required")
         if (snapshot["status"] != "GENERATED_LOCAL_NOT_AUTHORIZED"
                 or report.get("manifest_sha256") != snapshot.get("manifest_sha256")):
             raise OrchestrationError(
@@ -181,14 +191,19 @@ def prepare_offline_research(orchestrator, task_id):
             model = DomainMockModel()
             handoff = make_agent_preparation_handoff(orchestrator, task_id)
             try:
-                # Every remote/model entrypoint is swapped out inside this scope.
-                with mock_domain_boundary(request["region"]):
+                runtime = OfflineResearchRuntimeAdapter(
+                    orchestrator, task_id, gateway, model,
+                    OFFLINE_PREPARATION_POLICY)
+                # Production ports are NEVER instantiated. A mock-specific
+                # scoped Catalog client and a write-ahead scripted model
+                # reservation are active only during this context.
+                with runtime, mock_domain_boundary(request["region"]):
                     if task["workflow"] == "super":
                         from alpha_research.workflows.super_alpha.workflow import (
                             run_super_research,
                         )
                         result = run_super_research(
-                            gateway, model, config, orchestrator.state_root,
+                            runtime.gateway, model, config, orchestrator.state_root,
                             region=request["region"], delay=request["delay"],
                             objective=request["objective"],
                             preparation_handoff=handoff,
@@ -198,12 +213,13 @@ def prepare_offline_research(orchestrator, task_id):
                             run_optimization,
                         )
                         result = run_optimization(
-                            gateway, model, config, orchestrator.state_root,
+                            runtime.gateway, model, config, orchestrator.state_root,
                             region=request["region"],
                             alpha_id=request["alpha_id"],
                             objective=request["objective"],
                             preparation_handoff=handoff,
                         )
+                runtime_report = runtime.verify_completed()
                 snapshot = inspect_generated_manifest(orchestrator, task_id)
                 if (result.get("status") != "AWAITING_INDEPENDENT_AUTHORIZATION"
                         or snapshot["status"] != "GENERATED_LOCAL_NOT_AUTHORIZED"
@@ -218,6 +234,8 @@ def prepare_offline_research(orchestrator, task_id):
                 journal.update(
                     status=_TERMINAL,
                     manifest_sha256=snapshot["manifest_sha256"],
+                    model_response_sha256=runtime_report["response_sha256"],
+                    catalog_reads=runtime_report["catalog_reads"],
                 )
                 atomic_write_json(path, journal)
             except Exception as exc:
