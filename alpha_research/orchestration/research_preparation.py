@@ -27,13 +27,18 @@ from alpha_research.orchestration.research_runtime_adapter import (
     OfflineResearchRuntimeAdapter, inspect_runtime_attempt,
 )
 from alpha_research.orchestration.runtime_config import OFFLINE_PREPARATION_POLICY
-from alpha_research.state.store import atomic_write_json
+from alpha_research.state.sealed import is_sealed_state, write_sealed_json
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 _VERSION = 1
 _ROOT_FOLDER = "research_preparation"
 _TERMINAL = "RESEARCH_PREPARED_OFFLINE"
 _ALLOWED = {"super", "optimization"}
+_JOURNAL_FIELDS = frozenset({
+    "schema_version", "task_id", "workflow", "request_sha256", "mode",
+    "status", "manifest_sha256", "failure_type", "model_response_sha256",
+    "catalog_reads", "state_sha256",
+})
 
 
 def _journal_path(orchestrator, task_id):
@@ -87,16 +92,38 @@ def _load_journal(path, task_id):
             "research preparation journal unreadable; manual reconciliation required"
         ) from exc
     if (not isinstance(report, dict)
-            or report.get("schema_version") != _VERSION
-            or report.get("task_id") != task_id
-            or report.get("mode") != "offline_domain_mock"
-            or report.get("workflow") not in _ALLOWED
-            or report.get("request_sha256") is None
-            or report.get("status") not in {
+            or set(report) != _JOURNAL_FIELDS
+            or not is_sealed_state(report)
+            or type(report["schema_version"]) is not int
+            or report["schema_version"] != _VERSION
+            or report["task_id"] != task_id
+            or report["mode"] != "offline_domain_mock"
+            or report["workflow"] not in _ALLOWED
+            or not isinstance(report["request_sha256"], str)
+            or len(report["request_sha256"]) != 64
+            or report["status"] not in {
                 "PREPARING", "BLOCKED_MANUAL_REVIEW", _TERMINAL,
-            }):
+            }
+            or not isinstance(report["catalog_reads"], list)
+            or any(not isinstance(v, str) for v in report["catalog_reads"])
+            or (report["failure_type"] is not None
+                and not isinstance(report["failure_type"], str))):
         raise OrchestrationError(
-            "research preparation journal identity/status drift; manual review required")
+            "research preparation journal identity/integrity drift; manual review required")
+    if report["status"] == _TERMINAL:
+        if (not isinstance(report["manifest_sha256"], str)
+                or len(report["manifest_sha256"]) != 64
+                or not isinstance(report["model_response_sha256"], str)
+                or len(report["model_response_sha256"]) != 64
+                or not report["catalog_reads"]
+                or report["failure_type"] is not None):
+            raise OrchestrationError(
+                "research preparation terminal journal incomplete; manual review required")
+    elif (report["manifest_sha256"] is not None
+          or report["model_response_sha256"] is not None
+          or report["catalog_reads"]):
+        raise OrchestrationError(
+            "unfinished research preparation contains terminal evidence")
     return report
 
 
@@ -180,8 +207,10 @@ def prepare_offline_research(orchestrator, task_id):
                 "status": "PREPARING",
                 "manifest_sha256": None,
                 "failure_type": None,
+                "model_response_sha256": None,
+                "catalog_reads": [],
             }
-            atomic_write_json(path, journal)
+            write_sealed_json(path, journal)
             request = task["request"]
             config = deepcopy(DEFAULT_CONFIG)
             config["scope"]["region"] = request["region"]
@@ -237,15 +266,18 @@ def prepare_offline_research(orchestrator, task_id):
                     model_response_sha256=runtime_report["response_sha256"],
                     catalog_reads=runtime_report["catalog_reads"],
                 )
-                atomic_write_json(path, journal)
+                write_sealed_json(path, journal)
             except Exception as exc:
                 # No replay: model invocation status could become ambiguous if
                 # this is ever generalized beyond deterministic mock clients.
                 journal.update(
                     status="BLOCKED_MANUAL_REVIEW",
                     failure_type=type(exc).__name__,
+                    manifest_sha256=None,
+                    model_response_sha256=None,
+                    catalog_reads=[],
                 )
-                atomic_write_json(path, journal)
+                write_sealed_json(path, journal)
                 raise
             return inspect_research_preparation(orchestrator, task_id)
     except WriterLockError as exc:
