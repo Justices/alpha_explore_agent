@@ -136,7 +136,7 @@ class ReferenceExternalGrantLedger:
         at = clock.astimezone(timezone.utc)
         ack_expiry = min(at + timedelta(seconds=90), grant_end)
         consumption_id = secrets.token_hex(16)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 revoked = db.execute(
@@ -183,7 +183,7 @@ class ReferenceExternalGrantLedger:
 
     def read_consumption(self, grant_id):
         """Read existing committed ACK without a second consumption."""
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             row = db.execute(
                 "SELECT ack_json FROM research_grant_consumptions"
                 " WHERE grant_id=?", (grant_id,)).fetchone()
@@ -201,7 +201,7 @@ class ReferenceExternalGrantLedger:
         clock = datetime.now(timezone.utc) if now is None else now
         if not isinstance(clock, datetime) or clock.tzinfo is None:
             raise OrchestrationError("external ledger clock invalid")
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT OR IGNORE INTO research_grant_revocations"
