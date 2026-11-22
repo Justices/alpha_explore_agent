@@ -137,6 +137,20 @@ neither issue receipts nor grant live model, BRAIN, or Alpha rights.
 The same model registry/profile and governance settings used for the original
 proposal and staging must be selected when inspecting the signed evidence.
 
+## P4.12 — Fresh unstarted task recovery classification
+
+A newly prepared `super` or `optimization` Task with a fresh one-attempt
+budget, no staging reservation, no local Intent, no consent/escrow and no
+execution Research ID now reports
+`simulation_recovery.status=AWAITING_OFFLINE_STAGING`.
+This is preparation work, **not** an indeterminate remote POST or a crashed
+Simulation. The release verdict still remains `PRODUCTION_BLOCKED`.
+
+An orphan Intent, damaged staged journal, unknown remote outcome,
+non-fresh task or partial reservation still requires reconciliation;
+a missing local Intent never proves the absence of independent remote
+activity. No automatic retry or dispatch is enabled by this classification.
+
 ## Recovery semantics
 
 `simulation_recovery_audit.py` reports the saved Intent status without
