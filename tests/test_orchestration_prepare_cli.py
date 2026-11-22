@@ -308,6 +308,23 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(verified["brain_simulation_authorized"])
         self.assertFalse(verified["alpha_submission_authorized"])
 
+    def test_p4_13_missing_manifest_gets_actionable_safe_error(self):
+        code, output, err = self._call(self.prefix + [
+            "orchestration-prepare", "--workflow", "super",
+            "--objective", "offline missing manifest", "--universe", "TOP3000"])
+        self.assertEqual(code, 0, err)
+        task_id = json.loads(output)["task_id"]
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        code, output, err = self._call(self.prefix + [
+            "orchestration-scope-issuer-request", task_id,
+            "--manifest", str(self.root / "reviewed-simulation-manifest.json")])
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("--manifest file not found", err)
+        self.assertIn("real path", err)
+        self.assertFalse((self.root / "reviewed-simulation-manifest.json").exists())
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
     def test_p4_13_scope_request_rejects_unpinned_manifest(self):
         code, output, err = self._call(self.prefix + [
             "orchestration-prepare", "--workflow", "super",
