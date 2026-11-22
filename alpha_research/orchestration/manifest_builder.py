@@ -12,6 +12,7 @@ import re
 from pathlib import Path
 
 from alpha_research.orchestration.engine import OrchestrationError
+from alpha_research.orchestration.research_task_contract import is_fresh_research_task
 from alpha_research.orchestration.simulation_scope import _validate_plan
 from alpha_research.state.fingerprint import fingerprint_json
 from alpha_research.state.store import atomic_write_json
@@ -28,17 +29,8 @@ def _path(orchestrator, task_id):
             "generated_simulation_manifests" / (task_id + ".json"))
 
 
-def _fresh(task):
-    return (task.get("status") == "CREATED"
-            and task.get("workflow") in {"super", "optimization"}
-            and task.get("budget") == {"limit": 1, "used": 0, "reserved": 0}
-            and task.get("research_identity") is None
-            and task.get("recovery_target") is None
-            and task.get("checkpoints") == {})
-
-
 def _validate_candidate(task, candidate):
-    if not _fresh(task):
+    if not is_fresh_research_task(task):
         raise OrchestrationError("Agent manifest requires a fresh unexecuted Task")
     if not isinstance(candidate, dict) or set(candidate) != {
             "run_id", "batch_id", "request", "settings"}:
