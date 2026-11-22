@@ -49,6 +49,9 @@ from alpha_research.orchestration.authorization_handoff import (
 from alpha_research.orchestration.manifest_builder import (
     inspect_generated_manifest, read_generated_manifest,
 )
+from alpha_research.orchestration.research_preparation import (
+    prepare_offline_research, inspect_research_preparation,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -161,6 +164,15 @@ def main(argv=None):
     domain_mock.add_argument("task_id")
     domain_mock.add_argument("--mode", choices=("mock",), required=True)
     domain_mock.add_argument("--fault", choices=("lost-simulation-response",))
+    research_prepare = sub.add_parser(
+        "orchestration-research-prepare",
+        help="prepare Agent candidate + internal Manifest in isolated offline mock only")
+    research_prepare.add_argument("task_id")
+    research_prepare.add_argument("--mode", choices=("mock",), required=True)
+    research_status = sub.add_parser(
+        "orchestration-research-prepare-status",
+        help="read-only Agent preparation journal status; no provider calls")
+    research_status.add_argument("task_id")
     admission = sub.add_parser(
         "orchestration-admission-audit",
         help="inspect production authorization blockers without provider or BRAIN calls")
@@ -597,7 +609,10 @@ def main(argv=None):
         return 0
     if args.command in {"orchestration-prepare", "orchestration-handoff",
                         "orchestration-recovery-check", "orchestration-run",
-                        "orchestration-domain-mock", "orchestration-admission-audit",
+                        "orchestration-domain-mock",
+                        "orchestration-research-prepare",
+                        "orchestration-research-prepare-status",
+                        "orchestration-admission-audit",
                         "orchestration-authorization-inspect",
                         "orchestration-authorization-reserve",
                         "orchestration-simulation-scope-check",
@@ -625,6 +640,11 @@ def main(argv=None):
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
             effective = prepared["model"]
+            if args.command == "orchestration-research-prepare-status":
+                result = inspect_research_preparation(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if args.command == "orchestration-simulation-dispatch-audit":
                 result = inspect_simulation_dispatch_gate(
                     MainOrchestrator(root), args.task_id, policy)
@@ -827,6 +847,26 @@ def main(argv=None):
                         "model_invoked": False, "brain_invoked": False,
                         "task": result,
                     }
+                elif args.command == "orchestration-research-prepare":
+                    from alpha_research.orchestration.execution_identity import (
+                        inspect_execution_identity,
+                    )
+                    from alpha_research.orchestration.execution_proposal import (
+                        inspect_execution_proposal,
+                    )
+                    if root == default_state_root().resolve():
+                        raise OrchestrationError(
+                            "research preparation mock requires a dedicated non-default --state-root")
+                    task = runner.load(args.task_id)
+                    if task["status"] != "CREATED":
+                        raise OrchestrationError(
+                            "research preparation requires a CREATED Task; no replay")
+                    inspect_execution_proposal(runner, args.task_id)
+                    inspect_execution_identity(
+                        runner, args.task_id, effective, policy)
+                    inspect_mock_workspace(root)
+                    claim_mock_workspace(root)
+                    result = prepare_offline_research(runner, args.task_id)
                 elif args.command == "orchestration-domain-mock":
                     from alpha_research.orchestration.execution_identity import inspect_execution_identity
                     from alpha_research.orchestration.execution_proposal import inspect_execution_proposal
