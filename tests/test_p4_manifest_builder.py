@@ -80,7 +80,7 @@ class AgentManifestBuilderTests(unittest.TestCase):
             **self.candidate["settings"], "region": "CHN"}}
         with self.assertRaisesRegex(OrchestrationError, "not pinned"):
             record_agent_generated_manifest(self.runner, self.id, wrong)
-        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*"))
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
         missing = {**self.candidate, "request": {"selection": "rank(x)"}}
         with self.assertRaisesRegex(OrchestrationError, "missing combo"):
             record_agent_generated_manifest(self.runner, self.id, missing)
