@@ -1,4 +1,4 @@
-# Research Runtime — Unified Operator Guide (P4.19–P4.24)
+# Research Runtime — Unified Operator Guide (P4.19–P4.29)
 
 This is the **current operational entrypoint** for orchestrated Super Alpha
 construction and Optimization. Earlier P4.x documents describe incremental
@@ -133,6 +133,49 @@ is invoked. An ambiguous or corrupted model attempt cannot be replayed.
   No live SDK transport is installed. The reported number of tokens, a
   claimed token count, and a signed tariff digest are **not hard USD
   controls or verified provider billing**.
+
+## P4.25–P4.29 — External control-plane modules and Canary gate
+
+P4 now has **five read-only/audit integration contracts**. All five reject
+production dispatch by design. The existing
+**orchestration-release-gate TASK_ID** command includes a
+**research_p4_canary** component, listing the missing dependencies and the
+reason real execution stays blocked.
+
+| Module | New code | Implemented and verifiable offline | Still requires deployment outside this application |
+| --- | --- | --- | --- |
+| P4.25 Grant consumer | research_grant_ledger.py, research_grant_service_reference.py | Ed25519 ACK/ledger-readback binding; transactional SQLite reference consumer, unique grant/approval consumption, durable ACK, revocation and concurrent-writer tests | Independently hosted authenticated remote consumer, protected signing keys, distributed revocation and operational guarantees |
+| P4.26 BRAIN Driver | research_driver_session.py | Signed session/scope/Grant ACK binding and exact driver-frame read-only allowlist including Optimization source Alpha | Actual independently authenticated driver session; the live research driver still refuses startup before credentials |
+| P4.27 Cost and metering | research_price_provenance.py, research_spend_service_reference.py | Signed provider/model tariff matching the grant, bounded SDK plan; atomic per-Grant USD reservation, call cap, unknown-outcome quarantine | Independently verified current provider rates and tokenizer, API-enforced output caps, trusted global budget service and provider invoices |
+| P4.28 Recovery | research_remote_reconciliation.py | Signed attempt-specific remote outcome validation; missing/unknown/in-flight/failure/cost-or-token excess never auto-retried | Real provider operation-ID readback, externally trusted billing settlement and durable incident/compensation operations |
+| P4.29 Canary | research_p4_release.py, release_gate.py | One negative-only matrix for four evidence chains and signed Canary *review*, typed Task binding and stop checks | Separately approved supervised production canary, operator abort/monitoring and a genuinely enabled independently controlled execution plane |
+
+**Important distinction:** reference SQLite ledgers model actual durable,
+concurrent single-consumption and budget reservation logic, but running either
+inside the Agent process does **not** make it an independent security service.
+The production adapter, real SDK dispatcher, Catalog driver startup and
+BRAIN write operations remain disabled. A user-supplied public key, signed
+report, local SQLite record or offline test is not external authority.
+A Canary review is explicitly **REVIEWED_NOT_ENABLED**, not a dispatch token.
+
+All external evidence validators use independent Ed25519 signature domains,
+exact claim fields, Task/receipt binding, strict JSON value types, short
+expirations and revocation checks. The driver and price reports are still
+**AUDIT_ONLY**; uncertain remote model outcomes lock out automatic retry. The
+P4 Canary report always returns **RESEARCH_P4_CANARY_PRODUCTION_BLOCKED**,
+even when all four signed audit reports and a Canary review are supplied.
+
+To run the isolated verification tests (no API keys, remote services or real
+BRAIN requests):
+
+    python3 -m unittest discover -s tests -p 'test_p4_research_final_release.py' -v
+
+Before any controlled deployment, implement a separately authenticated
+service transport, custody and rotate independent keys, ensure trusted remote
+ledger and cost service are actually used by the driver/SDK (not merely
+reported by the client), enforce model-specific billable token semantics,
+perform recovery readback and independently authorize a supervised read-only
+canary. Simulation POST and Alpha submission remain distinct approvals.
 
 ## Production release prerequisites
 
