@@ -116,6 +116,8 @@ class ResearchPreparationCliTests(unittest.TestCase):
                 "orchestration-research-prepare", task_id, "--mode", "mock"])
         self.assertEqual(code, 2)
         self.assertEqual(out, "")
+        self.assertIn("RuntimeError", error)
+        self.assertNotIn("synthetic interrupted planning", error)
         report = inspect_research_preparation(self.runner, task_id)
         self.assertEqual(report["status"], "BLOCKED_MANUAL_REVIEW")
         self.assertEqual(report["failure_type"], "RuntimeError")
@@ -162,6 +164,9 @@ class ResearchPreparationCliTests(unittest.TestCase):
         self.assertFalse(
             (self.root / "state" / "research_v1_1" /
              "research_preparation").exists())
+        self.assertFalse(
+            (self.root / "state" / "research_v1_1" /
+             "domain_mock_workspace.json").exists())
 
 
 if __name__ == "__main__":
