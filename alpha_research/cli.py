@@ -67,6 +67,9 @@ from alpha_research.orchestration.research_runtime_adapter import (
 from alpha_research.orchestration.research_runtime_plan import (
     inspect_research_runtime_plan,
 )
+from alpha_research.orchestration.research_control_plane import (
+    inspect_research_control_plane,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -202,6 +205,10 @@ def main(argv=None):
     runtime_plan.add_argument("--max-output-tokens", type=int)
     runtime_plan.add_argument("--global-consumption-ack", type=_path_argument)
     runtime_plan.add_argument("--consumer-trust-policy", type=_path_argument)
+    control_plane = sub.add_parser(
+        "orchestration-research-status",
+        help="single read-only control-plane status (Task, Agent, Manifest, Grant, live blockers)")
+    control_plane.add_argument("task_id")
     admission = sub.add_parser(
         "orchestration-admission-audit",
         help="inspect production authorization blockers without provider or BRAIN calls")
@@ -667,6 +674,7 @@ def main(argv=None):
                         "orchestration-research-prepare-status",
                         "orchestration-research-runtime-status",
                         "orchestration-research-runtime-plan",
+                        "orchestration-research-status",
                         "orchestration-research-issuer-request",
                         "orchestration-research-live-readiness",
                         "orchestration-research-grant-audit-reserve",
@@ -708,6 +716,11 @@ def main(argv=None):
             if args.command == "orchestration-research-runtime-status":
                 result = inspect_runtime_attempt(
                     MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-status":
+                result = inspect_research_control_plane(
+                    MainOrchestrator(root), args.task_id, effective, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-runtime-plan":
