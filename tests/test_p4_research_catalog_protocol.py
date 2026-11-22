@@ -19,11 +19,15 @@ class ResearchCatalogProtocolTests(unittest.TestCase):
         return research_catalog_request_allowed(command, params, self.scope)
 
     def test_only_exact_read_actions_with_exact_scope_and_params(self):
-        self.assertEqual(len(RESEARCH_CATALOG_READS), 7)
+        self.assertEqual(len(RESEARCH_CATALOG_READS), 8)
         self.assertTrue(self.allowed("get_platform_setting_options", {}))
         self.assertTrue(self.allowed(
             "get_platform_setting_options", {"include_schema": True}))
         self.assertTrue(self.allowed("get_simulation_settings_schema", {}))
+        self.assertTrue(self.allowed(
+            "get_user_alphas", {"stage": "OS", "limit": 100, "offset": 0}))
+        self.assertTrue(self.allowed(
+            "get_user_alphas", {"stage": "OS", "limit": 100, "offset": 100}))
         self.assertFalse(self.allowed("get_alpha_details", {"alpha_id": "alpha-id"}))
         self.assertTrue(research_catalog_request_allowed(
             "get_alpha_details", {"alpha_id": "alpha-id"}, self.scope,
@@ -46,6 +50,10 @@ class ResearchCatalogProtocolTests(unittest.TestCase):
             ("sync_backtest_cache", {}), ("get_dataset_details", {}),
             ("check_simulation_cache", {}),
             ("get_user_alphas", {}), ("unknown_api", {}),
+            ("get_user_alphas", {"stage": "IS", "limit": 100, "offset": 0}),
+            ("get_user_alphas", {"stage": "OS", "limit": True, "offset": 0}),
+            ("get_user_alphas", {"stage": "OS", "limit": 101, "offset": 0}),
+            ("get_user_alphas", {"stage": "OS", "limit": 100, "offset": -1}),
             ("get_datasets", {**self.scope, "grant_id": "abc"}),
             ("get_datasets", {**self.scope, "permission_to_dispatch": False}),
             ("get_datasets", {**self.scope, "region": "CHN"}),
