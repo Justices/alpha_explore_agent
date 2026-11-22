@@ -44,7 +44,7 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
-## Orchestrated research runtime — one-command status (P4.24)
+## Orchestrated research runtime — status and P4.29 release audit
 
 For Super Alpha / Optimization tasks under the new orchestration control
 plane, start with the [Research Runtime Operator Guide](docs/RESEARCH_RUNTIME_OPERATOR_GUIDE.md).
@@ -53,11 +53,18 @@ Agent preparation, model attempt, immutable Manifest, local grant audit,
 Catalog scope, and production blockers **without requiring a manual Manifest
 file**. Use the same `--state-root` as the original Task.
 
-The production research adapter remains independently blocked: P4.19 provides
-strict Gateway/driver-frame read scope, an external signed consumer-ACK audit,
-and a bounded OpenAI-compatible SDK request contract, but **no remotely
-trusted grant consumer, no paid-model dispatch, no active research Catalog
-driver and no BRAIN Simulation/Alpha submission**. A local signature or
+P4.25–P4.29 add independent-ledger readback verification, a transactional
+single-use Grant reference service, signed Driver session evidence, signed
+model-price validation, atomic USD spend-reservation reference storage,
+non-replayable remote-outcome reconciliation and an integrated Canary review
+matrix. Run **orchestration-release-gate <TASK_ID>** for an entirely read-only
+production-blocker report, including its **research_p4_canary** component.
+See the operator guide for the external deployments and approvals still needed.
+
+The production research adapter remains independently blocked: the reference
+services have no trusted remote deployment or independently provisioned runtime
+credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
+Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
 ## P4.7 Simulation authorization integrity (offline only)
