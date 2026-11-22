@@ -44,7 +44,7 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
-## Orchestrated research runtime — one-command status (P4.21)
+## Orchestrated research runtime — one-command status (P4.24)
 
 For Super Alpha / Optimization tasks under the new orchestration control
 plane, start with the [Research Runtime Operator Guide](docs/RESEARCH_RUNTIME_OPERATOR_GUIDE.md).
