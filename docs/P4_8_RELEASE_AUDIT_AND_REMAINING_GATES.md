@@ -107,6 +107,56 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.15 — Unified one-command research preparation (offline mock only)
+
+After a Super/Optimization Task is prepared, the orchestration CLI now owns
+the handoff from Agent candidate generation through the Manifest Builder,
+without any user-authored JSON. This entrypoint is **synthetic and offline**
+and cannot execute on a production evidence workspace.
+
+In a separate, dedicated **test-only** `--state-root`, create a fresh Task
+with `orchestration-prepare --workflow super --region USA --delay 1
+--universe TOP3000`, then run:
+
+```sh
+python3 -m alpha_research --state-root /tmp/alpha-research-p415-offline \\
+  --lead deepseek --executor deepseek \\
+  orchestration-research-prepare <TEST_TASK_ID> --mode mock
+
+python3 -m alpha_research --state-root /tmp/alpha-research-p415-offline \\
+  --lead deepseek --executor deepseek \\
+  orchestration-research-prepare-status <TEST_TASK_ID>
+
+python3 -m alpha_research --state-root /tmp/alpha-research-p415-offline \\
+  --lead deepseek --executor deepseek \\
+  orchestration-manifest-status <TEST_TASK_ID>
+```
+
+The prepare command invokes the real Super/Optimization planning and local
+expression validation through an **explicitly scripted** offline Gateway and
+Model. Before any POST, the Agent's `preparation_handoff` callback writes a
+single immutable, scope-pinned Manifest. The preparation journal records
+`PREPARING` then `RESEARCH_PREPARED_OFFLINE`; interrupted/failed
+preparations stay `BLOCKED_MANUAL_REVIEW` with **no automatic retry**.
+Repeated successful requests inspect the saved digest rather than re-running
+the Agent.
+
+The Task stays `CREATED`, the one-shot Simulation budget stays `used=0`
+and `reserved=0`, and no Simulation Intent, remote Gateway call, paid Model
+call or Alpha submission is permitted. Output contains no Alpha expressions.
+The mock workspace is permanently marked `OFFLINE_DOMAIN_MOCK_ONLY` and
+cannot be used to issue technical scope/consent signatures. A workspace with
+real `platform_read_evidence`, existing execution staging or domain records
+cannot be claimed as a mock. The user's existing real task and its read-only
+BRAIN evidence must **never** be used as this offline test state root.
+
+This is the offline validation of the unified **preparation** control-plane
+entrypoint. Actual Agent generation against connected read-only BRAIN data
+and a real paid LLM still needs a separate authorized, independently metered
+research-only mode. P4.15 does not implement that live mode or production
+authorization. Keep `PRODUCTION_BLOCKED` and all Simulation/Alpha write
+paths disabled.
+
 ## P4.14 — Agent-owned Simulation Manifest Builder (no user JSON required)
 
 This supersedes P4.13's manual-manifest examples for **new** workflows.
