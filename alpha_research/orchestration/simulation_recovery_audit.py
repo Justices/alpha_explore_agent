@@ -31,6 +31,41 @@ def inspect_simulation_recovery_evidence(orchestrator, task_id, policy):
     consent = inspect_consent_reservation(orchestrator, task_id)
     escrow = inspect_pre_dispatch_escrow(orchestrator, task_id, policy)
     _, intent_path, _ = _staging_paths(orchestrator, task_id)
+    # A newly prepared, unspent Task that has never staged an Intent is
+    # awaiting preparation, not recovering a failed/unknown remote POST.
+    # This only classifies absent *local* evidence; it never proves that
+    # some unrelated external operation could not have occurred.
+    if (task["status"] == "CREATED"
+            and task["budget"] == {"limit": 1, "used": 0, "reserved": 0}
+            and task.get("research_identity") is None
+            and task.get("recovery_target") is None
+            and staged["status"] == "NOT_STAGED"
+            and consent["status"] == "NOT_RESERVED"
+            and escrow["status"] == "NOT_ESCROWED"
+            and not intent_path.exists() and not intent_path.is_symlink()
+            and not intent_path.parent.is_symlink()):
+        return {
+            "schema_version": 1,
+            "task_id": task_id,
+            "status": "AWAITING_OFFLINE_STAGING",
+            "audit_mode": "READ_ONLY",
+            "facts": {
+                "task_status": task["status"],
+                "staging_status": staged["status"],
+                "consent_status": consent["status"],
+                "escrow_status": escrow["status"],
+                "model_status": "NOT_BOUND_PRE_EXECUTION",
+                "intent_status": "NOT_CREATED",
+            },
+            "blockers": ["SIMULATION_INTENT_NOT_STAGED",
+                         "NO_LIVE_DISPATCH_AUTHORIZATION"],
+            "recommendation": "Prepare scoped Intent and independent consent; no POST",
+            "permission_to_dispatch": False,
+            "automatic_retry_allowed": False,
+            "remote_outcome_proven": False,
+            "brain_invoked": False,
+            "provider_invoked": False,
+        }
     reasons = []
     for state, label in ((staged, "SIMULATION_STAGING"),
                          (consent, "CONSENT_AUDIT"),
