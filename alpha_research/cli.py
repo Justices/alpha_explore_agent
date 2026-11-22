@@ -695,14 +695,21 @@ def main(argv=None):
                         request["delay"] = 1
                         request["ppa_profile"] = args.ppa
                     else:
-                        if args.dataset or args.category or args.universe or args.ppa:
+                        if args.dataset or args.category or args.ppa:
                             raise OrchestrationError(
-                                "Dataset, Category, Universe and PPA apply only to Regular")
+                                "Dataset, Category and PPA apply only to Regular")
                         fixed_scope = cfg.get("scope") or {}
                         request["region"] = _constraint(
                             args.region, fixed_scope.get("region"), "Region")
                         request["delay"] = _constraint(
                             args.delay, fixed_scope.get("delay"), "Delay")
+                        # A Simulation receipt cannot expand an unset scope.
+                        # Pin the Universe here, not during later staging.
+                        request["universe"] = _constraint(
+                            args.universe, fixed_scope.get("universe"), "Universe")
+                        if not request["universe"]:
+                            raise OrchestrationError(
+                                "Super/Optimization Simulation requires explicit Universe")
                         if not request["region"]:
                             raise OrchestrationError("Region is required")
                         if args.workflow == "optimization":
@@ -795,7 +802,12 @@ def main(argv=None):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             elif isinstance(exc, ValueError) and str(exc).startswith(
                     ("research configuration is ", "research configuration must ",
-                     "research configuration file ", "research configuration is missing")):
+                     "research configuration file ", "research configuration is missing",
+                     "requested Region conflicts with configured scope",
+                     "requested Delay conflicts with configured scope",
+                     "requested Universe conflicts with configured scope",
+                     "Super/Optimization Simulation requires explicit Universe",
+                     "Dataset, Category and PPA apply only to Regular")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
