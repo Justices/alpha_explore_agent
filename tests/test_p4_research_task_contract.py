@@ -56,6 +56,16 @@ class FreshResearchTaskContractTests(unittest.TestCase):
                 self.assertFalse(is_fresh_research_task(task))
         self.assertFalse(is_fresh_research_task(None))
         self.assertFalse(is_fresh_research_task({}))
+        # bool subclasses int: equality alone would accept True as limit=1
+        # and False as used=0, so the gate must check exact JSON types.
+        for field, value in (
+            ("schema_version", True),
+            ("budget", {"limit": True, "used": False, "reserved": False}),
+        ):
+            with self.subTest(typed_field=field):
+                task = deepcopy(self.task)
+                task[field] = value
+                self.assertFalse(is_fresh_research_task(task))
 
     def test_all_three_research_ports_reject_partially_consumed_task(self):
         # A Task that still says CREATED but has an edited step cannot be
