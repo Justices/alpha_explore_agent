@@ -64,6 +64,9 @@ from alpha_research.orchestration.research_catalog_protocol import (
 from alpha_research.orchestration.research_runtime_adapter import (
     inspect_runtime_attempt,
 )
+from alpha_research.orchestration.research_runtime_plan import (
+    inspect_research_runtime_plan,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -189,6 +192,14 @@ def main(argv=None):
         "orchestration-research-runtime-status",
         help="read-only scripted model attempt recovery; never starts any provider")
     runtime_status.add_argument("task_id")
+    runtime_plan = sub.add_parser(
+        "orchestration-research-runtime-plan",
+        help="compose signed research grant, Catalog read scope and cost; NEVER run live")
+    runtime_plan.add_argument("task_id")
+    runtime_plan.add_argument("--receipt", type=_path_argument)
+    runtime_plan.add_argument("--trust-policy", type=_path_argument)
+    runtime_plan.add_argument("--input-tokens", type=int)
+    runtime_plan.add_argument("--max-output-tokens", type=int)
     admission = sub.add_parser(
         "orchestration-admission-audit",
         help="inspect production authorization blockers without provider or BRAIN calls")
@@ -653,6 +664,7 @@ def main(argv=None):
                         "orchestration-research-prepare",
                         "orchestration-research-prepare-status",
                         "orchestration-research-runtime-status",
+                        "orchestration-research-runtime-plan",
                         "orchestration-research-issuer-request",
                         "orchestration-research-live-readiness",
                         "orchestration-research-grant-audit-reserve",
@@ -694,6 +706,21 @@ def main(argv=None):
             if args.command == "orchestration-research-runtime-status":
                 result = inspect_runtime_attempt(
                     MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-runtime-plan":
+                if (args.receipt is None) != (args.trust_policy is None):
+                    raise OrchestrationError(
+                        "research receipt and trust must be supplied together")
+                receipt = (json.loads(args.receipt.read_text(encoding="utf-8"))
+                           if args.receipt is not None else None)
+                trust = (json.loads(args.trust_policy.read_text(encoding="utf-8"))
+                         if args.trust_policy is not None else None)
+                result = inspect_research_runtime_plan(
+                    MainOrchestrator(root), args.task_id, effective, policy,
+                    receipt=receipt, trust_policy=trust,
+                    input_tokens=args.input_tokens,
+                    max_output_tokens=args.max_output_tokens)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-grant-audit-status":
@@ -1018,7 +1045,9 @@ def main(argv=None):
                      "Dataset, Category and PPA apply only to Regular",
                      "Agent Simulation manifest not ready;",
                      "external manifest conflicts with Agent-pinned",
-                     "research receipt and issuer trust policy must be paired")):
+                     "research receipt and issuer trust policy must be paired",
+                     "research receipt and trust must be supplied together",
+                     "model request limits require a signed research receipt")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
