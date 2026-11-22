@@ -499,5 +499,72 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertIsNone(service.read_consumption("a" * 32)["ack"])
 
 
+    def test_p4_27_external_reference_spend_reservation_atomic(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from alpha_research.orchestration.research_spend_service_reference import (
+            ReferenceExternalSpendLedger,
+        )
+        path = self.root / "external-metering" / "metering.sqlite3"
+        def new_ledger():
+            return ReferenceExternalSpendLedger(
+                path, grant_id="a" * 32, max_model_calls=2,
+                max_total_cost_usd_micros=9_000)
+        new_ledger().initialize_schema()
+        barrier = Barrier(2)
+        def reserve(attempt_id):
+            barrier.wait(timeout=10)
+            try:
+                return new_ledger().reserve_once(
+                    task_id=self.task_id, attempt_id=attempt_id,
+                    worst_case_usd_micros=5_000)
+            except OrchestrationError:
+                return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(reserve, "1" * 32)
+            b = pool.submit(reserve, "2" * 32)
+            results = [a.result(), b.result()]
+        self.assertEqual(sum(result is not None for result in results), 1)
+        snapshot = new_ledger().snapshot()
+        self.assertEqual(snapshot["reserved_attempts"], 1)
+        self.assertEqual(snapshot["committed_reservation_usd_micros"], 5_000)
+        winner_id = next(result["attempt_id"] for result in results if result)
+        with self.assertRaises(OrchestrationError):
+            new_ledger().reserve_once(
+                task_id=self.task_id, attempt_id=winner_id,
+                worst_case_usd_micros=1_000)
+        unknown = new_ledger().mark_unknown(winner_id)
+        self.assertFalse(unknown["automatic_retry_allowed"])
+        self.assertEqual(new_ledger().snapshot()["by_status"]["UNKNOWN"], 1)
+        with self.assertRaises(OrchestrationError):
+            new_ledger().settle_once(winner_id, 100)
+        with self.assertRaises(OrchestrationError):
+            new_ledger().reserve_once(
+                task_id=self.task_id, attempt_id="3" * 32,
+                worst_case_usd_micros=5_000)
+
+    def test_p4_27_reference_spend_settlement_keeps_reservation_capacity(self):
+        from alpha_research.orchestration.research_spend_service_reference import (
+            ReferenceExternalSpendLedger,
+        )
+        ledger = ReferenceExternalSpendLedger(
+            self.root / "meter.sqlite3", grant_id="a" * 32,
+            max_model_calls=1, max_total_cost_usd_micros=5_000)
+        ledger.initialize_schema()
+        report = ledger.reserve_once(
+            task_id=self.task_id, attempt_id="1" * 32,
+            worst_case_usd_micros=5_000)
+        self.assertFalse(report["permission_to_dispatch"])
+        with self.assertRaises(OrchestrationError):
+            ledger.settle_once("1" * 32, 5_001)
+        settled = ledger.settle_once("1" * 32, 2_000)
+        self.assertFalse(settled["provider_invoice_independently_verified"])
+        self.assertEqual(ledger.snapshot()["committed_reservation_usd_micros"], 5_000)
+        with self.assertRaises(OrchestrationError):
+            ledger.reserve_once(
+                task_id=self.task_id, attempt_id="2" * 32,
+                worst_case_usd_micros=1_000)
+
+
 if __name__ == "__main__":
     unittest.main()
