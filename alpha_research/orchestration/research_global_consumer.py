@@ -20,9 +20,8 @@ from alpha_research.state.fingerprint import canonical_json_bytes, fingerprint_j
 
 _CONTEXT = b"alpha_research/research-grant-global-consumption/v1:"
 _OPERATION = "consume_research_grant_once"
-_HEX32 = re.compile(r"[0-9a-f]{32}\\Z")
-_HEX64 = re.compile(r"[0-9a-f]{64}\\Z")
-_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}\\Z")
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")
+_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
 _FIXED = frozenset({
     "schema_version", "operation", "task_id", "workflow",
     "grant_id", "operator_approval_id", "research_receipt_sha256",
