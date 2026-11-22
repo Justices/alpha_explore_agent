@@ -224,6 +224,124 @@ class ResearchOnlyGrantTests(unittest.TestCase):
             self.verify()
 
 
+    def test_p4_17_audit_claim_is_single_use_and_never_authorizes_dispatch(self):
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit, inspect_research_grant_claim,
+        )
+        initial = inspect_research_grant_claim(self.runner, self.id)
+        self.assertEqual(initial["status"], "NOT_RESERVED")
+        before_task = self.runner.load(self.id)
+        reserved = reserve_research_grant_audit(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust, now=self.now)
+        self.assertEqual(reserved["status"], "RESERVED_RESEARCH_GRANT_AUDIT_ONLY")
+        self.assertEqual(reserved["grant_id"], "a" * 32)
+        self.assertFalse(reserved["permission_to_dispatch"])
+        self.assertFalse(reserved["model_call_authorized"])
+        self.assertFalse(reserved["brain_read_authorized"])
+        self.assertFalse(reserved["brain_simulation_authorized"])
+        self.assertFalse(reserved["alpha_submission_authorized"])
+        self.assertEqual(self.runner.load(self.id), before_task)
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            reserve_research_grant_audit(
+                self.runner, self.id, self.model, self.policy,
+                self.receipt(), self.trust, now=self.now)
+        self.assertEqual(inspect_research_grant_claim(
+            self.runner, self.id), reserved)
+
+    def test_p4_17_global_audit_prevents_grant_and_approval_reuse_across_tasks(self):
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit, inspect_research_grant_claim,
+        )
+        reserve_research_grant_audit(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust, now=self.now)
+        second = self.runner.create(
+            "super", {"objective": "another research Task",
+                      "region": "USA", "delay": 1, "universe": "TOP3000"})
+        second_id = second["task_id"]
+        persist_execution_proposal(self.runner, second_id)
+        persist_execution_identity(
+            self.runner, second_id, self.model, self.policy)
+        fixed = build_research_issuer_request(
+            self.runner, second_id, self.model, self.policy)["fixed_claims"]
+        same_grant = {**self.claims, **fixed,
+                      "operator_approval_id": "d" * 32}
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            reserve_research_grant_audit(
+                self.runner, second_id, self.model, self.policy,
+                self.receipt(same_grant), self.trust, now=self.now)
+        self.assertEqual(
+            inspect_research_grant_claim(
+                self.runner, second_id)["status"], "NOT_RESERVED")
+        same_approval = {**same_grant, "grant_id": "e" * 32,
+                         "operator_approval_id": "b" * 32}
+        with self.assertRaisesRegex(OrchestrationError, "already reserved"):
+            reserve_research_grant_audit(
+                self.runner, second_id, self.model, self.policy,
+                self.receipt(same_approval), self.trust, now=self.now)
+        distinct = {**same_grant, "grant_id": "e" * 32,
+                    "operator_approval_id": "f" * 32}
+        accepted = reserve_research_grant_audit(
+            self.runner, second_id, self.model, self.policy,
+            self.receipt(distinct), self.trust, now=self.now)
+        self.assertEqual(accepted["status"], "RESERVED_RESEARCH_GRANT_AUDIT_ONLY")
+        self.assertEqual(accepted["grant_id"], "e" * 32)
+
+    def test_p4_17_corrupted_or_symlinked_claim_ledger_fails_closed(self):
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit, inspect_research_grant_claim,
+        )
+        reserve_research_grant_audit(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust, now=self.now)
+        ledger = (self.root / "state" / "research_v1_1" /
+                  "research_grant_audit" / "claims.json")
+        raw = json.loads(ledger.read_text(encoding="utf-8"))
+        raw["by_task"][self.id]["grant_id"] = "f" * 32
+        ledger.write_text(json.dumps(raw), encoding="utf-8")
+        self.assertEqual(
+            inspect_research_grant_claim(
+                self.runner, self.id)["status"], "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "corruption"):
+            reserve_research_grant_audit(
+                self.runner, self.id, self.model, self.policy,
+                self.receipt(), self.trust, now=self.now)
+        ledger.unlink()
+        foreign = self.root / "outside-journal.json"
+        foreign.write_text('{"unrelated":true}', encoding="utf-8")
+        try:
+            ledger.symlink_to(foreign)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks not available")
+        self.assertEqual(
+            inspect_research_grant_claim(
+                self.runner, self.id)["status"], "RECONCILIATION_REQUIRED")
+        with self.assertRaisesRegex(OrchestrationError, "unsafe"):
+            reserve_research_grant_audit(
+                self.runner, self.id, self.model, self.policy,
+                self.receipt(), self.trust, now=self.now)
+        self.assertEqual(foreign.read_text(encoding="utf-8"),
+                         '{"unrelated":true}')
+
+    def test_p4_17_two_concurrent_local_claims_cannot_consume_twice(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit,
+        )
+        def claim(_):
+            try:
+                return reserve_research_grant_audit(
+                    self.runner, self.id, self.model, self.policy,
+                    self.receipt(), self.trust, now=self.now)["status"]
+            except OrchestrationError:
+                return "REJECTED"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(claim, range(2)))
+        self.assertEqual(results.count("RESERVED_RESEARCH_GRANT_AUDIT_ONLY"), 1)
+        self.assertEqual(results.count("REJECTED"), 1)
+
+
 class ResearchGrantCliTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
