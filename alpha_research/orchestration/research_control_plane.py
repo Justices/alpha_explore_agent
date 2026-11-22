@@ -28,7 +28,7 @@ _COMPONENTS = ("research_preparation", "model_attempt", "manifest", "grant_audit
                "catalog_contract", "live_plan")
 
 
-def _status(name, callback):
+def _status(callback):
     try:
         record = callback()
         if not isinstance(record, dict) or not isinstance(record.get("status"), str):
@@ -50,27 +50,43 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
     request = task["request"]
     statuses = {
         "research_preparation": _status(
-            "preparation", lambda: inspect_research_preparation(
+            lambda: inspect_research_preparation(
                 orchestrator, task_id)),
         "model_attempt": _status(
-            "model_attempt", lambda: inspect_runtime_attempt(
+            lambda: inspect_runtime_attempt(
                 orchestrator, task_id)),
         "manifest": _status(
-            "manifest", lambda: inspect_generated_manifest(
+            lambda: inspect_generated_manifest(
                 orchestrator, task_id)),
         "grant_audit": _status(
-            "grant", lambda: inspect_research_grant_claim(
+            lambda: inspect_research_grant_claim(
                 orchestrator, task_id)),
         "catalog_contract": _status(
-            "catalog", lambda: inspect_catalog_read_contract(
+            lambda: inspect_catalog_read_contract(
                 orchestrator, task_id)),
-        "live_plan": _status(
-            "plan", lambda: inspect_research_runtime_plan(
-                orchestrator, task_id, model_config, governance_policy)),
     }
+    try:
+        live_plan = inspect_research_runtime_plan(
+            orchestrator, task_id, model_config, governance_policy)
+        if (not isinstance(live_plan, dict)
+                or live_plan.get("status") != "RESEARCH_RUNTIME_LIVE_BLOCKED"
+                or not isinstance(live_plan.get("blockers"), list)):
+            raise OrchestrationError("invalid research runtime plan")
+    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
+        live_plan = {
+            "status": "RECONCILIATION_REQUIRED",
+            "blockers": ["RESEARCH_RUNTIME_PLAN_UNAVAILABLE"],
+        }
+    statuses["live_plan"] = live_plan["status"]
     if set(statuses) != set(_COMPONENTS):
         raise OrchestrationError("research status component list drift")
-    if "RECONCILIATION_REQUIRED" in statuses.values():
+    uncertain = {
+        "RECONCILIATION_REQUIRED", "MODEL_CALL_MAY_HAVE_STARTED",
+        "MODEL_MOCK_UNKNOWN", "BLOCKED_MANUAL_REVIEW", "PREPARING",
+    }
+    needs_reconciliation = sorted(
+        key for key, status in statuses.items() if status in uncertain)
+    if needs_reconciliation:
         state = "RECONCILIATION_REQUIRED"
         next_required = "MANUAL_STATE_AND_EVIDENCE_RECONCILIATION"
     elif statuses["manifest"] == "GENERATED_LOCAL_NOT_AUTHORIZED":
@@ -97,6 +113,8 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
             "reserved": task["budget"]["reserved"],
         },
         "components": statuses,
+        "live_blockers": sorted(set(live_plan["blockers"])),
+        "reconciliation_components": needs_reconciliation,
         "next_required": next_required,
         "manual_manifest_required": False,
         "live_research_authorized": False,
