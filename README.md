@@ -67,6 +67,21 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P5.1–P5.2 independent authority pilot and driver-frame audit
+
+A new **loopback-only, separately launched local research authority pilot**
+provides authenticated, transactional single-use Grant consumption, signed
+ledger readback, atomic per-Grant/global USD reservation and independent
+operator revocation. The corresponding client deliberately has no automatic
+retry. The BRAIN driver now exposes an evidence-bound Catalog read-frame
+audit that checks signed Grant/ACK/ledger/session evidence before validating
+the exact scope; **it still does not start a live research Driver**.
+
+See [P5 local authority pilot and driver contract](docs/P5_RESEARCH_AUTHORITY_LOCAL_PILOT.md)
+for the opt-in local server, strict API boundaries, test commands and remaining
+external dependencies. No BRAIN Simulation, paid SDK call or Alpha submission
+is unlocked by these changes.
+
 ## P4.7 Simulation authorization integrity (offline only)
 
 A canonical one-use Simulation authorization index is now written before
