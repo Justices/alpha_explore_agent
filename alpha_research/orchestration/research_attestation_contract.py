@@ -15,9 +15,9 @@ from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_only_admission import _utc
 from alpha_research.state.fingerprint import canonical_json_bytes, fingerprint_json
 
-_ID = re.compile(r"[A-Za-z0-9_-]{1,80}\\Z")
-_HEX32 = re.compile(r"[0-9a-f]{32}\\Z")
-_HEX64 = re.compile(r"[0-9a-f]{64}\\Z")
+_ID = re.compile(r"[A-Za-z0-9_-]{1,80}\Z")
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _COMMON = frozenset({
     "schema_version", "operation", "evidence_id", "task_id",
     "research_receipt_sha256", "issuer_id", "key_id",
