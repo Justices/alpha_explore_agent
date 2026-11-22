@@ -143,10 +143,14 @@ class _ScopedScriptedCatalog:
                 source_alpha_id=self._source_alpha):
             raise OrchestrationError(
                 "offline research Catalog action or pinned scope not admitted")
-        # The original in-process script is the only possible transport here.
-        # It is checked independently after client-side normalization.
-        if not research_catalog_request_allowed(
-                command, wire, self._scope,
+        # Exercise the independently exposed driver-frame entrypoint, not a
+        # second copy of the client predicate. A driver rejection MUST stop
+        # before any scripted transport operation.
+        from alpha_research.integrations.brain.driver import (
+            research_catalog_frame_allowed,
+        )
+        if not research_catalog_frame_allowed(
+                {"cmd": command, **wire}, self._scope,
                 source_alpha_id=self._source_alpha):
             raise OrchestrationError("scripted driver rejected research Catalog read")
         result = self._gateway.call(command, **params)
