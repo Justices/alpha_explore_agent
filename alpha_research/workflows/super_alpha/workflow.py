@@ -111,8 +111,8 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
 
 def run_super_research(gateway, model, config: dict, state_root: Path, *,
                        region: str, objective: str, delay: int | None = None,
-                       execution_context=None):
-    """One evidence-registered native Super experiment; no auto-submission."""
+                       execution_context=None, preparation_handoff=None):
+    """Generate a Super candidate; optionally stop before Simulation for handoff."""
     run_id = uuid4().hex
     if execution_context is not None:
         bind_identity = execution_context.get("bind_research_identity")
@@ -197,6 +197,28 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         "research": {key: proposal[key] for key in
                      ("hypothesis", "rationale", "failure_criterion")},
     }
+    if preparation_handoff is not None:
+        # New two-phase orchestration mode: the domain Agent produced and
+        # validated the candidate, but no Simulation Intent/POST is created.
+        # The injected orchestration handoff persists the immutable manifest.
+        if not callable(preparation_handoff):
+            raise SuperScopeError("preparation handoff must be callable")
+        prepared_manifest = preparation_handoff({
+            "run_id": run_id, "batch_id": batch_id,
+            "request": request, "settings": settings})
+        run["status"] = "awaiting_independent_authorization"
+        run["manifest_ref"] = prepared_manifest.get("manifest_ref")
+        atomic_write_json(run_path, run)
+        persist_shared(status="awaiting_independent_authorization",
+                       budget={"limits": {"experiments": 1},
+                               "reserved": {"experiments": 0},
+                               "used": {"experiments": 0}})
+        return {
+            "status": "AWAITING_INDEPENDENT_AUTHORIZATION",
+            "workflow": "super", "run_id": run_id, "batch_id": batch_id,
+            "manifest": prepared_manifest,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
     create_simulation_intent(
         intent_path, workflow="super", run_id=run_id, batch_id=batch_id,
         request=request, settings=settings)
