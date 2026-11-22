@@ -26,8 +26,14 @@ _FORBIDDEN = frozenset({
 })
 
 
-def research_catalog_request_allowed(command, params, scope):
-    """Exact command/parameter/scope gate shared by future client and driver."""
+def research_catalog_request_allowed(command, params, scope, *,
+                                    source_alpha_id=None):
+    """Exact command/parameter/scope gate shared by future client and driver.
+
+    Single-Alpha details are denied unless bound to the exact Optimization
+    source Alpha. A Super task has no source Alpha and cannot open arbitrary
+    details by supplying an ID.
+    """
     if (not isinstance(command, str)
             or command not in RESEARCH_CATALOG_READS
             or command in _MUTATING
@@ -50,7 +56,10 @@ def research_catalog_request_allowed(command, params, scope):
     if command == "get_alpha_details":
         return (set(params) == {"alpha_id"}
                 and isinstance(params["alpha_id"], str)
-                and _ID.fullmatch(params["alpha_id"]) is not None)
+                and _ID.fullmatch(params["alpha_id"]) is not None
+                and isinstance(source_alpha_id, str)
+                and _ID.fullmatch(source_alpha_id) is not None
+                and params["alpha_id"] == source_alpha_id)
     if command == "get_datafields":
         return (
             set(params) == (_SCOPE | {"dataset_id"})
@@ -85,7 +94,10 @@ def inspect_catalog_read_contract(orchestrator, task_id):
         "schema_version": 1,
         "task_id": task_id,
         "scope": scope,
-        "allowed_read_actions": sorted(RESEARCH_CATALOG_READS),
+        "allowed_read_actions": sorted(
+            RESEARCH_CATALOG_READS
+            if task["workflow"] == "optimization"
+            else RESEARCH_CATALOG_READS - {"get_alpha_details"}),
         "status": "CATALOG_PROTOCOL_VALIDATED_NO_LIVE_DRIVER",
         "driver_authorized": False,
         "model_call_authorized": False,
