@@ -29,17 +29,21 @@ class ReferenceExternalSpendLedger:
     """Transactionally reserve strict budgets; no release of unknown charges."""
 
     def __init__(self, database_path, *, grant_id, max_model_calls,
-                 max_total_cost_usd_micros):
+                 max_total_cost_usd_micros,
+                 global_max_total_cost_usd_micros):
         if (not isinstance(grant_id, str) or len(grant_id) != 32
                 or any(c not in "0123456789abcdef" for c in grant_id)
                 or type(max_model_calls) is not int or max_model_calls < 1
                 or type(max_total_cost_usd_micros) is not int
-                or max_total_cost_usd_micros < 1):
+                or max_total_cost_usd_micros < 1
+                or type(global_max_total_cost_usd_micros) is not int
+                or global_max_total_cost_usd_micros < 1):
             raise OrchestrationError("external spend ledger grant budget invalid")
         self.path = Path(database_path)
         self.grant_id = grant_id
         self.max_model_calls = max_model_calls
         self.max_total_cost_usd_micros = max_total_cost_usd_micros
+        self.global_max_total_cost_usd_micros = global_max_total_cost_usd_micros
 
     def _connect(self):
         return sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
@@ -65,9 +69,14 @@ class ReferenceExternalSpendLedger:
                     "SELECT COUNT(*), COALESCE(SUM(reserved_usd_micros),0)"
                     " FROM research_model_spend WHERE grant_id=?",
                     (self.grant_id,)).fetchone()
+                global_committed = db.execute(
+                    "SELECT COALESCE(SUM(reserved_usd_micros),0)"
+                    " FROM research_model_spend").fetchone()[0]
                 if (row[0] >= self.max_model_calls
                         or row[1] + worst_case_usd_micros
-                        > self.max_total_cost_usd_micros):
+                        > self.max_total_cost_usd_micros
+                        or global_committed + worst_case_usd_micros
+                        > self.global_max_total_cost_usd_micros):
                     raise OrchestrationError("external model call or USD cap exhausted")
                 db.execute(
                     "INSERT INTO research_model_spend"
@@ -137,6 +146,9 @@ class ReferenceExternalSpendLedger:
 
     def snapshot(self):
         with closing(self._connect()) as db:
+            global_committed = db.execute(
+                "SELECT COALESCE(SUM(reserved_usd_micros),0)"
+                " FROM research_model_spend").fetchone()[0]
             rows = db.execute(
                 "SELECT status, COUNT(*), SUM(reserved_usd_micros)"
                 " FROM research_model_spend WHERE grant_id=? GROUP BY status",
@@ -145,6 +157,8 @@ class ReferenceExternalSpendLedger:
             "grant_id": self.grant_id,
             "max_model_calls": self.max_model_calls,
             "max_total_cost_usd_micros": self.max_total_cost_usd_micros,
+            "global_max_total_cost_usd_micros": self.global_max_total_cost_usd_micros,
+            "global_committed_reservation_usd_micros": global_committed,
             "reserved_attempts": sum(r[1] for r in rows),
             "committed_reservation_usd_micros": sum(r[2] for r in rows),
             "by_status": {r[0]: r[1] for r in rows},
