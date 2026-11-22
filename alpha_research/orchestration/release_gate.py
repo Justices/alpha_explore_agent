@@ -13,6 +13,9 @@ from alpha_research.orchestration.simulation_dispatch_preflight import (
 from alpha_research.orchestration.simulation_recovery_audit import (
     inspect_simulation_recovery_evidence,
 )
+from alpha_research.orchestration.platform_read_scope_binding import (
+    inspect_platform_read_scope_binding,
+)
 
 _BLOCKERS = (
     "EXTERNAL_OPERATOR_CONSENT_ISSUER_NOT_PROVISIONED",
@@ -29,7 +32,8 @@ _BLOCKERS = (
 
 
 def inspect_production_release_gate(orchestrator, task_id, model_config,
-                                    governance_policy, *, config_source):
+                                    governance_policy, *, config_source,
+                                    platform_read_evidence_id=None):
     """Assemble verified negative evidence; no write or network side effects."""
     task = orchestrator.load(task_id)
     baseline = audit_execution_admission(
@@ -37,6 +41,15 @@ def inspect_production_release_gate(orchestrator, task_id, model_config,
         governance_policy, config_source=config_source)
     reports = {"general_admission": baseline}
     blockers = list(baseline["blockers"]) + list(_BLOCKERS)
+    if platform_read_evidence_id is not None:
+        local_read = inspect_platform_read_scope_binding(
+            orchestrator, task_id, platform_read_evidence_id)
+        reports["local_platform_read_observation"] = local_read
+        # Local checksums and caller-provided record IDs are NEVER trusted
+        # remote attestation or an executable operation grant.
+        blockers.append("PLATFORM_READ_LOCAL_ONLY_NOT_INDEPENDENTLY_ATTESTED")
+        if local_read["status"] != "LOCAL_SCOPE_MATCH_UNATTESTED":
+            blockers.append("LOCAL_PLATFORM_SCOPE_EVIDENCE_" + local_read["status"])
     if task["workflow"] in {"super", "optimization"}:
         dispatch = inspect_simulation_dispatch_gate(
             orchestrator, task_id, governance_policy)
