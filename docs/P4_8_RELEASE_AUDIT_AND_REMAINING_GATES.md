@@ -80,10 +80,24 @@ The record must exist in the **same state root** as the Task (select the
 same `--state-root` when needed). This command reads only and never contacts
 BRAIN or any model provider. It requires local-checksum integrity, an
 observation timestamp no older than 24 hours, and an exact scope match.
-For Super/Optimization, an omitted Universe in the prepared Task is never
-silently inferred from a probe: it must come from a separately staged
-Simulation Intent. If staging is missing, invalid or cannot be reconciled,
-the audit remains blocked.
+For Super/Optimization, pin the exact Universe during task preparation.
+A read-only probe cannot fill in an omitted Universe, and a signed Simulation
+stage also requires the Universe to be pinned already in the original Task.
+A missing or conflicting scope remains blocked.
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-prepare --workflow super \\
+  --objective "USA TOP3000 single Simulation offline preparation" \\
+  --region USA --delay 1 --universe TOP3000
+```
+
+`--universe` is supported for Super and Optimization offline preparation
+starting at P4.11. The command only creates an immutable, unstarted Task,
+proposal and model identity. It never launches a model or BRAIN.
+Explicit `--config` scopes, if provided, must match the Region/Delay/Universe;
+a conflict causes a safe validation error. Use the same `--state-root` for
+the later release audit and the saved read-only observation.
 
 `LOCAL_SCOPE_MATCH_UNATTESTED` means ONLY that two locally persisted
 scope descriptions match. The report explicitly retains
