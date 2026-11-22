@@ -55,6 +55,12 @@ from alpha_research.orchestration.research_preparation import (
 from alpha_research.orchestration.research_only_admission import (
     build_research_issuer_request, inspect_research_live_readiness,
 )
+from alpha_research.orchestration.research_grant_audit import (
+    inspect_research_grant_claim, reserve_research_grant_audit,
+)
+from alpha_research.orchestration.research_catalog_protocol import (
+    inspect_catalog_read_contract,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -239,6 +245,20 @@ def main(argv=None):
     research_gate.add_argument("task_id")
     research_gate.add_argument("--receipt", type=_path_argument)
     research_gate.add_argument("--trust-policy", type=_path_argument)
+    research_claim = sub.add_parser(
+        "orchestration-research-grant-audit-reserve",
+        help="single-use LOCAL research grant audit; never authorizes provider/POST")
+    research_claim.add_argument("task_id")
+    research_claim.add_argument("--receipt", required=True, type=_path_argument)
+    research_claim.add_argument("--trust-policy", required=True, type=_path_argument)
+    research_claim_status = sub.add_parser(
+        "orchestration-research-grant-audit-status",
+        help="inspect local research grant audit, never a live permission")
+    research_claim_status.add_argument("task_id")
+    catalog_contract = sub.add_parser(
+        "orchestration-research-catalog-contract",
+        help="inspect exact read-only BRAIN Catalog scope; no network")
+    catalog_contract.add_argument("task_id")
     for command, help_text in (
         ("orchestration-consent-verify",
          "verify external Ed25519 consent evidence without creating authorization"),
@@ -627,6 +647,9 @@ def main(argv=None):
                         "orchestration-research-prepare-status",
                         "orchestration-research-issuer-request",
                         "orchestration-research-live-readiness",
+                        "orchestration-research-grant-audit-reserve",
+                        "orchestration-research-grant-audit-status",
+                        "orchestration-research-catalog-contract",
                         "orchestration-admission-audit",
                         "orchestration-authorization-inspect",
                         "orchestration-authorization-reserve",
@@ -658,6 +681,24 @@ def main(argv=None):
             if args.command == "orchestration-research-prepare-status":
                 result = inspect_research_preparation(
                     MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-grant-audit-status":
+                result = inspect_research_grant_claim(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-catalog-contract":
+                result = inspect_catalog_read_contract(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
+            if args.command == "orchestration-research-grant-audit-reserve":
+                receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
+                trust = json.loads(args.trust_policy.read_text(encoding="utf-8"))
+                result = reserve_research_grant_audit(
+                    MainOrchestrator(root), args.task_id,
+                    effective, policy, receipt, trust)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-issuer-request":
