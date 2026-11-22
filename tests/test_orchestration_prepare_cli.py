@@ -158,7 +158,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(audit["alpha_submission_authorized"])
         self.assertIn("PLATFORM_READ_LOCAL_ONLY_NOT_INDEPENDENTLY_ATTESTED",
                       audit["blockers"])
-        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*"))
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
 
     def test_p4_8_production_release_gate_cli_is_read_only(self):
         status, output, error = self._call(
