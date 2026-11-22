@@ -1,4 +1,4 @@
-# Research Runtime — Unified Operator Guide (P4.19–P4.21)
+# Research Runtime — Unified Operator Guide (P4.19–P4.24)
 
 This is the **current operational entrypoint** for orchestrated Super Alpha
 construction and Optimization. Earlier P4.x documents describe incremental
@@ -53,6 +53,27 @@ Every component verdict must match the current Task ID, schema and negative
 permission assertion. Unknown states, mismatched identities and invalid
 live-plan claims fail closed to `RECONCILIATION_REQUIRED`. These checks are
 read-only and do not create additional authorization or issue new grants.
+
+## P4.22–P4.24 — Durable terminal outcomes and canonical Task admission
+
+The offline model reservation **and its finalization** now use the same
+single-writer OS lock. Only a valid, sealed, pending, Task-matched,
+policy-matched attempt can transition once to `MODEL_MOCK_COMPLETED` or
+`MODEL_MOCK_UNKNOWN`. A second callback cannot overwrite an existing
+terminal result. A symlinked writer lock or tampered policy fingerprint
+blocks completion; ambiguous outcomes are not retried automatically.
+
+Model actions are bound to the Task workflow: `construct_super` is valid
+only for Super and `optimize_alpha` only for Optimization. The reservation
+rechecks the Task after acquiring the lock; a Task that has already started
+cannot gain a fresh model-call reservation.
+
+Manifest publication, the research preparation coordinator and scripted
+model reservation all use
+`orchestration/research_task_contract.py:is_fresh_research_task`. It rejects
+consumed steps, changed budget, persisted recovery evidence and incorrect
+JSON numeric types. This is a shared *offline admission* predicate, not a
+production grant. The simulation budget remains untouched.
 
 ## Run a complete local research rehearsal
 
