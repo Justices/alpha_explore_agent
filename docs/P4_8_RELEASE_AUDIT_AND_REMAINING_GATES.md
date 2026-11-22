@@ -145,6 +145,9 @@ scope-issuer request redacts Alpha expressions and exposes exact digests.
 `orchestration-simulation-scope-check` and
 `orchestration-simulation-stage` likewise default to the internal
 Manifest, while keeping `--manifest` as an explicit exceptional override.
+If an Agent-pinned snapshot already exists, a different externally supplied
+Manifest is rejected **before** signature issuance, scope verification or
+staging. No caller may replace the Alpha expressions via a manual file.
 
 **Important:** At this stage the existing task only has local BRAIN
 catalogue read evidence, not an Agent-generated Alpha candidate. This
