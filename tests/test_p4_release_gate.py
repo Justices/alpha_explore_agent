@@ -1,6 +1,7 @@
 """P4.8 release gate must remain negative and entirely read-only."""
 import json
 import tempfile
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,6 +9,12 @@ from unittest.mock import patch
 from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.orchestration.release_gate import (
     inspect_production_release_gate,
+)
+from alpha_research.orchestration.platform_read_evidence import (
+    record_platform_read_evidence,
+)
+from alpha_research.orchestration.platform_read_scope_binding import (
+    inspect_platform_read_scope_binding,
 )
 
 _POLICY = {"max_calls": 1, "max_reported_tokens": 1000, "failover": "manual"}
@@ -64,6 +71,104 @@ class ReleaseGateOfflineTests(unittest.TestCase):
                       report["blockers"])
         self.assertNotIn("simulation_dispatch", report["components"])
         self.assertFalse(report["alpha_submission_authorized"])
+
+    def _local_probe(self, *, region="USA", universe="TOP3000"):
+        return {
+            "status": "READ_ONLY_SCOPE_VERIFIED",
+            "region": region, "delay": 1, "universe": universe,
+            "dataset_count": 286,
+            "platform_settings_readable": True,
+            "dataset_catalog_readable": True,
+            "brain_read_invoked": True,
+            "simulation_invoked": False,
+            "model_invoked": False,
+            "alpha_submission_invoked": False,
+        }
+
+    def test_p4_10_local_read_scope_is_reported_but_not_authority(self):
+        record = record_platform_read_evidence(
+            self.root, self._local_probe())
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        with (patch("alpha_research.integrations.brain.gateway.Gateway",
+                    side_effect=AssertionError("audit must not open BRAIN")),
+              patch("alpha_research.integrations.model.build_model_client",
+                    side_effect=AssertionError("audit must not invoke model"))):
+            result = inspect_production_release_gate(
+                self.runner, self.super["task_id"], {}, _POLICY,
+                config_source="user_config",
+                platform_read_evidence_id=record["record_id"])
+        local = result["components"]["local_platform_read_observation"]
+        self.assertEqual(local["status"], "LOCAL_SCOPE_MATCH_UNATTESTED")
+        self.assertEqual(local["dataset_count"], 286)
+        self.assertEqual(local["scope"], {
+            "region": "USA", "delay": 1, "universe": "TOP3000"})
+        self.assertFalse(local["platform_account_verified"])
+        self.assertFalse(local["permission_to_dispatch"])
+        self.assertFalse(result["brain_simulation_authorized"])
+        self.assertFalse(result["production_authorized"])
+        self.assertIn("PLATFORM_READ_LOCAL_ONLY_NOT_INDEPENDENTLY_ATTESTED",
+                      result["blockers"])
+        self.assertIn("LIVE_SINGLE_USE_GRANT_CONSUMER_NOT_IMPLEMENTED",
+                      result["blockers"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")),
+                         "binding audit must never mutate files or create locks")
+
+    def test_p4_10_mismatched_or_bad_read_record_fails_closed(self):
+        mismatch = record_platform_read_evidence(
+            self.root, self._local_probe(region="CHN"))
+        wrong_scope = inspect_platform_read_scope_binding(
+            self.runner, self.super["task_id"], mismatch["record_id"])
+        self.assertEqual(wrong_scope["status"], "LOCAL_SCOPE_MISMATCH")
+        self.assertFalse(wrong_scope["permission_to_dispatch"])
+        for bad_id in ("../../etc/passwd", "f" * 32, True):
+            with self.subTest(bad_id=bad_id):
+                result = inspect_platform_read_scope_binding(
+                    self.runner, self.super["task_id"], bad_id)
+                self.assertEqual(
+                    result["status"], "EVIDENCE_MISSING_OR_CHANGED")
+                self.assertFalse(result["production_authorized"])
+        unknown = self.runner.create(
+            "super", {"objective": "missing universe", "region": "USA",
+                      "delay": 1})
+        local = record_platform_read_evidence(self.root, self._local_probe())
+        result = inspect_platform_read_scope_binding(
+            self.runner, unknown["task_id"], local["record_id"])
+        self.assertEqual(result["status"], "TASK_SCOPE_NOT_EXACT")
+        self.assertFalse(result["brain_simulation_authorized"])
+
+    def test_p4_10_expired_local_observation_is_not_live_proof(self):
+        evidence = record_platform_read_evidence(
+            self.root, self._local_probe())
+        # The local record can be complete but too old for a current audit.
+        now = datetime.fromisoformat(evidence["recorded_at"])
+        stale = inspect_platform_read_scope_binding(
+            self.runner, self.super["task_id"], evidence["record_id"],
+            now=now + timedelta(hours=25))
+        self.assertEqual(stale["status"], "LOCAL_EVIDENCE_STALE_OR_INVALID_TIME")
+        self.assertFalse(stale["permission_to_dispatch"])
+        future = inspect_platform_read_scope_binding(
+            self.runner, self.super["task_id"], evidence["record_id"],
+            now=now - timedelta(minutes=1))
+        self.assertEqual(future["status"], "LOCAL_EVIDENCE_STALE_OR_INVALID_TIME")
+
+    def test_p4_10_tamper_detected_across_scope_binding_and_release(self):
+        evidence = record_platform_read_evidence(
+            self.root, self._local_probe())
+        path = (self.root / "state" / "research_v1_1" /
+                "platform_read_evidence" / (evidence["record_id"] + ".json"))
+        altered = json.loads(path.read_text(encoding="utf-8"))
+        altered["report"]["universe"] = "TOP500"
+        path.write_text(json.dumps(altered), encoding="utf-8")
+        audit = inspect_production_release_gate(
+            self.runner, self.super["task_id"], {}, _POLICY,
+            config_source="user_config",
+            platform_read_evidence_id=evidence["record_id"])
+        local = audit["components"]["local_platform_read_observation"]
+        self.assertEqual(local["status"], "EVIDENCE_MISSING_OR_CHANGED")
+        self.assertIn(
+            "LOCAL_PLATFORM_SCOPE_EVIDENCE_EVIDENCE_MISSING_OR_CHANGED",
+            audit["blockers"])
+        self.assertFalse(audit["production_authorized"])
 
     def test_release_gate_redacts_private_configuration(self):
         marker = "must-not-appear-authorization-secret"
