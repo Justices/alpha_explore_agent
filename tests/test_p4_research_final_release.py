@@ -613,5 +613,171 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertEqual(ledger(3_000, 5_000).snapshot()["reserved_attempts"], 0)
 
 
+    def _p5_service(self, *, global_cap=9_000):
+        from threading import Thread
+        from alpha_research.orchestration.research_authority_transport import (
+            ResearchAuthorityApplication, make_loopback_authority_server,
+        )
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        ledger_signer = Ed25519PrivateKey.generate()
+        app = ResearchAuthorityApplication(
+            self.root / "authority-pilot.sqlite3",
+            consumer_signer=self.consumer_private,
+            ledger_signer=ledger_signer, operator_trust=self.operator_trust,
+            consumer_id="consumer", consumer_key_id="consumer-key",
+            ledger_id="remote-ledger",
+            ledger_issuer_id="separate-ledger",
+            ledger_key_id="ledger-key",
+            global_max_usd_micros=global_cap)
+        app.initialize_schema()
+        api_token = "api-" + "1" * 48
+        admin_token = "admin-" + "2" * 48
+        server = make_loopback_authority_server(
+            app, api_token=api_token, admin_token=admin_token)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        self.addCleanup(thread.join, timeout=5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        client = LoopbackAuthorityClient(
+            "127.0.0.1", server.server_address[1],
+            api_token=api_token, admin_token=admin_token)
+        return app, server, client, ledger_signer, api_token, admin_token
+
+    def test_p5_1_loopback_grant_ack_readback_budget_and_revoke(self):
+        from alpha_research.orchestration.research_grant_ledger import (
+            inspect_research_grant_ledger,
+        )
+        from alpha_research.state.fingerprint import fingerprint_json
+        app, server, client, ledger_signer, _api, _admin = self._p5_service()
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        consumed = client.consume(handoff, self.receipt)
+        self.assertFalse(consumed["permission_to_dispatch"])
+        ack = consumed["ack"]
+        self.assertEqual(ack["claims"]["grant_id"], "a" * 32)
+        evidence = client.readback("a" * 32)["evidence"]
+        ledger_trust = {
+            "schema_version": 1, "revoked_evidence": [],
+            "issuers": {"separate-ledger": {
+                "key_id": "ledger-key",
+                "public_key_b64": _pub(ledger_signer),
+                "enabled": True, "operations": ["read_research_grant_ledger"],
+            }},
+        }
+        audited = inspect_research_grant_ledger(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, ack, self.consumer_trust,
+            evidence, ledger_trust, now=datetime.now(timezone.utc))
+        self.assertFalse(audited["permission_to_dispatch"])
+        self.assertEqual(audited["status"],
+                         "GLOBAL_LEDGER_READBACK_SIGNATURE_VERIFIED_AUDIT_ONLY")
+        reserved = client.reserve(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, input_tokens=700,
+            max_output_tokens=900, ack_sha256=fingerprint_json(ack))
+        self.assertEqual(reserved["total_reserved_worst_case_usd_micros"], 5_000)
+        self.assertFalse(reserved["permission_to_dispatch"])
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 1)
+        with self.assertRaises(OrchestrationError):
+            client.consume(handoff, self.receipt)
+        with self.assertRaises(OrchestrationError):
+            client.reserve(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="2" * 32, input_tokens=700,
+                max_output_tokens=900, ack_sha256=fingerprint_json(ack))
+        self.assertEqual(client.revoke("a" * 32)["status"], "REVOKED")
+        with self.assertRaises(OrchestrationError):
+            client.readback("a" * 32)
+        with self.assertRaises(OrchestrationError):
+            client.snapshot("a" * 32)
+        self.assertFalse(app.grants.read_consumption("a" * 32)["dispatch_authorized"])
+
+    def test_p5_1_transport_authentication_and_request_filtering(self):
+        import http.client
+        import json
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        app, server, client, _ledger, api, admin = self._p5_service()
+        self.assertIsNotNone(app)
+        port = server.server_address[1]
+        with self.assertRaises(OrchestrationError):
+            LoopbackAuthorityClient(
+                "0.0.0.0", port, api_token=api)
+        with self.assertRaises(OrchestrationError):
+            LoopbackAuthorityClient(
+                "127.0.0.1", port, api_token="short")
+        with self.assertRaises(OrchestrationError):
+            client.revoke("z" * 32)
+        noadmin = LoopbackAuthorityClient(
+            "127.0.0.1", port, api_token=api)
+        with self.assertRaises(OrchestrationError):
+            noadmin.revoke("a" * 32)
+        wrong = LoopbackAuthorityClient(
+            "127.0.0.1", port, api_token="wrong-" + "9" * 48)
+        with self.assertRaises(OrchestrationError):
+            wrong.readback("a" * 32)
+        conn = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        try:
+            # Duplicate keys, including conflicting grant scopes, are refused.
+            raw = b'{"grant_id":"a","grant_id":"b"}'
+            conn.request(
+                "POST", "/v1/grant/readback", body=raw,
+                headers={"Authorization": "Bearer " + api,
+                         "Content-Type": "application/json"})
+            response = conn.getresponse()
+            body = response.read()
+            self.assertEqual(response.status, 409)
+            self.assertNotIn(api.encode(), body)
+        finally:
+            conn.close()
+        self.assertFalse(client.revoke("a" * 32)["permission_to_dispatch"])
+
+    def test_p5_1_server_refuses_replayed_or_mismatched_spend(self):
+        from alpha_research.state.fingerprint import fingerprint_json
+        _app, _server, client, _ledger, _api, _admin = self._p5_service(
+            global_cap=20_000)
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        ack = client.consume(handoff, self.receipt)["ack"]
+        good = {
+            "grant_id": "a" * 32, "task_id": self.task_id,
+            "attempt_id": "3" * 32,
+            "input_tokens": 700, "max_output_tokens": 900,
+            "ack_sha256": fingerprint_json(ack),
+        }
+        for patch in (
+            {"task_id": "e" * 32},
+            {"max_output_tokens": 1001},
+            {"input_tokens": True},
+            {"ack_sha256": "f" * 64},
+            {"attempt_id": "../escape"},
+        ):
+            with self.subTest(patch=patch):
+                with self.assertRaises(OrchestrationError):
+                    client.reserve(**{**good, **patch})
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 0)
+        client.reserve(**good)
+        with self.assertRaises(OrchestrationError):
+            client.reserve(**good)
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 1)
+
+    def test_p5_1_corrupted_handoff_does_not_consume_grant(self):
+        app, _server, client, _ledger, _api, _admin = self._p5_service()
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        tampered = copy.deepcopy(handoff)
+        tampered["fixed_claims"]["task_id"] = "f" * 32
+        with self.assertRaises(OrchestrationError):
+            client.consume(tampered, self.receipt)
+        self.assertIsNone(app.grants.read_consumption("a" * 32)["ack"])
+
+
 if __name__ == "__main__":
     unittest.main()
