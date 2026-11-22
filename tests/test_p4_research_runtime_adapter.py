@@ -140,6 +140,47 @@ class OfflineResearchRuntimeAdapterTests(unittest.TestCase):
             "MODEL_CALL_MAY_HAVE_STARTED")
         self.assertFalse(list(self.root.rglob("*simulation_intent.json")))
 
+    def test_model_action_must_match_workflow(self):
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            with self.assertRaisesRegex(OrchestrationError, "budget or task exceeded"):
+                runtime.reserve_scripted_model_call(
+                    "optimize_alpha", {"region": "USA"})
+            self.assertEqual(
+                inspect_runtime_attempt(self.runner, self.task_id)["status"],
+                "NO_MODEL_ATTEMPT")
+            runtime.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+        self.assertEqual(inspect_runtime_attempt(
+            self.runner, self.task_id)["task_name"], "construct_super")
+
+    def test_resealed_wrong_workflow_model_action_requires_reconciliation(self):
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            runtime.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+            path = runtime._attempt
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["task_name"] = "optimize_alpha"
+            write_sealed_json(path, raw)
+            self.assertEqual(inspect_runtime_attempt(
+                self.runner, self.task_id)["status"], "RECONCILIATION_REQUIRED")
+            with self.assertRaisesRegex(OrchestrationError, "reservation changed"):
+                runtime.conclude_scripted_model_call({"ok": True})
+
+    def test_task_transition_prevents_new_model_reservation(self):
+        claim_mock_workspace(self.root)
+        runtime = self.adapter()
+        task = self.runner.load(self.task_id)
+        self.runner._transition(task, status="RUNNING")
+        with runtime:
+            with self.assertRaisesRegex(OrchestrationError, "Task drift"):
+                runtime.reserve_scripted_model_call(
+                    "construct_super", {"region": "USA"})
+        self.assertEqual(
+            inspect_runtime_attempt(self.runner, self.task_id)["status"],
+            "NO_MODEL_ATTEMPT")
+
     def test_model_write_ahead_completion_and_no_second_call(self):
         claim_mock_workspace(self.root)
         before = self.runner.load(self.task_id)
