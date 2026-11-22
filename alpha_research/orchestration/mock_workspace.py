@@ -17,6 +17,10 @@ EVIDENCE_FOLDERS = (
     "candidate", "preferred", "candidate_branch", "optimization_source",
     "super_run", "campaign", "dataset_subtask", "combination",
     "campaign_runs", "execution_journals", "simulation_intents",
+    # A genuine BRAIN read or staged/approved execution is not synthetic.
+    "platform_read_evidence", "generated_simulation_manifests",
+    "simulation_attempt_admission", "operator_consent_audit",
+    "pre_dispatch_escrow", "research_preparation",
 )
 
 
