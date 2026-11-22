@@ -19,10 +19,16 @@ def is_fresh_research_task(task):
     """Reject Tasks with any consumed step, budget or recovery evidence."""
     return (
         isinstance(task, dict)
+        and type(task.get("schema_version")) is int
+        and task["schema_version"] == 1
         and task.get("workflow") in _RESEARCH_WORKFLOWS
         and task.get("status") == "CREATED"
         and task.get("steps") == _UNSTARTED_STEPS
-        and task.get("budget") == _UNUSED_BUDGET
+        and isinstance(task.get("budget"), dict)
+        and set(task["budget"]) == set(_UNUSED_BUDGET)
+        and all(type(task["budget"][key]) is int
+                and task["budget"][key] == expected
+                for key, expected in _UNUSED_BUDGET.items())
         and task.get("checkpoints") == {}
         and task.get("research_identity") is None
         and task.get("recovery_target") is None
