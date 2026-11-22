@@ -64,6 +64,9 @@ class ResearchControlPlaneTests(unittest.TestCase):
         self.assertEqual(report["components"]["manifest"], "AWAITING_RESEARCH_OUTPUT")
         self.assertEqual(report["components"]["grant_audit"], "NOT_RESERVED")
         self.assertEqual(report["components"]["live_plan"], "RESEARCH_RUNTIME_LIVE_BLOCKED")
+        self.assertIn("RESEARCH_EXTERNAL_GRANT_CONSUMER_UNAVAILABLE",
+                      report["live_blockers"])
+        self.assertEqual(report["reconciliation_components"], [])
         self.assertEqual(report["simulation_budget"],
                          {"limit": 1, "used": 0, "reserved": 0})
         for key in ("manual_manifest_required", "model_call_authorized",
@@ -109,13 +112,36 @@ class ResearchControlPlaneTests(unittest.TestCase):
         before = sorted(str(p) for p in self.root.rglob("*"))
         result = self.summary(task_id)
         self.assertEqual(result["status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("research_preparation", result["reconciliation_components"])
         self.assertEqual(
             result["components"]["research_preparation"], "RECONCILIATION_REQUIRED")
         self.assertFalse(result["permission_to_dispatch"])
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
 
+    def test_pending_model_attempt_forces_reconciliation(self):
+        from alpha_research.orchestration.research_runtime_adapter import (
+            OfflineResearchRuntimeAdapter,
+        )
+        from alpha_research.orchestration.domain_mock import (
+            DomainMockGateway, DomainMockModel,
+        )
+        task_id = self.fresh()
+        claim_mock_workspace(self.root)
+        adapter = OfflineResearchRuntimeAdapter(
+            self.runner, task_id, DomainMockGateway("USA"), DomainMockModel(),
+            self.policy)
+        with adapter:
+            adapter.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+        summary = self.summary(task_id)
+        self.assertEqual(summary["status"], "RECONCILIATION_REQUIRED")
+        self.assertEqual(summary["components"]["model_attempt"],
+                         "MODEL_CALL_MAY_HAVE_STARTED")
+        self.assertIn("model_attempt", summary["reconciliation_components"])
+        self.assertFalse(summary["automatic_retry_allowed"])
+        self.assertEqual(self.runner.load(task_id)["budget"]["used"], 0)
+
     def test_cli_one_command_never_builds_gateway_or_model(self):
-        from contextlib import ExitStack
         prefix = [
             "--state-root", str(self.root),
             "--lead", "deepseek", "--executor", "deepseek",
