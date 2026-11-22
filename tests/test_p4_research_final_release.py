@@ -827,5 +827,53 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             inspect({"cmd": "get_datasets", **scope}, receipt=changed_receipt)
 
 
+    def test_p5_1_pilot_launcher_requires_distinct_protected_keys(self):
+        import json
+        import os
+        from alpha_research.orchestration.research_authority_server import (
+            load_pilot_application,
+        )
+        consumer = self.root / "consumer-key.pem"
+        ledger = self.root / "ledger-key.pem"
+        trust_path = self.root / "operator-trust.json"
+        config_path = self.root / "pilot-config.json"
+        for path, key in ((consumer, self.consumer_private),
+                          (ledger, Ed25519PrivateKey.generate())):
+            path.write_bytes(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption()))
+            if os.name != "nt":
+                path.chmod(0o600)
+        trust_path.write_text(json.dumps(self.operator_trust), encoding="utf-8")
+        cfg = {
+            "schema_version": 1,
+            "database_file": str((self.root / "pilot.sqlite3").resolve()),
+            "operator_trust_file": str(trust_path.resolve()),
+            "consumer_private_key_file": str(consumer.resolve()),
+            "ledger_private_key_file": str(ledger.resolve()),
+            "consumer_id": "consumer",
+            "consumer_key_id": "consumer-key",
+            "ledger_id": "remote-ledger",
+            "ledger_issuer_id": "separate-ledger",
+            "ledger_key_id": "ledger-key",
+            "global_max_usd_micros": 9_000,
+        }
+        config_path.write_text(json.dumps(cfg), encoding="utf-8")
+        app = load_pilot_application(str(config_path.resolve()))
+        app.initialize_schema()
+        self.assertTrue((self.root / "pilot.sqlite3").exists())
+        bad = copy.deepcopy(cfg)
+        bad["consumer_private_key_file"] = str(ledger.resolve())
+        config_path.write_text(json.dumps(bad), encoding="utf-8")
+        with self.assertRaises(OrchestrationError):
+            load_pilot_application(str(config_path.resolve()))
+        if os.name != "nt":
+            config_path.write_text(json.dumps(cfg), encoding="utf-8")
+            consumer.chmod(0o644)
+            with self.assertRaises(OrchestrationError):
+                load_pilot_application(str(config_path.resolve()))
+
+
 if __name__ == "__main__":
     unittest.main()
