@@ -200,6 +200,8 @@ def main(argv=None):
     runtime_plan.add_argument("--trust-policy", type=_path_argument)
     runtime_plan.add_argument("--input-tokens", type=int)
     runtime_plan.add_argument("--max-output-tokens", type=int)
+    runtime_plan.add_argument("--global-consumption-ack", type=_path_argument)
+    runtime_plan.add_argument("--consumer-trust-policy", type=_path_argument)
     admission = sub.add_parser(
         "orchestration-admission-audit",
         help="inspect production authorization blockers without provider or BRAIN calls")
@@ -712,15 +714,26 @@ def main(argv=None):
                 if (args.receipt is None) != (args.trust_policy is None):
                     raise OrchestrationError(
                         "research receipt and trust must be supplied together")
+                if (args.global_consumption_ack is None) != (
+                        args.consumer_trust_policy is None):
+                    raise OrchestrationError(
+                        "global consumption ACK and consumer trust must be paired")
                 receipt = (json.loads(args.receipt.read_text(encoding="utf-8"))
                            if args.receipt is not None else None)
                 trust = (json.loads(args.trust_policy.read_text(encoding="utf-8"))
                          if args.trust_policy is not None else None)
+                global_ack = (
+                    json.loads(args.global_consumption_ack.read_text(encoding="utf-8"))
+                    if args.global_consumption_ack is not None else None)
+                consumer_trust = (
+                    json.loads(args.consumer_trust_policy.read_text(encoding="utf-8"))
+                    if args.consumer_trust_policy is not None else None)
                 result = inspect_research_runtime_plan(
                     MainOrchestrator(root), args.task_id, effective, policy,
                     receipt=receipt, trust_policy=trust,
                     input_tokens=args.input_tokens,
-                    max_output_tokens=args.max_output_tokens)
+                    max_output_tokens=args.max_output_tokens,
+                    global_ack=global_ack, consumer_trust=consumer_trust)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-grant-audit-status":
@@ -1047,7 +1060,9 @@ def main(argv=None):
                      "external manifest conflicts with Agent-pinned",
                      "research receipt and issuer trust policy must be paired",
                      "research receipt and trust must be supplied together",
-                     "model request limits require a signed research receipt")):
+                     "model request limits require a signed research receipt",
+                     "global consumption ACK and consumer trust must be paired",
+                     "global consumption ACK requires signed research grant")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
