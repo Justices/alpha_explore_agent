@@ -211,8 +211,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                      alpha_id: str, objective: str, region: str | None = None,
                      execution_context=None, run_id=None, expected_dataset=None,
                      expected_settings=None, ppa_profile=False,
-                     selection_evidence=None, stop_flag=None):
-    """Simulate one independent candidate, retaining immutable source evidence."""
+                     selection_evidence=None, stop_flag=None,
+                     preparation_handoff=None):
+    """Prepare a candidate or (without handoff) run the legacy domain workflow."""
     if not isinstance(objective, str) or not objective.strip():
         raise OptimizationError("optimization objective is required")
     run_id = run_id or uuid4().hex
@@ -325,6 +326,27 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                                  "expression": expression, "research": research}]}
     else:
         request = {"selection": selection, "combo": combo, "research": research}
+    if preparation_handoff is not None:
+        # A validated optimization candidate is produced in-process and
+        # handed to orchestration BEFORE any Simulation Intent or POST.
+        # The manifest builder binds it to a fresh Task and persists it.
+        if not callable(preparation_handoff):
+            raise OptimizationError("preparation handoff must be callable")
+        candidate_request = dict(request)
+        candidate_request["origin_alpha_id"] = alpha_id
+        prepared_manifest = preparation_handoff({
+            "run_id": run_id, "batch_id": batch_id,
+            "request": candidate_request, "settings": settings})
+        branch.update(status="awaiting_independent_authorization",
+                      prereg_ref=str(prereg_path),
+                      simulation_intent_ref=None)
+        _put_advanced(store, branch)
+        return {
+            "status": "AWAITING_INDEPENDENT_AUTHORIZATION",
+            "workflow": "optimization", "run_id": run_id,
+            "batch_id": batch_id, "manifest": prepared_manifest,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
     check_cache = getattr(gateway, "check_simulation_cache", None)
     if family == "regular" and callable(check_cache):
         check_cache(settings=settings, expressions=[expression])
