@@ -178,6 +178,75 @@ class OfflineResearchRuntimeAdapterTests(unittest.TestCase):
             self.adapter()
         self.assertEqual(self.runner.load(self.task_id)["budget"]["used"], 0)
 
+    def test_two_concurrent_model_completions_have_one_terminal_winner(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from alpha_research.state.fingerprint import fingerprint_json
+
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            runtime.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+            barrier = Barrier(2)
+            def complete(marker):
+                barrier.wait(timeout=5)
+                try:
+                    runtime.conclude_scripted_model_call({"marker": marker})
+                    return marker
+                except OrchestrationError:
+                    return None
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                a = pool.submit(complete, "first")
+                b = pool.submit(complete, "second")
+                results = [a.result(), b.result()]
+            winners = [item for item in results if item is not None]
+            self.assertEqual(len(winners), 1)
+            summary = inspect_runtime_attempt(self.runner, self.task_id)
+            self.assertEqual(summary["status"], "MODEL_MOCK_COMPLETED")
+            self.assertEqual(
+                summary["response_sha256"],
+                fingerprint_json({"marker": winners[0]}))
+            with self.assertRaises(OrchestrationError):
+                runtime.conclude_scripted_model_call(unknown=True)
+
+        self.assertEqual(self.runner.load(self.task_id)["budget"]["used"], 0)
+        self.assertFalse(list(self.root.rglob("*simulation_intent.json")))
+
+    def test_model_terminal_rejects_resealed_policy_drift(self):
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            runtime.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+            path = (self.root / "state" / "research_v1_1" /
+                    "research_runtime_attempts" / (self.task_id + ".json"))
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            raw["policy_sha256"] = "f" * 64
+            write_sealed_json(path, raw)
+            with self.assertRaisesRegex(OrchestrationError, "reservation changed"):
+                runtime.conclude_scripted_model_call({"ok": True})
+        self.assertEqual(inspect_runtime_attempt(
+            self.runner, self.task_id)["status"], "MODEL_CALL_MAY_HAVE_STARTED")
+
+    def test_model_terminal_rejects_symlinked_writer_lock(self):
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            runtime.reserve_scripted_model_call(
+                "construct_super", {"region": "USA"})
+            lock = runtime._attempt.with_suffix(".lock")
+            sentinel = self.root / "terminal-lock-sentinel.txt"
+            sentinel.write_text("unchanged", encoding="utf-8")
+            lock.unlink()
+            try:
+                lock.symlink_to(sentinel)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink not supported")
+            with self.assertRaisesRegex(OrchestrationError, "writer lock is unsafe"):
+                runtime.conclude_scripted_model_call({"ok": True})
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+        self.assertEqual(inspect_runtime_attempt(
+            self.runner, self.task_id)["status"], "MODEL_CALL_MAY_HAVE_STARTED")
+
     def test_unknown_model_outcome_stays_non_replayable(self):
         claim_mock_workspace(self.root)
         with self.adapter() as runtime:
