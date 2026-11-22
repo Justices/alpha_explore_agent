@@ -23,6 +23,7 @@ from alpha_research.orchestration.research_catalog_protocol import (
 )
 from alpha_research.state.fingerprint import fingerprint_json
 from alpha_research.state.sealed import is_sealed_state, write_sealed_json
+from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 _RUNTIME = ContextVar("offline_research_runtime", default=None)
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -212,25 +213,37 @@ class OfflineResearchRuntimeAdapter:
                 or self.policy["max_calls"] < 1):
             raise OrchestrationError("offline model call budget or task exceeded")
         _check_path(self._attempt)
-        if self._attempt.exists():
-            raise OrchestrationError("research model outcome requires reconciliation")
-        import uuid
-        row = {
-            "schema_version": 1,
-            "task_id": self.task_id,
-            "request_sha256": self.orchestrator.load(
-                self.task_id)["request_sha256"],
-            "mode": "offline_scripted_only",
-            "status": "MODEL_CALL_MAY_HAVE_STARTED",
-            "call_id": uuid.uuid4().hex,
-            "task_name": task_name,
-            "max_model_calls": self.policy["max_calls"],
-            "max_reported_tokens": self.policy["max_reported_tokens"],
-            "policy_sha256": fingerprint_json(self.policy),
-            "response_sha256": None,
-        }
-        write_sealed_json(self._attempt, row)
-        self._model_calls = 1
+        lock_path = self._attempt.with_suffix(".lock")
+        if lock_path.is_symlink():
+            raise OrchestrationError("research runtime writer lock is unsafe")
+        try:
+            with SingleWriterLock(lock_path):
+                _check_path(self._attempt)
+                if self._attempt.exists() or self._attempt.is_symlink():
+                    raise OrchestrationError(
+                        "research model outcome requires reconciliation")
+                if self._model_calls:
+                    raise OrchestrationError("research model call already reserved")
+                import uuid
+                row = {
+                    "schema_version": 1,
+                    "task_id": self.task_id,
+                    "request_sha256": self.orchestrator.load(
+                        self.task_id)["request_sha256"],
+                    "mode": "offline_scripted_only",
+                    "status": "MODEL_CALL_MAY_HAVE_STARTED",
+                    "call_id": uuid.uuid4().hex,
+                    "task_name": task_name,
+                    "max_model_calls": self.policy["max_calls"],
+                    "max_reported_tokens": self.policy["max_reported_tokens"],
+                    "policy_sha256": fingerprint_json(self.policy),
+                    "response_sha256": None,
+                }
+                write_sealed_json(self._attempt, row)
+                self._model_calls = 1
+        except WriterLockError as exc:
+            raise OrchestrationError(
+                "research model reservation busy; no automatic retry") from exc
 
     def conclude_scripted_model_call(self, response=None, *, unknown=False):
         _check_path(self._attempt)
@@ -253,6 +266,7 @@ class OfflineResearchRuntimeAdapter:
     def verify_completed(self):
         result = inspect_runtime_attempt(self.orchestrator, self.task_id)
         if (result["status"] != _FINAL or self._model_calls != 1
+                or result.get("policy_sha256") != fingerprint_json(self.policy)
                 or self.gateway.local_case_id is None):
             raise OrchestrationError(
                 "offline research runtime attempt incomplete; no retry permitted")
