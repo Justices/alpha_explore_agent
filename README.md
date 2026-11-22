@@ -44,6 +44,22 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
+## Orchestrated research runtime — one-command status (P4.20)
+
+For Super Alpha / Optimization tasks under the new orchestration control
+plane, start with the [Research Runtime Operator Guide](docs/RESEARCH_RUNTIME_OPERATOR_GUIDE.md).
+The read-only command `orchestration-research-status <TASK_ID>` reports
+Agent preparation, model attempt, immutable Manifest, local grant audit,
+Catalog scope, and production blockers **without requiring a manual Manifest
+file**. Use the same `--state-root` as the original Task.
+
+The production research adapter remains independently blocked: P4.19 provides
+strict Gateway/driver-frame read scope, an external signed consumer-ACK audit,
+and a bounded OpenAI-compatible SDK request contract, but **no remotely
+trusted grant consumer, no paid-model dispatch, no active research Catalog
+driver and no BRAIN Simulation/Alpha submission**. A local signature or
+offline CI run does not unlock these operations.
+
 ## P4.7 Simulation authorization integrity (offline only)
 
 A canonical one-use Simulation authorization index is now written before
