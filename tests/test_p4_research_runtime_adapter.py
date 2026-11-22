@@ -99,6 +99,47 @@ class OfflineResearchRuntimeAdapterTests(unittest.TestCase):
             inspect_runtime_attempt(self.runner, self.task_id)["status"],
             "NO_MODEL_ATTEMPT")
 
+    def test_driver_frame_rejection_prevents_even_scripted_catalog_read(self):
+        from unittest.mock import patch
+        claim_mock_workspace(self.root)
+        with self.adapter() as runtime:
+            self.assertEqual(self.gateway.calls, [])
+            with patch(
+                "alpha_research.integrations.brain.driver.research_catalog_frame_allowed",
+                return_value=False,
+            ) as driver_guard:
+                with self.assertRaisesRegex(
+                        OrchestrationError, "scripted driver rejected"):
+                    runtime.gateway.call("get_operators")
+                self.assertEqual(driver_guard.call_count, 1)
+                self.assertEqual(self.gateway.calls, [])
+
+    def test_two_concurrent_adapter_instances_reserve_one_model_attempt(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        claim_mock_workspace(self.root)
+        runtime_a, runtime_b = self.adapter(), self.adapter()
+        barrier = Barrier(2)
+        def attempt(runtime):
+            with runtime:
+                barrier.wait(timeout=3)
+                try:
+                    runtime.reserve_scripted_model_call(
+                        "construct_super", {"region": "USA"})
+                    return "RESERVED"
+                except OrchestrationError:
+                    return "REJECTED"
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            a = pool.submit(attempt, runtime_a)
+            b = pool.submit(attempt, runtime_b)
+            statuses = [a.result(), b.result()]
+        self.assertEqual(statuses.count("RESERVED"), 1)
+        self.assertEqual(statuses.count("REJECTED"), 1)
+        self.assertEqual(
+            inspect_runtime_attempt(self.runner, self.task_id)["status"],
+            "MODEL_CALL_MAY_HAVE_STARTED")
+        self.assertFalse(list(self.root.rglob("*simulation_intent.json")))
+
     def test_model_write_ahead_completion_and_no_second_call(self):
         claim_mock_workspace(self.root)
         before = self.runner.load(self.task_id)
@@ -214,6 +255,26 @@ class OfflineRuntimeIntegratedWorkflowTests(unittest.TestCase):
                     inspect_research_preparation(
                         self.runner, task["task_id"])["status"],
                     "RESEARCH_PREPARED_OFFLINE")
+
+    def test_tampered_preparation_journal_is_rejected_without_replay(self):
+        task = self.runner.create(
+            "super", {"objective": "integrity journal test",
+                      "region": "USA", "delay": 1, "universe": "TOP3000"})
+        claim_mock_workspace(self.root)
+        report = prepare_offline_research(self.runner, task["task_id"])
+        self.assertEqual(report["status"], "RESEARCH_PREPARED_OFFLINE")
+        journal = (self.root / "state" / "research_v1_1" /
+                   "research_preparation" / (task["task_id"] + ".json"))
+        raw = json.loads(journal.read_text(encoding="utf-8"))
+        self.assertRegex(raw["state_sha256"], r"^[0-9a-f]{64}$")
+        raw["manifest_sha256"] = "f" * 64
+        journal.write_text(json.dumps(raw), encoding="utf-8")
+        with self.assertRaisesRegex(OrchestrationError, "integrity drift"):
+            inspect_research_preparation(self.runner, task["task_id"])
+        with self.assertRaisesRegex(OrchestrationError, "integrity drift"):
+            prepare_offline_research(self.runner, task["task_id"])
+        self.assertEqual(self.runner.load(task["task_id"])["status"], "CREATED")
+        self.assertFalse(list(self.root.rglob("*simulation_intent.json")))
 
     def test_tampered_model_response_invalidates_completed_preparation(self):
         task = self.runner.create(
