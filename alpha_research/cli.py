@@ -622,6 +622,14 @@ def main(argv=None):
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-scope-issuer-request":
+                if not args.manifest.is_file():
+                    print(
+                        "orchestration preparation failed: --manifest file not found; "
+                        "provide the real path to a separately reviewed "
+                        "Simulation manifest JSON (example paths are not files)",
+                        file=sys.stderr,
+                    )
+                    return 2
                 manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
                 result = build_scope_issuer_request(
                     MainOrchestrator(root), args.task_id,
