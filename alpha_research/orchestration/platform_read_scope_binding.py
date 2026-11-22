@@ -75,8 +75,11 @@ def inspect_platform_read_scope_binding(orchestrator, task_id, evidence_id,
     }
     if evidence_id is None:
         return {**base, "status": "NOT_SUPPLIED"}
-    evidence = inspect_platform_read_evidence(
-        orchestrator.state_root, evidence_id)
+    try:
+        evidence = inspect_platform_read_evidence(
+            orchestrator.state_root, evidence_id)
+    except (TypeError, ValueError):
+        return {**base, "status": "EVIDENCE_MISSING_OR_CHANGED"}
     if evidence["status"] != "LOCAL_READ_OBSERVED_NOT_ATTESTED":
         return {**base, "status": "EVIDENCE_MISSING_OR_CHANGED"}
     clock = datetime.now(timezone.utc) if now is None else now
