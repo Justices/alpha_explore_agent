@@ -180,23 +180,49 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(code, 2, err)
         self.assertIn("OrchestrationError", err)
 
-        checked = {
-            "workflow": "super",
+        # A second, independent scope issuer fills only the advertised
+        # fields. The existing P4.5 HMAC verifier checks the complete packet
+        # before staging; unlike a mock, this proves schema compatibility.
+        import hashlib
+        import hmac
+        import os
+        from datetime import datetime, timedelta, timezone
+        from alpha_research.orchestration.runtime_config import (
+            load_preparation_config, prepare_registered_model_runtime,
+        )
+        from alpha_research.agents.registry import bundled_registry_path
+        from alpha_research.orchestration.simulation_scope import (
+            CONTEXT as SCOPE_CONTEXT, VERIFY_KEY_ENV,
+        )
+        from alpha_research.state.fingerprint import canonical_json_bytes
+        cfg, _ = load_preparation_config(self.config, explicit=True)
+        prepared = prepare_registered_model_runtime(
+            cfg, {"research_lead": "deepseek",
+                  "research_executor": "deepseek"}, bundled_registry_path())
+        now = datetime.now(timezone.utc)
+        claims = {
+            **result["fixed_claims"],
             "authorization_id": "c" * 32,
-            "research_id": plan["research_id"],
-            "simulation_sha256": result["fixed_claims"]["simulation_sha256"],
-            "permission_to_dispatch": False,
+            "issuer": "offline-scope-issuer",
+            "issued_at": (now - timedelta(seconds=30)).isoformat(),
+            "expires_at": (now + timedelta(minutes=4)).isoformat(),
         }
-        with patch(
-            "alpha_research.orchestration.simulation_attempt_admission.inspect_simulation_scope",
-            return_value=checked,
-        ):
-            stage_simulation_attempt(
+        secret = "offline-test-hmac-secret-" * 3
+        scope_receipt = {
+            "claims": claims,
+            "signature": hmac.new(
+                secret.encode("utf-8"),
+                SCOPE_CONTEXT + canonical_json_bytes(claims),
+                hashlib.sha256,
+            ).hexdigest(),
+        }
+        with patch.dict(os.environ, {VERIFY_KEY_ENV: secret}):
+            stage_result = stage_simulation_attempt(
                 MainOrchestrator(self.root), task_id,
-                {"not_called": True},
-                {"max_calls": 4, "max_reported_tokens": 1000,
-                 "failover": "manual"},
-                {"offline_test_only": True}, plan)
+                prepared["model"], prepared["model_governance"],
+                scope_receipt, plan)
+        self.assertEqual(stage_result["status"], "STAGED_NO_DISPATCH")
+        self.assertFalse(stage_result["permission_to_dispatch"])
 
         before = sorted(str(p) for p in self.root.rglob("*"))
         code, output, err = self._call(self.prefix + [
@@ -226,19 +252,61 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
 
         # Each pinned field is exactly the field the existing verifier checks.
-        from alpha_research.orchestration.runtime_config import (
-            load_preparation_config, prepare_registered_model_runtime,
-        )
-        from alpha_research.agents.registry import bundled_registry_path
-        cfg, _ = load_preparation_config(self.config, explicit=True)
-        prepared = prepare_registered_model_runtime(
-            cfg, {"research_lead": "deepseek",
-                  "research_executor": "deepseek"}, bundled_registry_path())
         expected = expected_external_consent_fields(
             MainOrchestrator(self.root), task_id,
             prepared["model"], prepared["model_governance"])
         for key, value in expected.items():
             self.assertEqual(receipt_request["fixed_claims"][key], value)
+
+        # A distinct Ed25519 operator issuer can sign the exact advertised
+        # claims. Verification is an audit, NOT a dispatch authorization.
+        import base64
+        from cryptography.hazmat.primitives import serialization
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import (
+            Ed25519PrivateKey,
+        )
+        from alpha_research.orchestration.operator_consent import (
+            _CONTEXT as CONSENT_CONTEXT, verify_external_consent,
+        )
+        private = Ed25519PrivateKey.generate()  # test-only, never persisted
+        public_b64 = base64.b64encode(private.public_key().public_bytes(
+            serialization.Encoding.Raw,
+            serialization.PublicFormat.Raw)).decode()
+        consent_claims = {
+            **receipt_request["fixed_claims"],
+            "grant_id": "d" * 32,
+            "issuer_id": "offline-operator-issuer",
+            "key_id": "test-only-key",
+            "operator_approval_id": "e" * 32,
+            "issued_at": (now - timedelta(seconds=30)).isoformat(),
+            "expires_at": (now + timedelta(minutes=4)).isoformat(),
+        }
+        consent_receipt = {
+            "claims": consent_claims,
+            "signature": base64.b64encode(private.sign(
+                CONSENT_CONTEXT + canonical_json_bytes(consent_claims))).decode(),
+        }
+        trust_policy = {
+            "schema_version": 1,
+            "issuers": {"offline-operator-issuer": {
+                "key_id": "test-only-key",
+                "public_key_b64": public_b64,
+                "enabled": True,
+                "operations": ["brain_simulation"],
+            }},
+            "revoked_grants": [],
+        }
+        verified = verify_external_consent(
+            MainOrchestrator(self.root), task_id,
+            prepared["model"], prepared["model_governance"],
+            consent_receipt, trust_policy, now=now)
+        self.assertTrue(verified["signature_verified"])
+        self.assertEqual(
+            verified["status"],
+            "EXTERNAL_SIGNATURE_VERIFIED_NOT_AUTHORIZED")
+        self.assertFalse(verified["permission_to_dispatch"])
+        self.assertFalse(verified["brain_simulation_authorized"])
+        self.assertFalse(verified["alpha_submission_authorized"])
 
     def test_p4_13_scope_request_rejects_unpinned_manifest(self):
         code, output, err = self._call(self.prefix + [
