@@ -779,5 +779,53 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertIsNone(app.grants.read_consumption("a" * 32)["ack"])
 
 
+    def test_p5_2_driver_ingress_validates_entire_signed_read_chain(self):
+        from alpha_research.integrations.brain import driver
+        from unittest.mock import patch
+        ledger_evidence, ledger_trust = self.ledger()
+        session_evidence, session_trust = self.driver()
+        scope = {"region": "USA", "delay": 1, "universe": "TOP3000",
+                 "instrument_type": "EQUITY"}
+        def inspect(frame, *, receipt=None, session=None):
+            return driver.inspect_research_catalog_evidence_frame(
+                self.runner, self.task_id, self.model, self.policy,
+                self.receipt if receipt is None else receipt,
+                self.operator_trust, self.ack, self.consumer_trust,
+                ledger_evidence, ledger_trust,
+                session_evidence if session is None else session,
+                session_trust, frame, now=self.now)
+        with (patch.object(driver, "PlatformRuntime",
+                           side_effect=AssertionError("BRAIN client forbidden")),
+              patch.object(driver, "WorldQuantClient",
+                           side_effect=AssertionError("credentials forbidden"))):
+            valid = inspect({"cmd": "get_datasets", **scope})
+            self.assertEqual(
+                valid["status"], "DRIVER_READ_FRAME_POLICY_VALIDATED_NO_LIVE")
+            self.assertTrue(valid["frame_policy_valid"])
+            self.assertFalse(valid["brain_read_authorized"])
+            self.assertFalse(valid["permission_to_dispatch"])
+            for frame in (
+                {"cmd": "simulate_super"},
+                {"cmd": "tag_alpha", "alpha_id": "alpha1"},
+                {"cmd": "get_datasets", **scope, "grant_id": "a" * 32},
+                {"cmd": "get_datasets", **{**scope, "delay": True}},
+                {"cmd": "get_datasets", **{**scope, "region": "CHN"}},
+                {"cmd": "get_alpha_details", "alpha_id": "another-alpha"},
+            ):
+                with self.subTest(frame=frame):
+                    rejected = inspect(frame)
+                    self.assertEqual(rejected["status"], "DRIVER_READ_FRAME_DENIED")
+                    self.assertFalse(rejected["frame_policy_valid"])
+                    self.assertFalse(rejected["permission_to_dispatch"])
+        corrupted = copy.deepcopy(session_evidence)
+        corrupted["claims"]["scope"]["universe"] = "TOP500"
+        with self.assertRaises(OrchestrationError):
+            inspect({"cmd": "get_datasets", **scope}, session=corrupted)
+        changed_receipt = copy.deepcopy(self.receipt)
+        changed_receipt["claims"]["grant_id"] = "c" * 32
+        with self.assertRaises(OrchestrationError):
+            inspect({"cmd": "get_datasets", **scope}, receipt=changed_receipt)
+
+
 if __name__ == "__main__":
     unittest.main()
