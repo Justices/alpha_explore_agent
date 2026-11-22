@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS research_grant_consumptions (
     approval_id TEXT NOT NULL UNIQUE,
     consumption_id TEXT NOT NULL UNIQUE,
     receipt_sha256 TEXT NOT NULL,
+    receipt_json TEXT NOT NULL,
     ack_json TEXT
 );
 CREATE TABLE IF NOT EXISTS research_grant_revocations (
@@ -146,10 +147,11 @@ class ReferenceExternalGrantLedger:
                     raise OrchestrationError("external research Grant revoked")
                 row = db.execute(
                     "INSERT INTO research_grant_consumptions"
-                    " (grant_id, approval_id, consumption_id, receipt_sha256)"
-                    " VALUES (?, ?, ?, ?)",
+                    " (grant_id, approval_id, consumption_id, receipt_sha256, receipt_json)"
+                    " VALUES (?, ?, ?, ?, ?)",
                     (fixed["grant_id"], fixed["operator_approval_id"],
-                     consumption_id, fixed["research_receipt_sha256"]))
+                     consumption_id, fixed["research_receipt_sha256"],
+                     canonical_json_bytes(receipt).decode("utf-8")))
                 claims = {
                     **fixed,
                     "consumer_id": self.consumer_id,
