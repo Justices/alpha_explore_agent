@@ -78,6 +78,18 @@ def _path_argument(value):
     return expand_path(value)
 
 
+def _resolve_simulation_manifest(orchestrator, task_id, manifest_path):
+    """Auto-load the Agent snapshot; legacy overrides may not drift from it."""
+    generated = read_generated_manifest(orchestrator, task_id)
+    if manifest_path is None:
+        return generated
+    candidate = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if generated is not None and candidate != generated:
+        raise OrchestrationError(
+            "external manifest conflicts with Agent-pinned Simulation snapshot")
+    return candidate
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="alpha_research")
     parser.add_argument("--state-root", type=_path_argument, default=default_state_root())
@@ -641,23 +653,20 @@ def main(argv=None):
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-scope-issuer-request":
-                if args.manifest is None:
-                    manifest = read_generated_manifest(
+                if args.manifest is not None and not args.manifest.is_file():
+                    print(
+                        "orchestration preparation failed: --manifest file not found; "
+                        "provide the real path to a separately reviewed "
+                        "Simulation manifest JSON (example paths are not files)",
+                        file=sys.stderr)
+                    return 2
+                manifest = _resolve_simulation_manifest(
+                    MainOrchestrator(root), args.task_id, args.manifest)
+                if manifest is None:
+                    result = inspect_generated_manifest(
                         MainOrchestrator(root), args.task_id)
-                    if manifest is None:
-                        result = inspect_generated_manifest(
-                            MainOrchestrator(root), args.task_id)
-                        print(json.dumps(result, ensure_ascii=False, indent=2))
-                        return 0
-                else:
-                    if not args.manifest.is_file():
-                        print(
-                            "orchestration preparation failed: --manifest file not found; "
-                            "provide the real path to a separately reviewed "
-                            "Simulation manifest JSON (example paths are not files)",
-                            file=sys.stderr)
-                        return 2
-                    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                    print(json.dumps(result, ensure_ascii=False, indent=2))
+                    return 0
                 result = build_scope_issuer_request(
                     MainOrchestrator(root), args.task_id,
                     effective, policy, manifest)
@@ -700,9 +709,8 @@ def main(argv=None):
                 return 0
             if args.command == "orchestration-simulation-stage":
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-                manifest = (json.loads(args.manifest.read_text(encoding="utf-8"))
-                            if args.manifest is not None else
-                            read_generated_manifest(MainOrchestrator(root), args.task_id))
+                manifest = _resolve_simulation_manifest(
+                    MainOrchestrator(root), args.task_id, args.manifest)
                 if manifest is None:
                     raise OrchestrationError(
                         "Agent Simulation manifest not ready; no research candidate recorded")
@@ -714,9 +722,8 @@ def main(argv=None):
             if args.command == "orchestration-simulation-scope-check":
                 # Read-only verifier: no lock, Gateway, model or intent write.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-                manifest = (json.loads(args.manifest.read_text(encoding="utf-8"))
-                            if args.manifest is not None else
-                            read_generated_manifest(MainOrchestrator(root), args.task_id))
+                manifest = _resolve_simulation_manifest(
+                    MainOrchestrator(root), args.task_id, args.manifest)
                 if manifest is None:
                     raise OrchestrationError(
                         "Agent Simulation manifest not ready; no research candidate recorded")
@@ -876,7 +883,8 @@ def main(argv=None):
                      "requested Universe conflicts with configured scope",
                      "Super/Optimization Simulation requires explicit Universe",
                      "Dataset, Category and PPA apply only to Regular",
-                     "Agent Simulation manifest not ready;")):
+                     "Agent Simulation manifest not ready;",
+                     "external manifest conflicts with Agent-pinned")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
