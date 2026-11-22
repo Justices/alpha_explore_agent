@@ -224,6 +224,35 @@ class ResearchOnlyGrantTests(unittest.TestCase):
             self.verify()
 
 
+    def test_p4_17_model_cost_preflight_is_never_executable(self):
+        from alpha_research.orchestration.research_model_cost_boundary import (
+            inspect_model_request_cost,
+        )
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        result = inspect_model_request_cost(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust,
+            input_tokens=700, max_output_tokens=900, now=self.now)
+        self.assertEqual(
+            result["status"], "MODEL_REQUEST_ENVELOPE_VALIDATED_NOT_EXECUTABLE")
+        self.assertEqual(result["worst_case_request_usd_micros"], 5_000)
+        self.assertFalse(result["model_call_authorized"])
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(result["provider_output_hard_limit_attested"])
+        self.assertFalse(result["provider_pricing_attested"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+        for field, amount in (
+            ("input_tokens", 1001), ("max_output_tokens", 1001),
+            ("input_tokens", True), ("max_output_tokens", 0),
+        ):
+            args = {"input_tokens": 700, "max_output_tokens": 900}
+            args[field] = amount
+            with self.subTest(field=field, amount=amount):
+                with self.assertRaises(OrchestrationError):
+                    inspect_model_request_cost(
+                        self.runner, self.id, self.model, self.policy,
+                        self.receipt(), self.trust, now=self.now, **args)
+
     def test_p4_17_audit_claim_is_single_use_and_never_authorizes_dispatch(self):
         from alpha_research.orchestration.research_grant_audit import (
             reserve_research_grant_audit, inspect_research_grant_claim,
