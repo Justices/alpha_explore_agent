@@ -509,7 +509,8 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         def new_ledger():
             return ReferenceExternalSpendLedger(
                 path, grant_id="a" * 32, max_model_calls=2,
-                max_total_cost_usd_micros=9_000)
+                max_total_cost_usd_micros=9_000,
+                global_max_total_cost_usd_micros=9_000)
         new_ledger().initialize_schema()
         barrier = Barrier(2)
         def reserve(attempt_id):
@@ -549,7 +550,8 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         )
         ledger = ReferenceExternalSpendLedger(
             self.root / "meter.sqlite3", grant_id="a" * 32,
-            max_model_calls=1, max_total_cost_usd_micros=5_000)
+            max_model_calls=1, max_total_cost_usd_micros=5_000,
+            global_max_total_cost_usd_micros=5_000)
         ledger.initialize_schema()
         report = ledger.reserve_once(
             task_id=self.task_id, attempt_id="1" * 32,
@@ -564,6 +566,30 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             ledger.reserve_once(
                 task_id=self.task_id, attempt_id="2" * 32,
                 worst_case_usd_micros=1_000)
+
+
+    def test_p4_27_global_usd_ceiling_across_different_grants(self):
+        from alpha_research.orchestration.research_spend_service_reference import (
+            ReferenceExternalSpendLedger,
+        )
+        shared = self.root / "global-spend.sqlite3"
+        def ledger(grant_id):
+            return ReferenceExternalSpendLedger(
+                shared, grant_id=grant_id, max_model_calls=2,
+                max_total_cost_usd_micros=7_000,
+                global_max_total_cost_usd_micros=7_000)
+        ledger("a" * 32).initialize_schema()
+        ledger("a" * 32).reserve_once(
+            task_id=self.task_id, attempt_id="1" * 32,
+            worst_case_usd_micros=4_000)
+        with self.assertRaises(OrchestrationError):
+            ledger("b" * 32).reserve_once(
+                task_id=self.task_id, attempt_id="2" * 32,
+                worst_case_usd_micros=4_000)
+        self.assertEqual(
+            ledger("b" * 32).snapshot()["global_committed_reservation_usd_micros"],
+            4_000)
+        self.assertFalse(ledger("b" * 32).snapshot()["permission_to_dispatch"])
 
 
 if __name__ == "__main__":
