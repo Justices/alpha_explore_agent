@@ -23,6 +23,7 @@ from alpha_research.orchestration.manifest_builder import (
     read_generated_manifest,
 )
 from alpha_research.orchestration.mock_workspace import is_mock_workspace
+from alpha_research.orchestration.research_task_contract import is_fresh_research_task
 from alpha_research.orchestration.research_runtime_adapter import (
     OfflineResearchRuntimeAdapter, inspect_runtime_attempt,
 )
@@ -57,12 +58,7 @@ def _assert_mock_root(orchestrator):
 
 
 def _assert_fresh(task):
-    if (task.get("status") != "CREATED"
-            or task.get("workflow") not in _ALLOWED
-            or task.get("budget") != {"limit": 1, "used": 0, "reserved": 0}
-            or task.get("checkpoints") != {}
-            or task.get("research_identity") is not None
-            or task.get("recovery_target") is not None):
+    if not is_fresh_research_task(task):
         raise OrchestrationError(
             "research preparation requires a fresh unexecuted Super/Optimization task")
     req = task["request"]
