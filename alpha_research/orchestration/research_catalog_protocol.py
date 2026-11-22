@@ -10,7 +10,7 @@ import re
 RESEARCH_CATALOG_READS = frozenset({
     "get_platform_setting_options", "get_simulation_settings_schema",
     "readonly_probe_datasets", "get_datasets", "get_datafields",
-    "get_operators", "get_alpha_details",
+    "get_operators", "get_alpha_details", "get_user_alphas",
 })
 _MUTATING = frozenset({
     "simulate_batch", "simulate_super", "resume_simulation_batch",
@@ -53,6 +53,15 @@ def research_catalog_request_allowed(command, params, scope, *,
         return params == {"include_schema": True} or params == {}
     if command == "get_simulation_settings_schema":
         return params == {}
+    if command == "get_user_alphas":
+        # Super can only enumerate submitted OS-stage Alphas, in bounded pages.
+        # The caller must still validate every returned Alpha's scope.
+        return (set(params) == {"stage", "limit", "offset"}
+                and params["stage"] == "OS"
+                and type(params["limit"]) is int
+                and 1 <= params["limit"] <= 100
+                and type(params["offset"]) is int
+                and 0 <= params["offset"] <= 100000)
     if command == "get_alpha_details":
         return (set(params) == {"alpha_id"}
                 and isinstance(params["alpha_id"], str)
