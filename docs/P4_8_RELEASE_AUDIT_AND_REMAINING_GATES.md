@@ -138,7 +138,9 @@ python3 -m alpha_research --lead deepseek --executor deepseek \\
 read commands and requires exact, typed Region/Delay/Universe/EQUITY
 parameters; DataField and source-Alpha identifiers are separately validated.
 Simulation POST, resume, tagging, `set_case`, mutation claims, extra request
-parameters and cross-scope reads fail. The policy is currently a pure,
+parameters and cross-scope reads fail. Single-Alpha details require an
+exactly bound Optimization source Alpha; Super tasks cannot request arbitrary
+Alpha details. The policy is currently a pure,
 read-only contract. The existing Gateway/driver do **not** gain a new live
 Catalog mode; the separately authorized, driver-enforced read profile and
 read-only case/snapshot handling still have to be implemented.
