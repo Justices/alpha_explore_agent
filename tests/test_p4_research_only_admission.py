@@ -161,6 +161,22 @@ class ResearchOnlyGrantTests(unittest.TestCase):
         self.assertFalse(result["model_call_authorized"])
         self.assertFalse(result["brain_read_authorized"])
         self.assertFalse(result["permission_to_dispatch"])
+        from alpha_research.orchestration.research_runtime_plan import (
+            inspect_research_runtime_plan,
+        )
+        plan = inspect_research_runtime_plan(
+            self.runner, self.id, self.model, self.policy,
+            receipt=grant, trust_policy=self.trust,
+            global_ack=signed(claims), consumer_trust=consumer_trust,
+            input_tokens=700, max_output_tokens=900, now=self.now)
+        self.assertEqual(plan["status"], "RESEARCH_RUNTIME_LIVE_BLOCKED")
+        self.assertEqual(
+            plan["global_consumption_ack_audit"]["ack_sha256"],
+            result["ack_sha256"])
+        self.assertIn("RESEARCH_GLOBAL_ACK_NOT_INDEPENDENTLY_ATTESTED",
+                      plan["blockers"])
+        self.assertFalse(plan["model_call_authorized"])
+        self.assertFalse(plan["permission_to_dispatch"])
         self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
         for changed in (
             {"grant_id": "e" * 32},
