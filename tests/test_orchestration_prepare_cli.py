@@ -67,6 +67,59 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
                 self.assertFalse(inspected["inspection_provider_invoked"])
                 self.assertFalse(inspected["inspection_brain_invoked"])
 
+    def test_super_and_optimization_prepare_pin_explicit_universe_offline(self):
+        # The CLI previously rejected --universe on Super/Optimization even
+        # though signed Simulation scope checks require an immutable Universe.
+        prefix = ["--state-root", str(self.root),
+                  "--lead", "deepseek", "--executor", "deepseek"]
+        for workflow in ("super", "optimization"):
+            with self.subTest(workflow=workflow):
+                args = prefix + [
+                    "orchestration-prepare", "--workflow", workflow,
+                    "--objective", "USA TOP3000 local-only Simulation preparation",
+                    "--region", "USA", "--delay", "1",
+                    "--universe", "TOP3000",
+                ]
+                if workflow == "optimization":
+                    args += ["--alpha-id", "offline-reference"]
+                code, output, error = self._call(args)
+                self.assertEqual(code, 0, error)
+                report = json.loads(output)
+                self.assertEqual(report["status"], "PREPARED_NOT_AUTHORIZED")
+                self.assertEqual(report["config_source"], "builtin_offline_defaults")
+                task = MainOrchestrator(self.root).load(report["task_id"])
+                self.assertEqual(task["status"], "CREATED")
+                self.assertEqual(task["budget"], {
+                    "limit": 1, "used": 0, "reserved": 0})
+                self.assertEqual(task["request"]["region"], "USA")
+                self.assertEqual(task["request"]["delay"], 1)
+                self.assertEqual(task["request"]["universe"], "TOP3000")
+                self.assertFalse(report["model_call_authorized"])
+                self.assertFalse(report["brain_invoked"])
+
+    def test_super_preparation_rejects_conflicting_configured_scope_safely(self):
+        config = json.loads(self.config.read_text(encoding="utf-8"))
+        config["scope"]["universe"] = "TOP1000"
+        self.config.write_text(json.dumps(config), encoding="utf-8")
+        code, output, error = self._call(self.prefix + [
+            "orchestration-prepare", "--workflow", "super",
+            "--objective", "offline scope mismatch",
+            "--region", "CHN", "--delay", "1", "--universe", "TOP3000"])
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("requested Universe conflicts with configured scope", error)
+        self.assertEqual(list(
+            (self.root / "state" / "research_v1_1" /
+             "orchestration").glob("*.json")), [])
+
+    def test_super_preparation_rejects_regular_only_dataset_options(self):
+        code, output, error = self._call(self.prefix + [
+            "orchestration-prepare", "--workflow", "super",
+            "--objective", "dataset not in Super", "--dataset", "fake-ds"])
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("Dataset, Category and PPA apply only to Regular", error)
+
     def test_operator_consent_cli_is_read_only_and_never_authorizes(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "super",
