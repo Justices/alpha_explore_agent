@@ -8,12 +8,14 @@ distribution. The application never imports or invokes this reference.
 """
 import base64
 import copy
+from contextlib import closing
 import json
 import secrets
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from alpha_research.orchestration.engine import OrchestrationError
@@ -22,7 +24,7 @@ from alpha_research.orchestration.research_global_consumer import (
 )
 from alpha_research.orchestration.research_only_admission import (
     _CLAIMS, _CONTEXT as GRANT_CONTEXT, _OPERATION as GRANT_OPERATION,
-    _cost_envelope, _trusted_public_key, _utc,
+    _cost_envelope, _trusted_public_key, _utc, _HEX32,
 )
 from alpha_research.state.fingerprint import canonical_json_bytes, fingerprint_json
 
@@ -63,7 +65,7 @@ class ReferenceExternalGrantLedger:
     def initialize_schema(self):
         """Explicit deployment migration; not called by the research app."""
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.executescript(CREATE_SQL)
 
     def _connect(self):
@@ -99,7 +101,7 @@ class ReferenceExternalGrantLedger:
                 raise ValueError("invalid signature length")
             _trusted_public_key(self.operator_trust, claims).verify(
                 signature, GRANT_CONTEXT + canonical_json_bytes(claims))
-        except (ValueError, TypeError, Exception) as exc:
+        except (InvalidSignature, ValueError, TypeError, OrchestrationError) as exc:
             # Do not turn untrusted bytes into an accepted grant.
             raise OrchestrationError("external Grant issuer signature invalid") from exc
         fixed = {
@@ -173,7 +175,8 @@ class ReferenceExternalGrantLedger:
                 return ack
             except (sqlite3.IntegrityError, sqlite3.OperationalError,
                     OrchestrationError) as exc:
-                db.execute("ROLLBACK")
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
                 raise OrchestrationError(
                     "external research Grant already consumed, revoked or ledger unavailable"
                 ) from exc
