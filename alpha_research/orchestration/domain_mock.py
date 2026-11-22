@@ -109,6 +109,15 @@ class DomainMockRecorder:
         return None
 
     def complete_json(self, task, context, **kwargs):
+        # Only the explicit P4.18 isolated runtime records this scripted
+        # attempt. Its write-ahead entry is durable before the model fake
+        # returns. Existing domain mocks remain independent.
+        from alpha_research.orchestration.research_runtime_adapter import (
+            active_offline_runtime,
+        )
+        runtime = active_offline_runtime()
+        if runtime is not None:
+            runtime.reserve_scripted_model_call(task, context)
         proposal = {"selection": "rank(signal_a)",
                     "combo": "rank(signal_b)", "hypothesis": "synthetic hypothesis",
                     "rationale": "offline-only test", "failure_criterion": "mock-only"}
@@ -119,7 +128,11 @@ class DomainMockRecorder:
         elif task == "optimize_alpha":
             proposal["changes"] = ["change combo expression"]
         else:
+            if runtime is not None:
+                runtime.conclude_scripted_model_call(unknown=True)
             raise OrchestrationError("unsupported offline model decision task")
+        if runtime is not None:
+            runtime.conclude_scripted_model_call(proposal)
         return proposal
 
 
