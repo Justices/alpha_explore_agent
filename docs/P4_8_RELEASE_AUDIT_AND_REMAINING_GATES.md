@@ -107,6 +107,58 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.13 — Exact, redacted handoff to external authorization issuers
+
+A prepared Super/Optimization Task is NOT a Simulation manifest and cannot
+be promoted to a runnable operation just from a BRAIN dataset-catalog probe.
+The operator must supply a separately reviewed, specific Simulation manifest
+containing `research_id, run_id, batch_id, request, settings`; its settings
+must exactly equal the Task's pinned Region, Delay, Universe and EQUITY.
+
+**Step A — read-only staging-scope signature request:**
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-scope-issuer-request <TASK_ID> \\
+  --manifest /secure/path/reviewed-simulation-manifest.json
+```
+
+The output lists the immutable public scope, identity fingerprints and a
+`simulation_sha256` digest of the full manifest; it does **not** print
+Alpha expressions, secrets or the full manifest. It lists exactly the four
+scope-receipt fields the external scope issuer must add. The existing P4.5
+receipt uses an HMAC with a shared verifier secret and can only support
+*offline staging*, not an independently authenticated operator approval.
+No local signing helper is provided.
+
+After a separately issued and successfully verified technical scope receipt,
+`orchestration-simulation-stage <TASK_ID> --receipt ... --manifest ...`
+creates the **non-executable** staged Intent. It never POSTs to BRAIN.
+
+**Step B — read-only external operator consent request:**
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-consent-issuer-request <TASK_ID>
+```
+
+This second request requires intact, completely staged evidence and emits
+exactly the fixed fields that `verify_external_consent` independently
+checks. The external Ed25519 operator issuer is responsible for choosing
+`grant_id, issuer_id, key_id, operator_approval_id, issued_at, expires_at`,
+reviewing the approved task and limits, and signing the complete canonical
+claims with a separately protected private key. Consent is valid for at
+most 15 minutes and enforces `max_attempts=1`, `max_model_calls=0`,
+`allow_alpha_submission=false`.
+
+Both requests are **read-only**, non-executable and repeatable with the same
+input. Neither issues a signature, establishes independently trusted keys,
+consumes a grant, prices execution, opens the BRAIN Gateway or authorizes
+a POST. External issuance, revocation, durable single-use consumption, driver
+enforcement, remote reconciliation and a separate canary approval remain
+mandatory production gates. Never put HMAC/Ed25519 private keys or BRAIN/model
+credentials in GitHub or a handoff packet.
+
 ## Non-executable preparation CLI (mutates audit files only)
 
 The CLI now exposes the complete **offline** P4.7.2/3 preparation sequence
