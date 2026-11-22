@@ -435,5 +435,69 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 evidence, trust, now=self.now)
 
 
+    def test_p4_25_external_reference_consumer_atomic_across_connections(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from alpha_research.orchestration.research_grant_service_reference import (
+            ReferenceExternalGrantLedger,
+        )
+        from alpha_research.orchestration.research_global_consumer import (
+            verify_global_consumption_ack,
+        )
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        db = self.root / "independent-service" / "grant.sqlite3"
+        def new_service():
+            return ReferenceExternalGrantLedger(
+                db, signer=self.consumer_private,
+                operator_trust=self.operator_trust,
+                consumer_id="consumer", key_id="consumer-key",
+                ledger_id="remote-ledger")
+        new_service().initialize_schema()
+        barrier = Barrier(2)
+        def consume():
+            barrier.wait(timeout=10)
+            try:
+                return new_service().consume_once(
+                    handoff, self.receipt, now=self.now)
+            except OrchestrationError:
+                return None
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(consume) for _ in range(2)]
+            results = [f.result() for f in futures]
+        winners = [result for result in results if result is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(new_service().read_consumption("a" * 32)["ack"], winners[0])
+        verified = verify_global_consumption_ack(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, winners[0],
+            self.consumer_trust, now=self.now)
+        self.assertEqual(verified["status"],
+                         "GLOBAL_ACK_SIGNATURE_VERIFIED_AUDIT_ONLY")
+        self.assertFalse(verified["model_call_authorized"])
+        new_service().revoke("a" * 32, now=self.now)
+        self.assertEqual(new_service().read_consumption("a" * 32)["status"], "REVOKED")
+        with self.assertRaises(OrchestrationError):
+            new_service().consume_once(handoff, self.receipt, now=self.now)
+
+    def test_p4_25_reference_revoke_before_consume(self):
+        from alpha_research.orchestration.research_grant_service_reference import (
+            ReferenceExternalGrantLedger,
+        )
+        service = ReferenceExternalGrantLedger(
+            self.root / "isolated" / "ledger.sqlite3",
+            signer=self.consumer_private, operator_trust=self.operator_trust,
+            consumer_id="consumer", key_id="consumer-key", ledger_id="remote-ledger")
+        service.initialize_schema()
+        service.revoke("a" * 32, now=self.now)
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        with self.assertRaises(OrchestrationError):
+            service.consume_once(handoff, self.receipt, now=self.now)
+        self.assertIsNone(service.read_consumption("a" * 32)["ack"])
+
+
 if __name__ == "__main__":
     unittest.main()
