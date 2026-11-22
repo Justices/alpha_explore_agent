@@ -46,6 +46,9 @@ from alpha_research.orchestration.operator_consent import (
 from alpha_research.orchestration.authorization_handoff import (
     build_scope_issuer_request, build_operator_consent_issuer_request,
 )
+from alpha_research.orchestration.manifest_builder import (
+    inspect_generated_manifest, read_generated_manifest,
+)
 from alpha_research.orchestration.pre_dispatch_escrow import (
     inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
 )
@@ -165,13 +168,17 @@ def main(argv=None):
         help="verify external Simulation scope receipt and manifest; NEVER dispatch")
     simulation_scope.add_argument("task_id")
     simulation_scope.add_argument("--receipt", required=True, type=_path_argument)
-    simulation_scope.add_argument("--manifest", required=True, type=_path_argument)
+    simulation_scope.add_argument(
+        "--manifest", type=_path_argument,
+        help="optional external manifest, otherwise use internal Agent snapshot")
     sim_stage = sub.add_parser(
         "orchestration-simulation-stage",
         help="atomically stage one signed Simulation intent; NO BRAIN dispatch")
     sim_stage.add_argument("task_id")
     sim_stage.add_argument("--receipt", required=True, type=_path_argument)
-    sim_stage.add_argument("--manifest", required=True, type=_path_argument)
+    sim_stage.add_argument(
+        "--manifest", type=_path_argument,
+        help="optional external manifest, otherwise use internal Agent snapshot")
     sim_stage_status = sub.add_parser(
         "orchestration-simulation-stage-status",
         help="read-only inspection of staged Simulation attempt")
@@ -184,7 +191,13 @@ def main(argv=None):
         "orchestration-scope-issuer-request",
         help="read-only scope-signature request; does NOT sign or authorize")
     scope_handoff.add_argument("task_id")
-    scope_handoff.add_argument("--manifest", required=True, type=_path_argument)
+    scope_handoff.add_argument(
+        "--manifest", type=_path_argument,
+        help="optional reviewed external manifest; default is Agent-produced snapshot")
+    manifest_status = sub.add_parser(
+        "orchestration-manifest-status",
+        help="read-only inspection of Agent-produced Simulation snapshot")
+    manifest_status.add_argument("task_id")
     consent_handoff = sub.add_parser(
         "orchestration-consent-issuer-request",
         help="read-only operator approval handoff; requires staged Intent")
@@ -582,6 +595,7 @@ def main(argv=None):
                         "orchestration-consent-verify",
                         "orchestration-consent-reserve",
                         "orchestration-scope-issuer-request",
+                        "orchestration-manifest-status",
                         "orchestration-consent-issuer-request",
                         "orchestration-predispatch-escrow-reserve",
                         "orchestration-predispatch-escrow-status",
@@ -621,16 +635,29 @@ def main(argv=None):
                     MainOrchestrator(root), args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
+            if args.command == "orchestration-manifest-status":
+                result = inspect_generated_manifest(
+                    MainOrchestrator(root), args.task_id)
+                print(json.dumps(result, ensure_ascii=False, indent=2))
+                return 0
             if args.command == "orchestration-scope-issuer-request":
-                if not args.manifest.is_file():
-                    print(
-                        "orchestration preparation failed: --manifest file not found; "
-                        "provide the real path to a separately reviewed "
-                        "Simulation manifest JSON (example paths are not files)",
-                        file=sys.stderr,
-                    )
-                    return 2
-                manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                if args.manifest is None:
+                    manifest = read_generated_manifest(
+                        MainOrchestrator(root), args.task_id)
+                    if manifest is None:
+                        result = inspect_generated_manifest(
+                            MainOrchestrator(root), args.task_id)
+                        print(json.dumps(result, ensure_ascii=False, indent=2))
+                        return 0
+                else:
+                    if not args.manifest.is_file():
+                        print(
+                            "orchestration preparation failed: --manifest file not found; "
+                            "provide the real path to a separately reviewed "
+                            "Simulation manifest JSON (example paths are not files)",
+                            file=sys.stderr)
+                        return 2
+                    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
                 result = build_scope_issuer_request(
                     MainOrchestrator(root), args.task_id,
                     effective, policy, manifest)
@@ -673,7 +700,12 @@ def main(argv=None):
                 return 0
             if args.command == "orchestration-simulation-stage":
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-                manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                manifest = (json.loads(args.manifest.read_text(encoding="utf-8"))
+                            if args.manifest is not None else
+                            read_generated_manifest(MainOrchestrator(root), args.task_id))
+                if manifest is None:
+                    raise OrchestrationError(
+                        "Agent Simulation manifest not ready; no research candidate recorded")
                 result = stage_simulation_attempt(
                     MainOrchestrator(root), args.task_id, effective, policy,
                     receipt, manifest)
@@ -682,7 +714,12 @@ def main(argv=None):
             if args.command == "orchestration-simulation-scope-check":
                 # Read-only verifier: no lock, Gateway, model or intent write.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-                manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+                manifest = (json.loads(args.manifest.read_text(encoding="utf-8"))
+                            if args.manifest is not None else
+                            read_generated_manifest(MainOrchestrator(root), args.task_id))
+                if manifest is None:
+                    raise OrchestrationError(
+                        "Agent Simulation manifest not ready; no research candidate recorded")
                 result = inspect_simulation_scope(
                     MainOrchestrator(root), args.task_id, effective, policy,
                     receipt, manifest)
@@ -838,7 +875,8 @@ def main(argv=None):
                      "requested Delay conflicts with configured scope",
                      "requested Universe conflicts with configured scope",
                      "Super/Optimization Simulation requires explicit Universe",
-                     "Dataset, Category and PPA apply only to Regular")):
+                     "Dataset, Category and PPA apply only to Regular",
+                     "Agent Simulation manifest not ready;")):
                 print(f"orchestration preparation failed: {exc}", file=sys.stderr)
             else:
                 print(f"orchestration preparation failed: {type(exc).__name__}",
