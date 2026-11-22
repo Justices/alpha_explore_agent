@@ -230,7 +230,7 @@ class OfflineResearchRuntimeAdapter:
                 if self._model_calls:
                     raise OrchestrationError("research model call already reserved")
                 task = self.orchestrator.load(self.task_id)
-                if (not _fresh_task(task)
+                if (not is_fresh_research_task(task)
                         or task["workflow"] != self.workflow
                         or task["request_sha256"] != self.request_sha256):
                     raise OrchestrationError(
