@@ -91,13 +91,24 @@ class AgentManifestBuilderTests(unittest.TestCase):
         with self.assertRaisesRegex(OrchestrationError, "digest drift"):
             read_generated_manifest(self.runner, self.id)
 
-    def test_two_writers_are_idempotent_for_same_candidate(self):
+    def test_competing_writers_are_fail_closed_and_one_manifest_is_saved(self):
+        def attempt(_):
+            try:
+                return record_agent_generated_manifest(
+                    self.runner, self.id, self.candidate)["status"]
+            except OrchestrationError as exc:
+                self.assertIn("another agent is publishing", str(exc))
+                return "LOCKED_OUT"
         with ThreadPoolExecutor(max_workers=2) as pool:
-            statuses = list(pool.map(
-                lambda _: record_agent_generated_manifest(
-                    self.runner, self.id, self.candidate), range(2)))
-        self.assertEqual(statuses[0], statuses[1])
+            statuses = list(pool.map(attempt, range(2)))
+        self.assertIn("GENERATED_LOCAL_NOT_AUTHORIZED", statuses)
+        self.assertTrue(all(value in {
+            "GENERATED_LOCAL_NOT_AUTHORIZED", "LOCKED_OUT"}
+            for value in statuses))
         self.assertEqual(len(list(self.path.parent.glob(self.id + ".json"))), 1)
+        self.assertEqual(
+            read_generated_manifest(self.runner, self.id)["batch_id"],
+            "offline_batch")
 
     def test_completed_task_cannot_publish_new_manifest(self):
         task = self.runner.load(self.id)
@@ -119,6 +130,10 @@ class AgentManifestBuilderTests(unittest.TestCase):
         cfg["scope"]["region"] = "USA"
         cfg["scope"]["delay"] = 1
         cfg["scope"]["universe"] = "TOP3000"
+        from alpha_research.orchestration.mock_workspace import (
+            claim_mock_workspace,
+        )
+        claim_mock_workspace(self.root)
         with mock_domain_boundary("USA"):
             result = run_super_research(
                 gateway, DomainMockModel(), cfg, self.root,
@@ -153,6 +168,10 @@ class AgentManifestBuilderTests(unittest.TestCase):
         cfg["scope"]["delay"] = 1
         cfg["scope"]["universe"] = "TOP3000"
         gw = DomainMockGateway("USA", "SOURCE")
+        from alpha_research.orchestration.mock_workspace import (
+            claim_mock_workspace,
+        )
+        claim_mock_workspace(self.root)
         with mock_domain_boundary("USA"):
             result = run_optimization(
                 gw, DomainMockModel(), cfg, self.root,
