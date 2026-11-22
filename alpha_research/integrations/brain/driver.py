@@ -13,6 +13,20 @@ from alpha_research.integrations.brain.guarded_protocol import (
     GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
     guarded_request_allowed,
 )  # noqa: E402
+from alpha_research.orchestration.research_catalog_protocol import (
+    research_catalog_request_allowed,
+)  # noqa: E402
+
+
+def research_catalog_frame_allowed(request, scope, *, source_alpha_id=None):
+    """Driver-side exact research read frame guard; never issues authority."""
+    if not isinstance(request, dict) or "cmd" not in request:
+        return False
+    return research_catalog_request_allowed(
+        request["cmd"],
+        {k: v for k, v in request.items() if k != "cmd"},
+        scope, source_alpha_id=source_alpha_id,
+    )
 
 
 def write(payload):
@@ -24,12 +38,24 @@ def main():
     args = sys.argv[1:]
     read_only = "--read-only" in args
     guarded = "--orchestration-guarded" in args
-    flags = {"--read-only", "--orchestration-guarded"}
+    research_catalog = "--research-catalog" in args
+    flags = {"--read-only", "--orchestration-guarded", "--research-catalog"}
     remaining = [arg for arg in args if arg not in flags]
     if (len(remaining) != len(args) - int(read_only) - int(guarded)
-            or remaining not in ([], ["--brain-credentials-stdin"])):
+            - int(research_catalog)
+            or remaining not in ([], ["--brain-credentials-stdin"])
+            or (research_catalog and (read_only or guarded))):
         write({"ok": False, "stage": "configuration",
                "error": "invalid driver options"})
+        return 2
+    if research_catalog:
+        # P4.19: this profile is not executable until an independently
+        # trusted global grant consumer is provisioned. Refuse BEFORE
+        # credentials are read or a platform client is constructed.
+        # The pure driver-frame policy above is independently testable
+        # with fake data. A signed file/CLI flag must never unlock it.
+        write({"ok": False, "stage": "admission",
+               "error": "independent research grant consumer unavailable"})
         return 2
     try:
         if remaining == ["--brain-credentials-stdin"]:
