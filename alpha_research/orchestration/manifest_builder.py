@@ -126,12 +126,17 @@ def record_agent_generated_manifest(orchestrator, task_id, candidate):
     provenance. This builder enforces shape, scope and durability but cannot
     establish model provenance or authorize a real Simulation.
     """
+    # Validate all candidate fields and pinned Task scope BEFORE opening a
+    # writer lock. Invalid Agent output must not create a lock or directory.
+    task = orchestrator.load(task_id)
+    _validate_candidate(task, candidate)
     path = _path(orchestrator, task_id)
     root = path.parent
     if root.is_symlink() or (root.exists() and not root.is_dir()):
         raise OrchestrationError("generated manifest root unsafe")
     try:
         with SingleWriterLock(path.with_suffix(".lock")):
+            # Revalidate under lock to prevent a Task mutation race.
             task = orchestrator.load(task_id)
             manifest = _validate_candidate(task, candidate)
             if path.exists() or path.is_symlink():
