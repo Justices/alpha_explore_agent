@@ -24,7 +24,13 @@ class ResearchCatalogProtocolTests(unittest.TestCase):
         self.assertTrue(self.allowed(
             "get_platform_setting_options", {"include_schema": True}))
         self.assertTrue(self.allowed("get_simulation_settings_schema", {}))
-        self.assertTrue(self.allowed("get_alpha_details", {"alpha_id": "alpha-id"}))
+        self.assertFalse(self.allowed("get_alpha_details", {"alpha_id": "alpha-id"}))
+        self.assertTrue(research_catalog_request_allowed(
+            "get_alpha_details", {"alpha_id": "alpha-id"}, self.scope,
+            source_alpha_id="alpha-id"))
+        self.assertFalse(research_catalog_request_allowed(
+            "get_alpha_details", {"alpha_id": "other-alpha"}, self.scope,
+            source_alpha_id="alpha-id"))
         for action in ("readonly_probe_datasets", "get_datasets",
                        "get_operators"):
             self.assertTrue(self.allowed(action, self.scope))
@@ -77,6 +83,7 @@ class ResearchCatalogProtocolTests(unittest.TestCase):
             self.assertEqual(report["status"],
                              "CATALOG_PROTOCOL_VALIDATED_NO_LIVE_DRIVER")
             self.assertEqual(report["scope"], self.scope)
+            self.assertNotIn("get_alpha_details", report["allowed_read_actions"])
             self.assertFalse(report["driver_authorized"])
             self.assertFalse(report["permission_to_dispatch"])
             self.assertFalse(report["model_call_authorized"])
