@@ -205,6 +205,9 @@ def main(argv=None):
         "orchestration-release-gate",
         help="integrated read-only production release checklist; NEVER authorize")
     release_gate.add_argument("task_id")
+    release_gate.add_argument(
+        "--platform-read-evidence-id",
+        help="local BRAIN read-only observation ID; NEVER production authority")
     sim_dispatch_audit = sub.add_parser(
         "orchestration-simulation-dispatch-audit",
         help="read-only full Simulation write admission blockers; never dispatch")
@@ -590,7 +593,8 @@ def main(argv=None):
             if args.command == "orchestration-release-gate":
                 result = inspect_production_release_gate(
                     MainOrchestrator(root), args.task_id,
-                    effective, policy, config_source=config_source)
+                    effective, policy, config_source=config_source,
+                    platform_read_evidence_id=args.platform_read_evidence_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-recovery-audit":
