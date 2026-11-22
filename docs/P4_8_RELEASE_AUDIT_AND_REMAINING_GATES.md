@@ -31,6 +31,38 @@ creates a platform session, or calls a model. Output remains
 `PRODUCTION_BLOCKED` or `RECONCILIATION_BLOCKED` and contains
 `production_authorized=false`, `automatic_retry_allowed=false`.
 
+## P4.9 — Save the actual BRAIN read-only probe outcome (optional)
+
+An earlier `brain-readonly-check` terminal response without an evidence ID
+proves that the interactive check completed, but **does not automatically
+persist a timestamped audit record**. To generate a **new** locally sealed
+read-only evidence record, use:
+
+```sh
+python3 -m alpha_research brain-readonly-check \\
+  --region USA --delay 1 --universe TOP3000 \\
+  --allow-brain-read --record-evidence
+```
+
+The result includes `evidence_record_id`, which may be independently
+inspected with:
+
+```sh
+python3 -m alpha_research \\
+  brain-read-evidence-status <EVIDENCE_RECORD_ID>
+```
+
+The journal is append-only under
+`state/research_v1_1/platform_read_evidence/`, contains only the sanitized
+aggregate dataset count/scope, local timestamp, and a checksum. Neither
+credentials nor full Dataset content are included.
+
+**Important:** its checksum detects local record corruption; it is not an
+independently signed BRAIN receipt, not proof of account identity and never
+a model/Simulation/Alpha authorization. Any later external issuer,
+cost limits, gateway grants and platform readback requirements remain
+mandatory. `--record-evidence` does not expand the command allowlist.
+
 ## Non-executable preparation CLI (mutates audit files only)
 
 The CLI now exposes the complete **offline** P4.7.2/3 preparation sequence
