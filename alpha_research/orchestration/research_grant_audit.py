@@ -13,14 +13,13 @@ from pathlib import Path
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_only_admission import verify_research_grant
-from alpha_research.state.fingerprint import fingerprint_json
 from alpha_research.state.sealed import is_sealed_state, write_sealed_json
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 
 _VERSION = 1
 _STATUS = "RESERVED_RESEARCH_GRANT_AUDIT_ONLY"
-_HEX32 = re.compile(r"[0-9a-f]{32}\\Z")
-_HEX64 = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _ENTRY = frozenset({
     "task_id", "grant_id", "operator_approval_id",
     "receipt_sha256", "request_sha256",
