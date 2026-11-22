@@ -24,12 +24,15 @@ _STATUSES = {"NOT_FOUND", "IN_FLIGHT", "SETTLED", "FAILED", "UNKNOWN"}
 def inspect_research_remote_reconciliation(task_id, receipt, ack,
                                            model_attempt_id, readback, trust,
                                            *, max_input_tokens,
-                                           max_output_tokens, now=None):
+                                           max_output_tokens,
+                                           max_total_cost_usd_micros, now=None):
     """Bind a signed readback to a specific non-idempotent model attempt."""
     if (not isinstance(model_attempt_id, str)
             or not _HEX32.fullmatch(model_attempt_id)
             or type(max_input_tokens) is not int or max_input_tokens < 1
-            or type(max_output_tokens) is not int or max_output_tokens < 1):
+            or type(max_output_tokens) is not int or max_output_tokens < 1
+            or type(max_total_cost_usd_micros) is not int
+            or max_total_cost_usd_micros < 1):
         raise OrchestrationError("remote reconciliation attempt or caps invalid")
     expected = {
         "task_id": task_id,
@@ -53,7 +56,9 @@ def inspect_research_remote_reconciliation(task_id, receipt, ack,
         raise OrchestrationError("remote readback provider outcome invalid")
     exceeded = (claims["prompt_tokens"] > max_input_tokens
                 or claims["completion_tokens"] > max_output_tokens)
-    if exceeded:
+    if claims["charged_usd_micros"] > max_total_cost_usd_micros:
+        status = "RECONCILIATION_REQUIRED_COST_CEILING_VIOLATION"
+    elif exceeded:
         status = "RECONCILIATION_REQUIRED_TOKEN_CEILING_VIOLATION"
     elif claims["remote_status"] in {"NOT_FOUND", "IN_FLIGHT", "UNKNOWN"}:
         status = "RECONCILIATION_REQUIRED_REMOTE_OUTCOME_UNCERTAIN"
