@@ -58,7 +58,10 @@ def _validate_candidate(task, candidate):
                 raise OrchestrationError("Super candidate missing " + field)
     elif not (
         isinstance(candidate["request"].get("selection"), str)
+        and bool(candidate["request"]["selection"].strip())
         and isinstance(candidate["request"].get("combo"), str)
+        and bool(candidate["request"]["combo"].strip())
+        and candidate["request"].get("origin_alpha_id") == task["request"].get("alpha_id")
     ) and not (
         isinstance(candidate["request"].get("variants"), list)
         and candidate["request"]["variants"]
@@ -170,6 +173,7 @@ def inspect_generated_manifest(orchestrator, task_id):
         "status": _STATUS,
         "workflow": orchestrator.load(task_id)["workflow"],
         "manifest_sha256": fingerprint_json(manifest),
+        "manifest_ref": str(_path(orchestrator, task_id)),
         "scope": {key: manifest["settings"][key] for key in
                   ("region", "delay", "universe", "instrument_type")},
         "research_id": manifest["research_id"],
@@ -179,3 +183,18 @@ def inspect_generated_manifest(orchestrator, task_id):
         "model_call_authorized": False,
         "brain_invoked": False, "provider_invoked": False,
     }
+
+
+def make_agent_preparation_handoff(orchestrator, task_id):
+    """Inject into validated Super/Optimization Agent workflows.
+
+    The workflow calls this exactly once after local expression validation,
+    before creating an Intent or submitting Simulation. Not callable by CLI
+    with raw user expressions. No provider or platform activity in the hook.
+    """
+    orchestrator._path(task_id)
+
+    def persist(candidate):
+        return record_agent_generated_manifest(orchestrator, task_id, candidate)
+
+    return persist
