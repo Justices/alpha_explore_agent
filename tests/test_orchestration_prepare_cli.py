@@ -120,6 +120,152 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(output, "")
         self.assertIn("Dataset, Category and PPA apply only to Regular", error)
 
+    def test_p4_13_issuer_handoff_is_read_only_exact_and_redacted(self):
+        from alpha_research.orchestration.simulation_attempt_admission import (
+            stage_simulation_attempt,
+        )
+        from alpha_research.orchestration.operator_consent import (
+            expected_external_consent_fields,
+        )
+        from alpha_research.state.fingerprint import fingerprint_json
+        prep = self.prefix + [
+            "orchestration-prepare", "--workflow", "super",
+            "--objective", "offline issuer handoff", "--universe", "TOP3000"]
+        code, output, err = self._call(prep)
+        self.assertEqual(code, 0, err)
+        task_id = json.loads(output)["task_id"]
+        plan = {
+            "research_id": "super:" + "a" * 32,
+            "run_id": "b" * 32, "batch_id": "offline_one",
+            "request": {
+                "selection": "rank(secret-alpha-expression)",
+                "combo": "rank(other-private-expression)",
+            },
+            "settings": {
+                "region": "CHN", "delay": 1,
+                "universe": "TOP3000", "instrument_type": "EQUITY",
+            },
+        }
+        manifest = self.root / "private-manifest.json"
+        manifest.write_text(json.dumps(plan), encoding="utf-8")
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        cmd = self.prefix + [
+            "orchestration-scope-issuer-request", task_id,
+            "--manifest", str(manifest)]
+        code, output, err = self._call(cmd)
+        self.assertEqual(code, 0, err)
+        result = json.loads(output)
+        self.assertEqual(result["status"],
+                         "AWAITING_INDEPENDENT_SIGNATURE_NOT_AUTHORIZED")
+        self.assertEqual(result["kind"],
+                         "SIMULATION_SCOPE_STAGING_RECEIPT_REQUEST")
+        self.assertEqual(result["fixed_claims"]["scope"], plan["settings"])
+        self.assertEqual(result["fixed_claims"]["simulation_sha256"],
+                         fingerprint_json({
+                             "request": plan["request"],
+                             "settings": plan["settings"],
+                         }))
+        self.assertEqual(
+            result["issuer_supplied_fields"],
+            sorted(["authorization_id", "issuer", "issued_at", "expires_at"]))
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(result["model_call_authorized"])
+        self.assertFalse(result["alpha_submission_authorized"])
+        self.assertNotIn("secret-alpha-expression", output)
+        self.assertNotIn("other-private-expression", output)
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
+        code, _, err = self._call(self.prefix + [
+            "orchestration-consent-issuer-request", task_id])
+        self.assertEqual(code, 2, err)
+        self.assertIn("OrchestrationError", err)
+
+        checked = {
+            "workflow": "super",
+            "authorization_id": "c" * 32,
+            "research_id": plan["research_id"],
+            "simulation_sha256": result["fixed_claims"]["simulation_sha256"],
+            "permission_to_dispatch": False,
+        }
+        with patch(
+            "alpha_research.orchestration.simulation_attempt_admission.inspect_simulation_scope",
+            return_value=checked,
+        ):
+            stage_simulation_attempt(
+                MainOrchestrator(self.root), task_id,
+                {"not_called": True},
+                {"max_calls": 4, "max_reported_tokens": 1000,
+                 "failover": "manual"},
+                {"offline_test_only": True}, plan)
+
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        code, output, err = self._call(self.prefix + [
+            "orchestration-consent-issuer-request", task_id])
+        self.assertEqual(code, 0, err)
+        receipt_request = json.loads(output)
+        self.assertEqual(
+            receipt_request["kind"],
+            "EXTERNAL_OPERATOR_CONSENT_SIGNATURE_REQUEST")
+        self.assertEqual(receipt_request["fixed_claims"]["max_attempts"], 1)
+        self.assertEqual(receipt_request["fixed_claims"]["max_model_calls"], 0)
+        self.assertFalse(
+            receipt_request["fixed_claims"]["allow_alpha_submission"])
+        self.assertEqual(
+            receipt_request["fixed_claims"]["scope_authorization_id"],
+            "c" * 32)
+        self.assertEqual(receipt_request["fixed_claims"]["scope"],
+                         plan["settings"])
+        self.assertEqual(
+            receipt_request["issuer_supplied_fields"],
+            sorted(["grant_id", "issuer_id", "key_id",
+                    "operator_approval_id", "issued_at", "expires_at"]))
+        self.assertFalse(receipt_request["permission_to_dispatch"])
+        self.assertFalse(receipt_request["brain_simulation_authorized"])
+        self.assertNotIn("secret-alpha-expression", output)
+        self.assertNotIn("other-private-expression", output)
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
+        # Each pinned field is exactly the field the existing verifier checks.
+        from alpha_research.orchestration.runtime_config import (
+            load_preparation_config, prepare_registered_model_runtime,
+        )
+        from alpha_research.agents.registry import bundled_registry_path
+        cfg, _ = load_preparation_config(self.config, explicit=True)
+        prepared = prepare_registered_model_runtime(
+            cfg, {"research_lead": "deepseek",
+                  "research_executor": "deepseek"}, bundled_registry_path())
+        expected = expected_external_consent_fields(
+            MainOrchestrator(self.root), task_id,
+            prepared["model"], prepared["model_governance"])
+        for key, value in expected.items():
+            self.assertEqual(receipt_request["fixed_claims"][key], value)
+
+    def test_p4_13_scope_request_rejects_unpinned_manifest(self):
+        code, output, err = self._call(self.prefix + [
+            "orchestration-prepare", "--workflow", "super",
+            "--objective", "scope mismatch", "--universe", "TOP3000"])
+        self.assertEqual(code, 0, err)
+        task_id = json.loads(output)["task_id"]
+        plan = {
+            "research_id": "super:" + "a" * 32,
+            "run_id": "b" * 32, "batch_id": "offline_one",
+            "request": {"selection": "rank(x)"},
+            "settings": {
+                "region": "USA", "delay": 1, "universe": "TOP3000",
+                "instrument_type": "EQUITY",
+            },
+        }
+        manifest = self.root / "bad-manifest.json"
+        manifest.write_text(json.dumps(plan), encoding="utf-8")
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        code, output, err = self._call(self.prefix + [
+            "orchestration-scope-issuer-request", task_id,
+            "--manifest", str(manifest)])
+        self.assertEqual(code, 2)
+        self.assertEqual(output, "")
+        self.assertIn("OrchestrationError", err)
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
     def test_operator_consent_cli_is_read_only_and_never_authorizes(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "super",
