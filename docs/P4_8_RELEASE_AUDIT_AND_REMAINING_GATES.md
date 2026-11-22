@@ -107,6 +107,55 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.14 — Agent-owned Simulation Manifest Builder (no user JSON required)
+
+This supersedes P4.13's manual-manifest examples for **new** workflows.
+A Task now has an internal, immutable, one-time generated Manifest in
+`state/research_v1_1/generated_simulation_manifests/<task_id>.json`.
+The producer is the Super/Optimization research Agent, which yields a
+locally validated candidate (request/settings), run_id and batch_id.
+The builder `record_agent_generated_manifest(...)` binds it to the original
+CREATED one-attempt Task, generates the workflow-prefixed Research ID and
+checks exactly pinned Region, Delay, Universe and EQUITY instrument type.
+
+The domain workflows `run_super_research` and `run_optimization` now
+accept an injected `preparation_handoff` callback. When supplied by the
+orchestrator (`make_agent_preparation_handoff`), they stop **before**
+creating a Simulation Intent, reserving a Simulation or sending a POST.
+They preserve a pre-execution status `AWAITING_INDEPENDENT_AUTHORIZATION`.
+This callback is designed for the separate Agent planning phase;
+the legacy run methods retain their existing behavior if no callback is
+supplied. Existing workflows should **not** be invoked for live research
+without their separately authorized gateway/model controls.
+
+Inspect the existing Task without creating any file or invoking a provider:
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-manifest-status <TASK_ID>
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-scope-issuer-request <TASK_ID>
+```
+
+If the Agent has not generated a candidate, the result is
+`AWAITING_RESEARCH_OUTPUT`, not an invitation to invent expressions or
+manually populate a JSON file. Once the Agent publishes a validated
+candidate, both commands read the internal Manifest by Task ID; the
+scope-issuer request redacts Alpha expressions and exposes exact digests.
+`orchestration-simulation-scope-check` and
+`orchestration-simulation-stage` likewise default to the internal
+Manifest, while keeping `--manifest` as an explicit exceptional override.
+
+**Important:** At this stage the existing task only has local BRAIN
+catalogue read evidence, not an Agent-generated Alpha candidate. This
+change adds the producer/consumer programming interface and offline tests;
+it does NOT autonomously invoke a real LLM or BRAIN, provision trusted
+issuers or grant permission to POST. The task's budget remains unused.
+An internal Manifest is an inspectable artifact, **not an authorization**;
+production requires independent issuer/key custody, bounded cost, atomic
+single-use grant consumption, driver enforcement, remote readback and
+explicit canary approval before any real simulation.
+
 ## P4.13 — Exact, redacted handoff to external authorization issuers
 
 A prepared Super/Optimization Task is NOT a Simulation manifest and cannot
