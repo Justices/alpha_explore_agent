@@ -39,6 +39,9 @@ def _journal_path(orchestrator, task_id):
 
 
 def _assert_mock_root(orchestrator):
+    stop = Path(orchestrator.state_root) / "state" / "stop.flag"
+    if stop.exists() or stop.is_symlink():
+        raise OrchestrationError("research preparation blocked by stop signal")
     if not is_mock_workspace(orchestrator.state_root):
         raise OrchestrationError(
             "research preparation mock requires a separately marked offline mock root")
@@ -83,6 +86,8 @@ def _load_journal(path, task_id):
             or report.get("schema_version") != _VERSION
             or report.get("task_id") != task_id
             or report.get("mode") != "offline_domain_mock"
+            or report.get("workflow") not in _ALLOWED
+            or report.get("request_sha256") is None
             or report.get("status") not in {
                 "PREPARING", "BLOCKED_MANUAL_REVIEW", _TERMINAL,
             }):
@@ -109,6 +114,10 @@ def inspect_research_preparation(orchestrator, task_id):
             "brain_invoked": False, "provider_invoked": False,
         }
     report = _load_journal(path, task_id)
+    if (report["workflow"] != task["workflow"]
+            or report["request_sha256"] != task["request_sha256"]):
+        raise OrchestrationError(
+            "research preparation task identity drift; manual review required")
     if report["status"] == _TERMINAL:
         snapshot = inspect_generated_manifest(orchestrator, task_id)
         if (snapshot["status"] != "GENERATED_LOCAL_NOT_AUTHORIZED"
