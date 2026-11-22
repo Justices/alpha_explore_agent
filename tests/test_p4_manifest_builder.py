@@ -205,7 +205,7 @@ class AutoManifestCliTests(unittest.TestCase):
         code, out, err = self.call(["orchestration-scope-issuer-request", task_id])
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out)["status"], "AWAITING_RESEARCH_OUTPUT")
-        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*"))
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
         from alpha_research.orchestration.manifest_builder import (
             record_agent_generated_manifest,
         )
