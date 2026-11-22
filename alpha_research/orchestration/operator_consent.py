@@ -187,6 +187,49 @@ def _load_index(root):
     return index
 
 
+def expected_external_consent_fields(orchestrator, task_id, model_config,
+                                     governance_policy):
+    """Exact immutable claim fields for an independently issued consent.
+
+    Returns public identifiers and digests only; no issuer-controlled fields,
+    keys or execution capabilities. Caller must NEVER treat this as consent.
+    """
+    _require_safe_root(orchestrator)
+    task = orchestrator.load(task_id)
+    if (task["status"] != "CREATED"
+            or task["workflow"] not in {"super", "optimization"}
+            or task["budget"] != {"limit": 1, "used": 0, "reserved": 0}):
+        raise OrchestrationError("operator consent requires fresh one-attempt task")
+    staged = inspect_staged_simulation_attempt(orchestrator, task_id)
+    if staged["status"] != "STAGED_NO_DISPATCH":
+        raise OrchestrationError("operator consent requires complete staged evidence")
+    proposal = inspect_execution_proposal(orchestrator, task_id)
+    identity = inspect_execution_identity(
+        orchestrator, task_id, model_config, governance_policy)["identity"]
+    _, intent_path, _ = _staging_paths(orchestrator, task_id)
+    if intent_path.is_symlink() or not intent_path.is_file():
+        raise OrchestrationError("operator consent Intent evidence missing")
+    try:
+        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise OrchestrationError("operator consent staged evidence unreadable") from exc
+    scope = {key: intent["settings"].get(key) for key in (
+        "region", "delay", "universe", "instrument_type")}
+    expected = {
+        "task_id": task_id, "workflow": task["workflow"],
+        "request_sha256": task["request_sha256"],
+        "proposal_sha256": proposal["proposal_sha256"],
+        "model_profile_sha256": identity["model_profile_sha256"],
+        "model_governance_policy_sha256": identity["model_governance_policy_sha256"],
+        "research_id": staged["research_id"],
+        "run_id": intent["run_id"], "batch_id": intent["batch_id"],
+        "scope_authorization_id": staged["authorization_id"],
+        "simulation_sha256": staged["simulation_sha256"],
+        "intent_sha256": fingerprint_json(intent), "scope": scope,
+    }
+    return expected
+
+
 def verify_external_consent(orchestrator, task_id, model_config, governance_policy,
                             receipt, trust_policy, *, now=None):
     """Verify a pinned external signature and scope. NEVER authorize dispatch."""
@@ -230,30 +273,8 @@ def verify_external_consent(orchestrator, task_id, model_config, governance_poli
     if (issued > clock or expires <= clock or expires <= issued
             or expires - issued > timedelta(minutes=15)):
         raise OrchestrationError("operator consent outside approved time window")
-    proposal = inspect_execution_proposal(orchestrator, task_id)
-    identity = inspect_execution_identity(
-        orchestrator, task_id, model_config, governance_policy)["identity"]
-    journal_path, intent_path, _ = _staging_paths(orchestrator, task_id)
-    if intent_path.is_symlink() or not intent_path.is_file():
-        raise OrchestrationError("operator consent Intent evidence missing")
-    try:
-        intent = json.loads(intent_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
-        raise OrchestrationError("operator consent staged evidence unreadable") from exc
-    scope = {key: intent["settings"].get(key) for key in (
-        "region", "delay", "universe", "instrument_type")}
-    expected = {
-        "task_id": task_id, "workflow": task["workflow"],
-        "request_sha256": task["request_sha256"],
-        "proposal_sha256": proposal["proposal_sha256"],
-        "model_profile_sha256": identity["model_profile_sha256"],
-        "model_governance_policy_sha256": identity["model_governance_policy_sha256"],
-        "research_id": staged["research_id"],
-        "run_id": intent["run_id"], "batch_id": intent["batch_id"],
-        "scope_authorization_id": staged["authorization_id"],
-        "simulation_sha256": staged["simulation_sha256"],
-        "intent_sha256": fingerprint_json(intent), "scope": scope,
-    }
+    expected = expected_external_consent_fields(
+        orchestrator, task_id, model_config, governance_policy)
     if any(claims.get(k) != value for k, value in expected.items()):
         raise OrchestrationError("operator consent scope or immutable identity drift")
     if not isinstance(signature, str):
