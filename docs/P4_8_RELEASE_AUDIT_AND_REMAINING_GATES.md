@@ -107,6 +107,62 @@ Missing, stale, mismatched and modified records never grant permissions.
 This is **not** a remote BRAIN account attestation or proof of issuer
 control. No change to the independently disabled production adapter.
 
+## P4.16 — Independently scoped read-only research approval and cost envelope
+
+The **research preparation** operation must never borrow an existing
+`brain_simulation` operator consent: signed grants have a distinct
+`research_prepare_model_readonly` domain and may not authorize Simulation
+or Alpha submission. The new `research_only_admission.py` provides:
+
+- A non-secret, read-only Ed25519 issuer claim request binding the Task ID,
+  workflow, immutable request/proposal, exact selected model profile and
+  governance policy, Region/Delay/Universe/EQUITY, call/token caps, and
+  `allow_brain_simulation=false` / `allow_alpha_submission=false`.
+- An independent issuer-signature *audit* verifier with separate signing
+  context, operation scope, key/issuer binding, UTC lifetime <= 15 minutes,
+  revocation and strict type checks.
+- A conservative **integer-microusd** worst-case price envelope: externally
+  asserted USD input/output rates per million tokens, a per-call input/output
+  token ceiling, number of calls, a signed price-evidence fingerprint and a
+  total USD-micro ceiling. Bad rates, missing price references, exceeded
+  token limits or insufficient ceiling are rejected. The receipt is **not**
+  itself independent evidence that the rates are true or that a remote
+  provider will enforce the declared token boundaries.
+
+No user-authored Manifest or pricing file is needed to inspect blockers:
+
+```sh
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-issuer-request <TASK_ID>
+
+python3 -m alpha_research --lead deepseek --executor deepseek \\
+  orchestration-research-live-readiness <TASK_ID>
+```
+
+The audit also supports optional `--receipt` and `--trust-policy` for
+a separately acquired operator-signed grant. Both must be passed together.
+This is an **audit only**, not a production API. Even a successfully verified
+signature yields `EXTERNAL_RESEARCH_SIGNATURE_VERIFIED_AUDIT_ONLY`, and the
+aggregate verdict stays `RESEARCH_LIVE_BLOCKED`, because a local public-key
+file is not independently provisioned trust, and the price assertion is not
+independently attested.
+
+**Outstanding executable preconditions** remain: independent operator
+key custody, current verified provider tariff and signed price provenance,
+an atomic globally single-use grant consumer, hard per-request input/output
+token and USD enforcement before the paid model call, a dedicated BRAIN
+catalog-only driver read profile, authenticated platform session, persisted
+model-call recovery evidence and separate live provider admission. The
+existing `Gateway(read_only=True)` permits only two probe commands and
+cannot run a research Agent. Do not switch on `--mode live` or reuse
+`Gateway(orchestration_guarded=True)` as a shortcut to these controls.
+
+P4.16 delivers the *verifiable authorization and pricing contract* and
+comprehensive **offline** negative tests, not a live provider adapter.
+The original Task remains unstarted, its Simulation budget remains unused
+and actual model/BRAIN calls, Simulation POSTs and Alpha submissions remain
+disabled until those independent conditions are built and approved.
+
 ## P4.15 — Unified one-command research preparation (offline mock only)
 
 After a Super/Optimization Task is prepared, the orchestration CLI now owns
