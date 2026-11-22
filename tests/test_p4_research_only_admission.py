@@ -224,6 +224,87 @@ class ResearchOnlyGrantTests(unittest.TestCase):
             self.verify()
 
 
+    def test_p4_18_composed_runtime_plan_binds_signed_claim_and_cost(self):
+        from alpha_research.orchestration.research_runtime_plan import (
+            inspect_research_runtime_plan,
+        )
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit,
+        )
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        missing = inspect_research_runtime_plan(
+            self.runner, self.id, self.model, self.policy)
+        self.assertEqual(missing["status"], "RESEARCH_RUNTIME_LIVE_BLOCKED")
+        self.assertIn("RESEARCH_OPERATOR_SIGNATURE_MISSING", missing["blockers"])
+        self.assertIn("RESEARCH_GRANT_NOT_LOCALLY_AUDITED", missing["blockers"])
+        self.assertFalse(missing["model_call_authorized"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
+        with self.assertRaisesRegex(OrchestrationError, "limits require"):
+            inspect_research_runtime_plan(
+                self.runner, self.id, self.model, self.policy,
+                input_tokens=700, max_output_tokens=900)
+
+        signed = self.receipt()
+        pre = inspect_research_runtime_plan(
+            self.runner, self.id, self.model, self.policy,
+            receipt=signed, trust_policy=self.trust,
+            input_tokens=700, max_output_tokens=900, now=self.now)
+        self.assertIn("RESEARCH_GRANT_NOT_LOCALLY_AUDITED", pre["blockers"])
+        self.assertEqual(pre["model_request_cost"]["worst_case_request_usd_micros"],
+                         5000)
+        reserve_research_grant_audit(
+            self.runner, self.id, self.model, self.policy,
+            signed, self.trust, now=self.now)
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        plan = inspect_research_runtime_plan(
+            self.runner, self.id, self.model, self.policy,
+            receipt=signed, trust_policy=self.trust,
+            input_tokens=700, max_output_tokens=900, now=self.now)
+        self.assertEqual(plan["status"], "RESEARCH_RUNTIME_LIVE_BLOCKED")
+        self.assertEqual(
+            plan["local_claim"]["receipt_sha256"],
+            plan["signed_receipt"]["receipt_sha256"])
+        self.assertEqual(
+            plan["model_request_cost"]["receipt_sha256"],
+            plan["signed_receipt"]["receipt_sha256"])
+        self.assertEqual(plan["catalog"]["scope"], self.claims["scope"])
+        self.assertFalse(plan["live_research_authorized"])
+        self.assertFalse(plan["model_call_authorized"])
+        self.assertFalse(plan["brain_read_authorized"])
+        self.assertFalse(plan["permission_to_dispatch"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*")))
+
+        mismatched = {**self.claims, "grant_id": "d" * 32}
+        with self.assertRaisesRegex(OrchestrationError, "differs from reserved"):
+            inspect_research_runtime_plan(
+                self.runner, self.id, self.model, self.policy,
+                receipt=self.receipt(mismatched), trust_policy=self.trust,
+                input_tokens=700, max_output_tokens=900, now=self.now)
+
+    def test_p4_18_corrupt_audit_cannot_form_valid_runtime_plan(self):
+        from alpha_research.orchestration.research_runtime_plan import (
+            inspect_research_runtime_plan,
+        )
+        from alpha_research.orchestration.research_grant_audit import (
+            reserve_research_grant_audit,
+        )
+        reserve_research_grant_audit(
+            self.runner, self.id, self.model, self.policy,
+            self.receipt(), self.trust, now=self.now)
+        journal = (self.root / "state" / "research_v1_1" /
+                   "research_grant_audit" / "claims.json")
+        raw = json.loads(journal.read_text(encoding="utf-8"))
+        raw["by_task"][self.id]["grant_id"] = "d" * 32
+        journal.write_text(json.dumps(raw), encoding="utf-8")
+        report = inspect_research_runtime_plan(
+            self.runner, self.id, self.model, self.policy,
+            receipt=self.receipt(), trust_policy=self.trust,
+            input_tokens=700, max_output_tokens=900, now=self.now)
+        self.assertIn("RESEARCH_LOCAL_GRANT_RECONCILIATION_REQUIRED",
+                      report["blockers"])
+        self.assertFalse(report["permission_to_dispatch"])
+
     def test_p4_17_model_cost_preflight_is_never_executable(self):
         from alpha_research.orchestration.research_model_cost_boundary import (
             inspect_model_request_cost,
@@ -406,6 +487,11 @@ class ResearchGrantCliTests(unittest.TestCase):
         self.assertEqual(request["status"],
                          "AWAITING_INDEPENDENT_RESEARCH_APPROVAL")
         self.assertFalse(request["permission_to_dispatch"])
+        code, out, err = self.call([
+            "orchestration-research-runtime-plan", task_id])
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out)["status"], "RESEARCH_RUNTIME_LIVE_BLOCKED")
+        self.assertFalse(json.loads(out)["permission_to_dispatch"])
         code, out, err = self.call([
             "orchestration-research-grant-audit-status", task_id])
         self.assertEqual(code, 0, err)
