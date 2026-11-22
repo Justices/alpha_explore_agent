@@ -15,6 +15,9 @@ from alpha_research.integrations.brain.guarded_protocol import (
     GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
     guarded_request_allowed,
 )
+from alpha_research.orchestration.research_catalog_protocol import (
+    research_catalog_request_allowed,
+)
 
 WHITELIST = {
     "check_simulation_cache",
@@ -54,7 +57,9 @@ class GatewayError(RuntimeError):
 class Gateway:
     def __init__(self, driver_path: Path = None, alpha_lookup=None, *,
                  credentials=None, read_only=False,
-                 orchestration_guarded=False):
+                 orchestration_guarded=False,
+                 research_catalog_scope=None,
+                 research_catalog_source_alpha_id=None):
         """alpha_lookup: callable(alpha_id) -> alpha state dict, used for
         the correlation precondition check (design §3.3, second layer)."""
         self.driver_path = driver_path or (Path(__file__).with_name("driver.py"))
@@ -67,10 +72,28 @@ class Gateway:
         # No trusted live admission consumer exists yet: guarded mutating
         # commands are always refused, even if a caller fabricates params.
         self.orchestration_guarded = bool(orchestration_guarded)
+        # Exact research-only profile is separate from legacy Gateway and
+        # the narrow read_only probe. It is NOT a grant or live enablement.
+        self.research_catalog_scope = research_catalog_scope
+        self.research_catalog_source_alpha_id = research_catalog_source_alpha_id
+        if research_catalog_scope is not None:
+            if read_only or orchestration_guarded:
+                raise GatewayError("research catalog profile cannot combine Gateway modes")
+            if not research_catalog_request_allowed(
+                    "get_datasets", research_catalog_scope,
+                    research_catalog_scope):
+                raise GatewayError("research catalog requires exact pinned scope")
+        elif research_catalog_source_alpha_id is not None:
+            raise GatewayError("research catalog source Alpha needs pinned scope")
         self.proc = None
         self.auth_info = None
 
     def start(self) -> dict:
+        if self.research_catalog_scope is not None:
+            # No independent remote consumption/session attestation exists.
+            # A local key file or claim cannot permit subprocess startup.
+            raise GatewayError(
+                "research Catalog requires independent grant consumer; live disabled")
         env = os.environ.copy()
         command = [sys.executable, str(self.driver_path)]
         if self.read_only:
@@ -120,6 +143,14 @@ class Gateway:
         return self.call("check_simulation_cache", **params)
 
     def call(self, cmd: str, **params) -> dict:
+        if self.research_catalog_scope is not None:
+            if not research_catalog_request_allowed(
+                    cmd, params, self.research_catalog_scope,
+                    source_alpha_id=self.research_catalog_source_alpha_id):
+                raise GatewayError(
+                    "research Catalog command or scope is not admitted")
+            raise GatewayError(
+                "research Catalog requires independent grant consumer; live disabled")
         if self.orchestration_guarded and cmd not in GUARDED_ORCHESTRATION_READS:
             # Negative admission is independently rechecked by the driver.
             raise GatewayError(
