@@ -28,6 +28,16 @@ from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 _RUNTIME = ContextVar("offline_research_runtime", default=None)
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
 _FINAL = "MODEL_MOCK_COMPLETED"
+_TASK_MODEL_ACTION = {"super": "construct_super", "optimization": "optimize_alpha"}
+
+
+def _fresh_task(task):
+    return (task.get("workflow") in _TASK_MODEL_ACTION
+            and task.get("status") == "CREATED"
+            and task.get("budget") == {"limit": 1, "used": 0, "reserved": 0}
+            and task.get("checkpoints") == {}
+            and task.get("research_identity") is None
+            and task.get("recovery_target") is None)
 
 
 def active_offline_runtime():
@@ -82,7 +92,7 @@ def inspect_runtime_attempt(orchestrator, task_id):
                                           "MODEL_MOCK_UNKNOWN", _FINAL}
                 or not isinstance(raw["call_id"], str)
                 or _HEX32.fullmatch(raw["call_id"]) is None
-                or raw["task_name"] not in {"construct_super", "optimize_alpha"}
+                or raw["task_name"] != _TASK_MODEL_ACTION.get(task["workflow"])
                 or type(raw["max_model_calls"]) is not int
                 or not 1 <= raw["max_model_calls"] <= 10_000_000
                 or type(raw["max_reported_tokens"]) is not int
@@ -169,8 +179,9 @@ class OfflineResearchRuntimeAdapter:
         if type(model) is not DomainMockModel:
             raise OrchestrationError("offline runtime refuses a real model client")
         task = orchestrator.load(task_id)
-        if task["workflow"] not in {"super", "optimization"}:
-            raise OrchestrationError("offline research runtime task unsupported")
+        if not _fresh_task(task):
+            raise OrchestrationError(
+                "offline research runtime requires an unexecuted scoped Task")
         policy = validate_policy(governance_policy)
         scope = {
             "region": task["request"]["region"],
@@ -183,6 +194,8 @@ class OfflineResearchRuntimeAdapter:
             raise OrchestrationError("offline runtime Task scope unpinned")
         self.orchestrator = orchestrator
         self.task_id = task_id
+        self.workflow = task["workflow"]
+        self.request_sha256 = task["request_sha256"]
         self.model = model
         self.policy = policy
         self.gateway = _ScopedScriptedCatalog(gateway, task, scope)
@@ -207,7 +220,7 @@ class OfflineResearchRuntimeAdapter:
         return False
 
     def reserve_scripted_model_call(self, task_name, context):
-        if (task_name not in {"construct_super", "optimize_alpha"}
+        if (task_name != _TASK_MODEL_ACTION[self.workflow]
                 or not isinstance(context, dict)
                 or self._model_calls != 0
                 or self.policy["max_calls"] < 1):
@@ -224,12 +237,17 @@ class OfflineResearchRuntimeAdapter:
                         "research model outcome requires reconciliation")
                 if self._model_calls:
                     raise OrchestrationError("research model call already reserved")
+                task = self.orchestrator.load(self.task_id)
+                if (not _fresh_task(task)
+                        or task["workflow"] != self.workflow
+                        or task["request_sha256"] != self.request_sha256):
+                    raise OrchestrationError(
+                        "offline research Task drift before model reservation")
                 import uuid
                 row = {
                     "schema_version": 1,
                     "task_id": self.task_id,
-                    "request_sha256": self.orchestrator.load(
-                        self.task_id)["request_sha256"],
+                    "request_sha256": self.request_sha256,
                     "mode": "offline_scripted_only",
                     "status": "MODEL_CALL_MAY_HAVE_STARTED",
                     "call_id": uuid.uuid4().hex,
