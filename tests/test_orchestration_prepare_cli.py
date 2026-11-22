@@ -123,6 +123,43 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse(report["automatic_retry_allowed"])
         self.assertEqual(before, sorted(str(p) for p in state_root.rglob("*")))
 
+    def test_p4_10_release_gate_binds_local_read_id_without_dispatch(self):
+        from alpha_research.orchestration.platform_read_evidence import (
+            record_platform_read_evidence,
+        )
+        result = record_platform_read_evidence(self.root, {
+            "status": "READ_ONLY_SCOPE_VERIFIED",
+            "region": "CHN", "delay": 1, "universe": "TOP3000",
+            "dataset_count": 7,
+            "platform_settings_readable": True,
+            "dataset_catalog_readable": True,
+            "brain_read_invoked": True,
+            "simulation_invoked": False, "model_invoked": False,
+            "alpha_submission_invoked": False,
+        })
+        status, output, error = self._call(
+            self.prefix + ["orchestration-prepare", "--workflow", "super",
+                           "--objective", "local platform observation binding"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        before = sorted(str(p) for p in self.root.rglob("*"))
+        status, output, error = self._call(
+            self.prefix + [
+                "orchestration-release-gate", task_id,
+                "--platform-read-evidence-id", result["record_id"]])
+        self.assertEqual(status, 0, error)
+        audit = json.loads(output)
+        local = audit["components"]["local_platform_read_observation"]
+        # Super preparation has no Universe until the exact Simulation
+        # is staged: do not infer TOP3000 from unrelated platform evidence.
+        self.assertEqual(local["status"], "TASK_SCOPE_NOT_EXACT")
+        self.assertFalse(local["permission_to_dispatch"])
+        self.assertFalse(audit["production_authorized"])
+        self.assertFalse(audit["alpha_submission_authorized"])
+        self.assertIn("PLATFORM_READ_LOCAL_ONLY_NOT_INDEPENDENTLY_ATTESTED",
+                      audit["blockers"])
+        self.assertEqual(before, sorted(str(p) for p in self.root.rglob("*"))
+
     def test_p4_8_production_release_gate_cli_is_read_only(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "super",
