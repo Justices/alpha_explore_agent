@@ -11,6 +11,11 @@ from pathlib import Path
 from alpha_research.orchestration.engine import OrchestrationError
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS research_model_spend_limits (
+    scope_id TEXT PRIMARY KEY,
+    max_model_calls INTEGER NOT NULL,
+    max_usd_micros INTEGER NOT NULL
+);
 CREATE TABLE IF NOT EXISTS research_model_spend (
     seq INTEGER PRIMARY KEY AUTOINCREMENT,
     grant_id TEXT NOT NULL,
@@ -52,6 +57,38 @@ class ReferenceExternalSpendLedger:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as db:
             db.executescript(_SCHEMA)
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                for scope, calls, cap in (
+                    ("GLOBAL", 0, self.global_max_total_cost_usd_micros),
+                    (self.grant_id, self.max_model_calls,
+                     self.max_total_cost_usd_micros),
+                ):
+                    db.execute(
+                        "INSERT OR IGNORE INTO research_model_spend_limits"
+                        " (scope_id, max_model_calls, max_usd_micros)"
+                        " VALUES (?, ?, ?)", (scope, calls, cap))
+                self._verify_limits(db)
+                db.execute("COMMIT")
+            except (sqlite3.OperationalError, OrchestrationError) as exc:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise OrchestrationError(
+                    "external spend ledger immutable policy conflict") from exc
+
+    def _verify_limits(self, db):
+        global_row = db.execute(
+            "SELECT max_model_calls,max_usd_micros"
+            " FROM research_model_spend_limits WHERE scope_id='GLOBAL'").fetchone()
+        grant_row = db.execute(
+            "SELECT max_model_calls,max_usd_micros"
+            " FROM research_model_spend_limits WHERE scope_id=?",
+            (self.grant_id,)).fetchone()
+        if (global_row != (0, self.global_max_total_cost_usd_micros)
+                or grant_row != (self.max_model_calls,
+                                 self.max_total_cost_usd_micros)):
+            raise OrchestrationError(
+                "external spend ledger limits differ from persisted policy")
 
     def reserve_once(self, *, task_id, attempt_id, worst_case_usd_micros):
         if (not isinstance(task_id, str) or len(task_id) != 32
@@ -65,6 +102,7 @@ class ReferenceExternalSpendLedger:
         with closing(self._connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
+                self._verify_limits(db)
                 row = db.execute(
                     "SELECT COUNT(*), COALESCE(SUM(reserved_usd_micros),0)"
                     " FROM research_model_spend WHERE grant_id=?",
@@ -103,6 +141,7 @@ class ReferenceExternalSpendLedger:
         """Quarantine reservation on lost response; NEVER return capacity."""
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            self._verify_limits(db)
             row = db.execute(
                 "UPDATE research_model_spend SET status='UNKNOWN'"
                 " WHERE grant_id=? AND attempt_id=? AND status='RESERVED'",
@@ -123,6 +162,7 @@ class ReferenceExternalSpendLedger:
         with closing(self._connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
+                self._verify_limits(db)
                 row = db.execute(
                     "SELECT reserved_usd_micros,status FROM research_model_spend"
                     " WHERE grant_id=? AND attempt_id=?",
