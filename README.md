@@ -77,6 +77,18 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P7.2 offline Provider billing reconciliation
+
+The complete **offline** Provider invoice reconciliation module binds attempt
+IDs to recorded operation IDs, rejects incomplete or duplicate invoices,
+recomputes integer micro-USD costs and flags reservation breaches and invoice
+variance. It is connected to the negative-only P6 release matrix. Even matching
+supplied invoice rows are **not provider-authenticated evidence**, do not settle
+the ledger or refund reserved budget, and cannot authorize a live operation.
+See [P7.2 Provider billing](docs/P7_2_PROVIDER_BILLING.md).
+Code optimization tests are written but have not yet been executed in this pass.
+Production remains `PRODUCTION_BLOCKED`.
+
 ## P7.1 deployment hardening — isolated local authority
 
 P7 adds a second, stricter deployment target for the **independent
