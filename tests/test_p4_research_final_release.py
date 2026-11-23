@@ -875,5 +875,160 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 load_pilot_application(str(config_path.resolve()))
 
 
+    def _p5_sdk_inputs(self, *, global_cap=20_000):
+        from alpha_research.orchestration.research_global_consumer import (
+            build_global_consumption_request,
+        )
+        app, server, client, ledger_signer, api, admin = self._p5_service(
+            global_cap=global_cap)
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        ack = client.consume(handoff, self.receipt)["ack"]
+        ledger_evidence = client.readback("a" * 32)["evidence"]
+        ledger_trust = {
+            "schema_version": 1, "revoked_evidence": [],
+            "issuers": {"separate-ledger": {
+                "key_id": "ledger-key",
+                "public_key_b64": _pub(ledger_signer),
+                "enabled": True, "operations": ["read_research_grant_ledger"],
+            }},
+        }
+        price_evidence, price_trust = self.price()
+        return app, client, {
+            "orchestrator": self.runner,
+            "task_id": self.task_id,
+            "model_config": self.model,
+            "governance_policy": self.policy,
+            "receipt": self.receipt,
+            "operator_trust": self.operator_trust,
+            "ack": ack,
+            "consumer_trust": self.consumer_trust,
+            "ledger_evidence": ledger_evidence,
+            "ledger_trust": ledger_trust,
+            "price_evidence": price_evidence,
+            "price_trust": price_trust,
+            "authority_client": client,
+            "task_name": "construct_super",
+            "declared_input_tokens": 700,
+            "max_output_tokens": 900,
+            "messages": [{"role": "system", "content": "Build offline alpha only"},
+                         {"role": "user", "content": "Construct one expression"}],
+            "fixture": {
+                "content": "rank(close)",
+                "prompt_tokens": 650,
+                "completion_tokens": 500,
+                "finish_reason": "stop",
+            },
+            "now": self.now,
+        }
+
+    def test_p5_3_real_sdk_mock_transport_uses_budget_and_reports_usage(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        output = run_research_sdk_offline_pilot(
+            **{**inputs, "attempt_id": "5" * 32})
+        self.assertEqual(output["status"],
+                         "SDK_MOCK_COMPLETED_COST_HELD_AUDIT_ONLY")
+        self.assertEqual(output["sdk_http_requests"], 1)
+        self.assertEqual(output["sdk_max_retries"], 0)
+        self.assertEqual(output["reserved_usd_micros"], 5_000)
+        self.assertEqual(output["provider_reported_usd_micros"], 3_300)
+        self.assertFalse(output["provider_invoked"])
+        self.assertFalse(output["permission_to_dispatch"])
+        self.assertFalse(output["independent_provider_billing_verified"])
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"RESERVED": 1})
+        with self.assertRaises(OrchestrationError):
+            run_research_sdk_offline_pilot(
+                **{**inputs, "attempt_id": "5" * 32})
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 1)
+
+    def test_p5_3_mock_sdk_timeout_quarantines_without_retry(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        with self.assertRaisesRegex(OrchestrationError, "no retry"):
+            run_research_sdk_offline_pilot(
+                **{**inputs, "attempt_id": "6" * 32,
+                   "fixture": None, "fault": "timeout"})
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"UNKNOWN": 1})
+        with self.assertRaises(OrchestrationError):
+            run_research_sdk_offline_pilot(
+                **{**inputs, "attempt_id": "6" * 32})
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 1)
+
+    def test_p5_3_bad_usage_and_truncated_completion_quarantine(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        for index, extra in enumerate((
+            {"finish_reason": "length"},
+            {"prompt_tokens": 701},
+        )):
+            with self.subTest(extra=extra):
+                fixture = {**inputs["fixture"], **extra}
+                with self.assertRaisesRegex(OrchestrationError, "quarantined"):
+                    run_research_sdk_offline_pilot(
+                        **{**inputs, "attempt_id": str(index + 7) * 32,
+                           "fixture": fixture})
+        snap = client.snapshot("a" * 32)
+        self.assertEqual(snap["by_status"], {"UNKNOWN": 2})
+        self.assertEqual(snap["committed_reservation_usd_micros"], 10_000)
+
+    def test_p5_3_rejects_forged_pricing_and_unsafe_messages_before_reserve(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        forged = copy.deepcopy(inputs["price_evidence"])
+        forged["claims"]["tariff"]["input_rate_micros_per_million"] = 0
+        for changed in (
+            {"price_evidence": forged},
+            {"messages": [{"role": "tool", "content": "bypass"}]},
+            {"messages": [{"role": "user", "content": "hello",
+                           "tool_calls": [{"name": "run"}]}]},
+            {"declared_input_tokens": True},
+            {"max_output_tokens": 1001},
+        ):
+            with self.subTest(changed=changed):
+                with self.assertRaises(OrchestrationError):
+                    run_research_sdk_offline_pilot(
+                        **{**inputs, **changed, "attempt_id": "9" * 32})
+        self.assertEqual(client.snapshot("a" * 32)["reserved_attempts"], 0)
+
+    def test_p5_3_quarantine_rejects_wrong_task_and_replay(self):
+        from alpha_research.state.fingerprint import fingerprint_json
+        _app, client, inputs = self._p5_sdk_inputs()
+        reserved = client.reserve(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="a" * 32, input_tokens=700,
+            max_output_tokens=900,
+            ack_sha256=fingerprint_json(inputs["ack"]))
+        self.assertEqual(reserved["status"], "SPEND_RESERVED_REFERENCE_ONLY")
+        with self.assertRaises(OrchestrationError):
+            client.quarantine(
+                grant_id="a" * 32, task_id="e" * 32,
+                attempt_id="a" * 32, ack_sha256=fingerprint_json(inputs["ack"]))
+        with self.assertRaises(OrchestrationError):
+            client.quarantine(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="a" * 32, ack_sha256="f" * 64)
+        result = client.quarantine(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="a" * 32, ack_sha256=fingerprint_json(inputs["ack"]))
+        self.assertFalse(result["automatic_retry_allowed"])
+        with self.assertRaises(OrchestrationError):
+            client.quarantine(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="a" * 32, ack_sha256=fingerprint_json(inputs["ack"]))
+        self.assertEqual(client.snapshot("a" * 32)["by_status"], {"UNKNOWN": 1})
+
+
 if __name__ == "__main__":
     unittest.main()
