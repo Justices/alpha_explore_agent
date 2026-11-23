@@ -13,6 +13,9 @@ from pathlib import Path
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_only_admission import _utc
 from alpha_research.state.fingerprint import fingerprint_json
+from alpha_research.orchestration.research_canary_control_reference import (
+    assert_research_canary_not_stopped,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS research_model_spend_limits (
@@ -39,20 +42,23 @@ class ReferenceExternalSpendLedger:
 
     def __init__(self, database_path, *, grant_id, max_model_calls,
                  max_total_cost_usd_micros,
-                 global_max_total_cost_usd_micros):
+                 global_max_total_cost_usd_micros,
+                 require_canary_arm=False):
         if (not isinstance(grant_id, str) or len(grant_id) != 32
                 or any(c not in "0123456789abcdef" for c in grant_id)
                 or type(max_model_calls) is not int or max_model_calls < 1
                 or type(max_total_cost_usd_micros) is not int
                 or max_total_cost_usd_micros < 1
                 or type(global_max_total_cost_usd_micros) is not int
-                or global_max_total_cost_usd_micros < 1):
+                or global_max_total_cost_usd_micros < 1
+                or type(require_canary_arm) is not bool):
             raise OrchestrationError("external spend ledger grant budget invalid")
         self.path = Path(database_path)
         self.grant_id = grant_id
         self.max_model_calls = max_model_calls
         self.max_total_cost_usd_micros = max_total_cost_usd_micros
         self.global_max_total_cost_usd_micros = global_max_total_cost_usd_micros
+        self.require_canary_arm = require_canary_arm
 
     def _connect(self):
         return sqlite3.connect(str(self.path), timeout=10, isolation_level=None)
@@ -108,6 +114,8 @@ class ReferenceExternalSpendLedger:
             try:
                 db.execute("BEGIN IMMEDIATE")
                 self._verify_limits(db)
+                if self.require_canary_arm:
+                    assert_research_canary_not_stopped(db)
                 if expected_grant_ack_sha256 is not None:
                     if (not isinstance(expected_grant_ack_sha256, str)
                             or len(expected_grant_ack_sha256) != 64
