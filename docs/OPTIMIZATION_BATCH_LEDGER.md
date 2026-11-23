@@ -4,7 +4,7 @@ Updated: 2026-11-23. Scope: branch `refactor/configurable-codex-agy-runtime`.
 
 ## Workflow rule
 
-**One business module per batch.** Optimize all four modules first; perform
+**One business module per batch.** Optimize the four modules and then run a dedicated cross-module code review; perform
 static checks, offline unit/integration tests and cross-platform acceptance
 only after the code batches are complete. This ledger tracks *implementation
 changes*, not evidence of successfully executed tests. The repository's
@@ -77,6 +77,48 @@ Remaining external work: real BRAIN-native Super / Regular / Optimization
 evidence and independently authorized Simulation; complete candidate gates
 and preferred selection must remain separate from submission. Automated
 Alpha submission is still disallowed by project contract.
+
+## Batch 5 — Cross-module architectural review and code cleanup
+
+The final review is focused on the contracts and interactions among the four
+previous batches. It does not add a fifth live execution path.
+
+- **Release status correctness:** P6 reporting now distinguishes a valid
+  offline token-cost estimate from `RECONCILIATION_REQUIRED`; a BRAIN
+  catalog frame rejected by the scope gate is reported as
+  `READ_ONLY_FRAME_DENIED`, not "policy verified." Additional blocker
+  codes preserve these negative outcomes in the top-level report.
+- **Readback cannot overwrite failure:** a signed provider operation
+  observation can be valid while its estimate is still inconsistent.
+  The P6 release matrix now retains the prior metering
+  `RECONCILIATION_REQUIRED` status, regardless of a signed observation.
+  Signed readback validation requires explicit no-live/no-retry claims.
+- **Subprocess lifecycle:** Gateway shutdown no longer calls a blocking
+  response read on a potentially unresponsive child. It first requests
+  graceful termination and enforces bounded wait/kill/pipe cleanup.
+- **Dependency cleanup:** removed a known-unused `ipaddress` import in
+  TLS, `GUARDED_FORBIDDEN_CLAIMS` import in Gateway and unused
+  `MainOrchestrator` import in research preparation. No public API or
+  persistence schema was deleted.
+
+### Deferred validation and regression risk register
+
+These are **not yet proved by tests in this optimization pass**:
+
+- Grant consumption and global Stop ordering across simultaneous
+  connections/processes and broker errors
+- Full provider identity matrix, pricing rounding and unchanged mock SDK
+  outcome/operation custody
+- Driver bootstrap, read-only protocol, graceful/hung subprocess shutdown,
+  pipe failure cleanup and Windows/macOS process behavior
+- P6 release matrix: rejected BRAIN frames, over-ceiling usage, invoice
+  mismatch, signed readback with simultaneous unresolved metering and
+  forged positive authorization claims
+- Control-plane compatibility, sealed journal recovery and all previous
+  Regular, Super, Optimization, PPA and candidate-selection behavior
+
+The previous P6 CI result (922 tests) predates **all** these optimization
+commits and must not be used to claim this batch has passed.
 
 ## Final verification queue — NOT YET EXECUTED FOR THIS OPTIMIZATION BATCH
 
