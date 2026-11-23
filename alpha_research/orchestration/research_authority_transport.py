@@ -6,6 +6,7 @@ Never expose it on a public interface or assume bearer auth replaces mTLS.
 No endpoint grants BRAIN, SDK, Simulation or Alpha submission permission.
 """
 import base64
+import copy
 import hmac
 import json
 import secrets
@@ -97,7 +98,7 @@ class ResearchAuthorityApplication:
                 if len(public) != 32 or public in own_keys:
                     raise OrchestrationError(
                         "remote recovery signer must be separate from Grant/ledger")
-        self.recovery_trust = recovery_trust
+        self.recovery_trust = copy.deepcopy(recovery_trust)
         self.grants = ReferenceExternalGrantLedger(
             self.path, signer=consumer_signer, operator_trust=operator_trust,
             consumer_id=consumer_id, key_id=consumer_key_id,
