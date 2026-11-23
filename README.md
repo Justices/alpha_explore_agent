@@ -77,6 +77,21 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P7.3–P7.5 complete offline control-plane modules
+
+The P7 implementation now includes a Task/ACK/Scope-bound BRAIN read-only
+session audit, independent Canary telemetry freshness and Stop decision, and a
+cross-module P7 release matrix. P7.5 is wired into both
+`orchestration-release-gate` and the read-only research control-plane status.
+The system **does not** open a real BRAIN read-only session, execute a live
+watchdog, attest a Provider invoice, or authorize Simulation.
+
+See [P7.3 BRAIN Catalog session scope](docs/P7_3_BRAIN_READ_SESSION.md),
+[P7.4 Canary supervision](docs/P7_4_CANARY_SUPERVISION.md), and
+[P7.5 integrated acceptance](docs/P7_5_INTEGRATED_ACCEPTANCE.md).
+Regression tests have been added, but final static/offline/cross-platform
+acceptance has not been claimed. Production remains `PRODUCTION_BLOCKED`.
+
 ## P7.2 offline Provider billing reconciliation
 
 The complete **offline** Provider invoice reconciliation module binds attempt
