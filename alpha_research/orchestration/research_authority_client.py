@@ -7,6 +7,7 @@ This is NOT wired into the production SDK, driver or orchestration adapter.
 import hmac
 import http.client
 import json
+import ssl
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.state.fingerprint import canonical_json_bytes
@@ -31,7 +32,7 @@ class LoopbackAuthorityClient:
     """Pilot-only authenticated client with no fallback or implicit retry."""
 
     def __init__(self, host, port, *, api_token, admin_token=None,
-                 timeout_seconds=3):
+                 timeout_seconds=3, tls_context=None):
         if (host != "127.0.0.1"
                 or type(port) is not int or not 1 <= port <= 65535
                 or not isinstance(api_token, str) or len(api_token) < 32
@@ -40,12 +41,18 @@ class LoopbackAuthorityClient:
                          or len(admin_token) < 32
                          or hmac.compare_digest(api_token, admin_token)))
                 or type(timeout_seconds) not in (float, int)
-                or not 0 < timeout_seconds <= 30):
+                or not 0 < timeout_seconds <= 30
+                or (tls_context is not None and (
+                    not isinstance(tls_context, ssl.SSLContext)
+                    or tls_context.verify_mode != ssl.CERT_REQUIRED
+                    or tls_context.check_hostname is not True
+                    or tls_context.minimum_version < ssl.TLSVersion.TLSv1_2))):
             raise OrchestrationError("research authority client scope invalid")
         self.host, self.port = host, port
         self.api_token = api_token
         self.admin_token = admin_token
         self.timeout = timeout_seconds
+        self.tls_context = tls_context
 
     def _post(self, operation, body):
         if operation not in _ROUTES or not isinstance(body, dict):
@@ -57,8 +64,13 @@ class LoopbackAuthorityClient:
         payload = canonical_json_bytes(body)
         if len(payload) > 65_536:
             raise OrchestrationError("research authority request too large")
-        connection = http.client.HTTPConnection(
-            self.host, self.port, timeout=self.timeout)
+        connection = (
+            http.client.HTTPSConnection(
+                self.host, self.port, timeout=self.timeout,
+                context=self.tls_context)
+            if self.tls_context is not None else
+            http.client.HTTPConnection(
+                self.host, self.port, timeout=self.timeout))
         try:
             connection.request(
                 "POST", _ROUTES[operation], body=payload,
