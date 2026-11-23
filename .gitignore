@@ -228,3 +228,16 @@ needs_auth
 .idea
 .claude
 pyproject.toml
+
+
+# P7 isolated authority: never commit provisioned identities or runtime data.
+/deploy/p7/private/
+/deploy/p7/state/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.sqlite3
+*.sqlite3-shm
+*.sqlite3-wal
