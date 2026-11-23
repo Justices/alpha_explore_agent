@@ -44,6 +44,16 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
+## Code optimization batches — final review
+
+The four module refactoring batches (authority, LLM, BRAIN Driver, research
+orchestration) and the fifth cross-module review are documented in the
+[Optimization Batch Ledger](docs/OPTIMIZATION_BATCH_LEDGER.md).
+The review corrected P6 release milestone reporting and bounded BRAIN
+subprocess shutdown. **These optimization changes have not yet received
+their unified static, offline or cross-platform test acceptance.**
+Production dispatch remains `PRODUCTION_BLOCKED`.
+
 ## Orchestrated research runtime — status and P4.29 release audit
 
 For Super Alpha / Optimization tasks under the new orchestration control
