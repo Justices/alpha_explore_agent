@@ -12,7 +12,7 @@ from alpha_research.qualification.gates import (
     assert_correlation_allowed, local_self_correlation_state, ra_correlation_check_state,
 )
 from alpha_research.integrations.brain.guarded_protocol import (
-    GUARDED_ORCHESTRATION_READS,
+    GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
     READONLY_PROBE_COMMANDS,
     guarded_request_allowed,
 )
