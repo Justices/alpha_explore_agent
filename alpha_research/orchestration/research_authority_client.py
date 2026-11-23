@@ -15,6 +15,7 @@ _ROUTES = {
     "consume": "/v1/grant/consume",
     "readback": "/v1/grant/readback",
     "reserve": "/v1/spend/reserve",
+    "quarantine": "/v1/spend/quarantine",
     "snapshot": "/v1/spend/snapshot",
     "revoke": "/v1/grant/revoke",
 }
@@ -91,6 +92,12 @@ class LoopbackAuthorityClient:
             "grant_id": grant_id, "task_id": task_id,
             "attempt_id": attempt_id, "input_tokens": input_tokens,
             "max_output_tokens": max_output_tokens, "ack_sha256": ack_sha256,
+        })
+
+    def quarantine(self, *, grant_id, task_id, attempt_id, ack_sha256):
+        return self._post("quarantine", {
+            "grant_id": grant_id, "task_id": task_id,
+            "attempt_id": attempt_id, "ack_sha256": ack_sha256,
         })
 
     def snapshot(self, grant_id):
