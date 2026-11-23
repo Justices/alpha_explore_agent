@@ -22,6 +22,10 @@ from alpha_research.orchestration.research_authority_transport import (
 from alpha_research.orchestration.research_p6_mtls import (
     make_authority_mtls_server_context,
 )
+from alpha_research.orchestration.research_authority_deployment import (
+    inspect_local_authority_deployment,
+    load_authority_transport_secrets,
+)
 
 _CONFIG_FIELDS = {
     "schema_version", "database_file", "operator_trust_file",
@@ -145,15 +149,29 @@ def main(argv=None):
     parser.add_argument("--port", required=True, type=int)
     parser.add_argument("--enable-local-pilot", action="store_true",
                         help="explicitly run loopback-only service, never production")
+    parser.add_argument("--require-mtls", action="store_true",
+                        help="fail startup unless full mTLS materials are provisioned")
+    parser.add_argument("--require-file-secrets", action="store_true",
+                        help="require separate owner-only API/admin token files")
+    parser.add_argument("--check-ready", action="store_true",
+                        help="read-only local recovery readiness (never live authority)")
     opts = parser.parse_args(argv)
-    if not opts.enable_local_pilot:
+    if not opts.check_ready and not opts.enable_local_pilot:
         parser.error("--enable-local-pilot is required")
-    if opts.port < 1 or opts.port > 65535:
+    if not opts.check_ready and (opts.port < 1 or opts.port > 65535):
         parser.error("pilot port must be 1..65535")
     try:
-        api = os.environ.get("ALPHA_RESEARCH_AUTHORITY_API_TOKEN", "")
-        admin = os.environ.get("ALPHA_RESEARCH_AUTHORITY_ADMIN_TOKEN", "")
         config = load_pilot_config(opts.config)
+        if opts.check_ready:
+            result = inspect_local_authority_deployment(
+                config, require_mtls=opts.require_mtls,
+                require_file_secrets=opts.require_file_secrets)
+            print(json.dumps(result, sort_keys=True), flush=True)
+            return 0 if result["ready"] else 3
+        api, admin = load_authority_transport_secrets(
+            require_files=opts.require_file_secrets)
+        if opts.require_mtls and not _TLS_CONFIG_FIELDS.issubset(config):
+            raise OrchestrationError("authority deployment requires mTLS")
         application = _application_from_config(config)
         tls = (make_authority_mtls_server_context(
             certificate_file=config["server_certificate_file"],
