@@ -173,8 +173,7 @@ class ResearchAuthorityApplication:
         claims = receipt["claims"]
         grant_id = _grant_id(claims.get("grant_id"))
         # The local service emergency-stop is a veto, never permission.
-        if self.canary.snapshot()["stop_state"] != "ARMED":
-            raise OrchestrationError("research emergency stop latched")
+        self.canary.assert_armed()
         # Validate issuer signature and fixed handoff *before* budgeting.
         self.grants._grant(
             handoff, receipt, datetime.now(timezone.utc))
