@@ -148,6 +148,29 @@ by replacing files while the service is running; never treat a restored
 `STOPPED` ledger as `ARMED`. Do not automatically retry unconfirmed
 Provider requests after a restart or a lost ACK.
 
+## Disposable Docker execution rehearsal in CI
+
+The Ubuntu P7 CI job first validates Compose and builds the real P7
+image, then runs `python deploy/p7/container_smoke.py`.
+
+This **does start a local disposable container on the GitHub runner**, but
+never deploys to a user/server and never uses real credentials. It generates
+throwaway Ed25519 signers, a short-lived CA, separate server/client TLS
+identities and distinct API/admin tokens. It mounts those files into a
+non-root, host-loopback-only container with a persistent test SQLite volume,
+and checks:
+
+1. TLS-authenticated read-only monitor returns `permission_to_dispatch=false`.
+2. The container's internal read-only readiness probe sees `ARMED`.
+3. Admin Stop latches `STOPPED` exactly once.
+4. The probe still reports recovery availability after Stop.
+5. Killing/restarting the container against the same test volume retains
+   `STOPPED` and does not restore live authority.
+
+Disposable secrets are never printed or uploaded; the fixture directory is
+cleaned up after validation. This establishes a **sandbox deployment
+rehearsal**, not independent production PKI, operations or billing acceptance.
+
 ## Acceptance still required outside the repository
 
 - Docker build/boot in the independently managed deployment host;
