@@ -177,7 +177,7 @@ class ReferenceExternalSpendLedger:
                 or any(c not in "0123456789abcdef" for c in attempt_id)
                 or (task_id is not None and (
                     not isinstance(task_id, str) or len(task_id) != 32
-                    or any(c not in "0123456789abcdef" for c in task_id))):
+                    or any(c not in "0123456789abcdef" for c in task_id)))):
             raise OrchestrationError("external spend quarantine identity invalid")
         with closing(self._connect()) as db:
             try:
