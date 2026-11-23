@@ -708,19 +708,20 @@ def main(argv=None):
                 cfg, registry_assignments, registry_path)
             policy = prepared["model_governance"]
             effective = prepared["model"]
+            orchestrator = MainOrchestrator(root)
             if args.command == "orchestration-research-prepare-status":
                 result = inspect_research_preparation(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-runtime-status":
                 result = inspect_runtime_attempt(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-status":
                 result = inspect_research_control_plane(
-                    MainOrchestrator(root), args.task_id, effective, policy)
+                    orchestrator, args.task_id, effective, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-runtime-plan":
@@ -742,7 +743,7 @@ def main(argv=None):
                     json.loads(args.consumer_trust_policy.read_text(encoding="utf-8"))
                     if args.consumer_trust_policy is not None else None)
                 result = inspect_research_runtime_plan(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     receipt=receipt, trust_policy=trust,
                     input_tokens=args.input_tokens,
                     max_output_tokens=args.max_output_tokens,
@@ -751,25 +752,25 @@ def main(argv=None):
                 return 0
             if args.command == "orchestration-research-grant-audit-status":
                 result = inspect_research_grant_claim(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-catalog-contract":
                 result = inspect_catalog_read_contract(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-grant-audit-reserve":
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
                 trust = json.loads(args.trust_policy.read_text(encoding="utf-8"))
                 result = reserve_research_grant_audit(
-                    MainOrchestrator(root), args.task_id,
+                    orchestrator, args.task_id,
                     effective, policy, receipt, trust)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-issuer-request":
                 result = build_research_issuer_request(
-                    MainOrchestrator(root), args.task_id, effective, policy)
+                    orchestrator, args.task_id, effective, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-research-live-readiness":
@@ -781,36 +782,36 @@ def main(argv=None):
                 trust = (json.loads(args.trust_policy.read_text(encoding="utf-8"))
                          if args.trust_policy is not None else None)
                 result = inspect_research_live_readiness(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     config_source=config_source,
                     receipt=receipt, trust_policy=trust)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-dispatch-audit":
                 result = inspect_simulation_dispatch_gate(
-                    MainOrchestrator(root), args.task_id, policy)
+                    orchestrator, args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-release-gate":
                 result = inspect_production_release_gate(
-                    MainOrchestrator(root), args.task_id,
+                    orchestrator, args.task_id,
                     effective, policy, config_source=config_source,
                     platform_read_evidence_id=args.platform_read_evidence_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-recovery-audit":
                 result = inspect_simulation_recovery_evidence(
-                    MainOrchestrator(root), args.task_id, policy)
+                    orchestrator, args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-predispatch-escrow-reserve":
                 result = reserve_pre_dispatch_escrow(
-                    MainOrchestrator(root), args.task_id, policy)
+                    orchestrator, args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-manifest-status":
                 result = inspect_generated_manifest(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-scope-issuer-request":
@@ -822,20 +823,20 @@ def main(argv=None):
                         file=sys.stderr)
                     return 2
                 manifest = _resolve_simulation_manifest(
-                    MainOrchestrator(root), args.task_id, args.manifest)
+                    orchestrator, args.task_id, args.manifest)
                 if manifest is None:
                     result = inspect_generated_manifest(
-                        MainOrchestrator(root), args.task_id)
+                        orchestrator, args.task_id)
                     print(json.dumps(result, ensure_ascii=False, indent=2))
                     return 0
                 result = build_scope_issuer_request(
-                    MainOrchestrator(root), args.task_id,
+                    orchestrator, args.task_id,
                     effective, policy, manifest)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-consent-issuer-request":
                 result = build_operator_consent_issuer_request(
-                    MainOrchestrator(root), args.task_id, effective, policy)
+                    orchestrator, args.task_id, effective, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command in {"orchestration-consent-verify",
@@ -845,38 +846,38 @@ def main(argv=None):
                     args.trust_policy.read_text(encoding="utf-8"))
                 if args.command == "orchestration-consent-verify":
                     result = verify_external_consent(
-                        MainOrchestrator(root), args.task_id,
+                        orchestrator, args.task_id,
                         effective, policy, receipt, trust_policy)
                 else:
                     result = reserve_consent_for_audit(
-                        MainOrchestrator(root), args.task_id,
+                        orchestrator, args.task_id,
                         effective, policy, receipt, trust_policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-predispatch-escrow-status":
                 result = inspect_pre_dispatch_escrow(
-                    MainOrchestrator(root), args.task_id, policy)
+                    orchestrator, args.task_id, policy)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-consent-status":
                 result = inspect_consent_reservation(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-stage-status":
                 result = inspect_staged_simulation_attempt(
-                    MainOrchestrator(root), args.task_id)
+                    orchestrator, args.task_id)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-simulation-stage":
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
                 manifest = _resolve_simulation_manifest(
-                    MainOrchestrator(root), args.task_id, args.manifest)
+                    orchestrator, args.task_id, args.manifest)
                 if manifest is None:
                     raise OrchestrationError(
                         "Agent Simulation manifest not ready; no research candidate recorded")
                 result = stage_simulation_attempt(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     receipt, manifest)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
@@ -884,12 +885,12 @@ def main(argv=None):
                 # Read-only verifier: no lock, Gateway, model or intent write.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
                 manifest = _resolve_simulation_manifest(
-                    MainOrchestrator(root), args.task_id, args.manifest)
+                    orchestrator, args.task_id, args.manifest)
                 if manifest is None:
                     raise OrchestrationError(
                         "Agent Simulation manifest not ready; no research candidate recorded")
                 result = inspect_simulation_scope(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     receipt, manifest)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
@@ -898,7 +899,7 @@ def main(argv=None):
                 # There is no provider, Gateway, Simulation or dispatch here.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
                 result = reserve_non_executable_receipt(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     receipt)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
@@ -907,19 +908,19 @@ def main(argv=None):
                 # reservation, no provider or gateway constructed.
                 receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
                 result = inspect_execution_receipt(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     receipt)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             if args.command == "orchestration-admission-audit":
                 # A read-only audit must not create a writer/execution lock file.
                 result = audit_execution_admission(
-                    MainOrchestrator(root), args.task_id, effective, policy,
+                    orchestrator, args.task_id, effective, policy,
                     config_source=config_source)
                 print(json.dumps(result, ensure_ascii=False, indent=2))
                 return 0
             with SingleWriterLock(root / "state" / "agent.lock"):
-                runner = MainOrchestrator(root)
+                runner = orchestrator
                 if args.command == "orchestration-prepare":
                     request = {"objective": args.objective}
                     if args.workflow == "regular":

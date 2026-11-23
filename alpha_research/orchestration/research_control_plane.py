@@ -72,6 +72,35 @@ def _status(component, task_id, callback):
         return "RECONCILIATION_REQUIRED"
 
 
+def _negative_release_projection(orchestrator, task_id, inspector,
+                                 expected_status, fallback_blocker):
+    """Project a blocked release report without trusting an arbitrary dict.
+
+    Reconciliation failures never become a success status, and this read-only
+    aggregator must not fix, replace or retry untrusted source evidence.
+    """
+    try:
+        report = inspector(orchestrator, task_id)
+        blockers = report.get("blockers") if isinstance(report, dict) else None
+        if (not isinstance(report, dict)
+                or type(report.get("schema_version")) is not int
+                or report["schema_version"] != 1
+                or report.get("task_id") != task_id
+                or report.get("status") != expected_status
+                or report.get("audit_mode") != "READ_ONLY"
+                or not isinstance(blockers, list) or not blockers
+                or any(not isinstance(b, str) or not b for b in blockers)
+                or any(report.get(flag) is not False for flag in (
+                    "permission_to_dispatch", "production_authorized",
+                    "model_call_authorized", "brain_read_authorized",
+                    "brain_simulation_authorized", "alpha_submission_authorized",
+                    "automatic_retry_allowed"))):
+            raise OrchestrationError("research release projection contract drift")
+        return report["status"], sorted(set(blockers))
+    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
+        return "RECONCILIATION_REQUIRED", [fallback_blocker]
+
+
 def inspect_research_control_plane(orchestrator, task_id, model_config,
                                    governance_policy):
     """One status command for an existing task, no added files or network."""
@@ -118,35 +147,14 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
             "blockers": ["RESEARCH_RUNTIME_PLAN_UNAVAILABLE"],
         }
     statuses["live_plan"] = live_plan["status"]
-    # One control-plane query should surface the latest P6 production
-    # blockers without pretending historical P4 readiness was a live grant.
-    # P6 reads only the local Task/evidence; no transport is constructed.
-    try:
-        production = inspect_p6_integrated_release(orchestrator, task_id)
-        if (production.get("status") != "P6_PRODUCTION_BLOCKED"
-                or production.get("permission_to_dispatch") is not False
-                or not isinstance(production.get("blockers"), list)
-                or not production["blockers"]):
-            raise OrchestrationError("P6 production readiness contract drift")
-        production_status = production["status"]
-        production_blockers = list(production["blockers"])
-    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
-        production_status = "RECONCILIATION_REQUIRED"
-        production_blockers = ["P6_READINESS_EVIDENCE_UNAVAILABLE"]
-    # Surface P7.1-P7.5 readiness alongside the pre-existing P6 projection.
-    # This is a negative-only local audit; no generated credentials or calls.
-    try:
-        p7 = inspect_research_release(orchestrator, task_id)
-        if (p7.get("status") != "P7_PRODUCTION_BLOCKED"
-                or p7.get("permission_to_dispatch") is not False
-                or not isinstance(p7.get("blockers"), list)
-                or not p7["blockers"]):
-            raise OrchestrationError("P7 production readiness contract drift")
-        p7_status = p7["status"]
-        p7_blockers = list(p7["blockers"])
-    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
-        p7_status = "RECONCILIATION_REQUIRED"
-        p7_blockers = ["P7_READINESS_EVIDENCE_UNAVAILABLE"]
+    # The unified read-only status projects each release matrix through
+    # one strict negative-only contract. Neither result is a live grant.
+    production_status, production_blockers = _negative_release_projection(
+        orchestrator, task_id, inspect_p6_integrated_release,
+        "P6_PRODUCTION_BLOCKED", "P6_READINESS_EVIDENCE_UNAVAILABLE")
+    p7_status, p7_blockers = _negative_release_projection(
+        orchestrator, task_id, inspect_research_release,
+        "P7_PRODUCTION_BLOCKED", "P7_READINESS_EVIDENCE_UNAVAILABLE")
     if set(statuses) != set(_COMPONENTS):
         raise OrchestrationError("research status component list drift")
     uncertain = {

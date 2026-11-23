@@ -121,7 +121,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 ## 6. 持久化、重入和恢复语义
 
-- `MainOrchestrator` 的 Task 状态与 `validate → execute → qualify → collect` 检查点必须在持久化层确认；Task 完成不等于 Candidate 合格。
+- CLI 为同一条编排命令复用单一 `MainOrchestrator` 实例，避免多个独立装配入口；统一研究状态使用一个负向发布投影校验器核对 P6/P7 报告，任何伪造的正向授权字段都会触发 `RECONCILIATION_REQUIRED`。\n\n- `MainOrchestrator` 的 Task 状态与 `validate → execute → qualify → collect` 检查点必须在持久化层确认；Task 完成不等于 Candidate 合格。
 - Regular Campaign 的 Dataset/组合/批次，Super/Optimization 的模拟 Intent，模型 Attempt、授权消费和独立费用账本为**不同状态机**；不能为了复用接口合并为单一可重试状态。
 - 非幂等请求前持久化 Intent，返回未知时留在 UNKNOWN/blocked。恢复凭原请求和已验证的独立读回/收据进入，不能替换收到过但不可核实的结果。
 - `state/fingerprint.py` 的普通 SHA-256 只用于检测普通修改；攻击者可改写本地文件时不能视为远程真实性证明。

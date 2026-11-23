@@ -234,6 +234,45 @@ class ResearchControlPlaneTests(unittest.TestCase):
                 self.assertIn("live_plan", report["reconciliation_components"])
                 self.assertFalse(report["permission_to_dispatch"])
 
+    def test_release_status_rejects_positive_or_malformed_child_report(self):
+        task_id = self.fresh()
+        real = self.summary(task_id)
+        self.assertEqual(real["p7_production_status"], "P7_PRODUCTION_BLOCKED")
+        with patch(
+            "alpha_research.orchestration.research_control_plane.inspect_research_release",
+            return_value={
+                "schema_version": 1, "task_id": task_id,
+                "status": "P7_PRODUCTION_BLOCKED", "audit_mode": "READ_ONLY",
+                "blockers": ["REAL_EXTERNAL_SOURCE_REQUIRED"],
+                "permission_to_dispatch": False,
+                "production_authorized": False,
+                "model_call_authorized": True,
+                "brain_read_authorized": False,
+                "brain_simulation_authorized": False,
+                "alpha_submission_authorized": False,
+                "automatic_retry_allowed": False,
+            },
+        ):
+            forged = self.summary(task_id)
+        self.assertEqual(forged["status"], "RECONCILIATION_REQUIRED")
+        self.assertEqual(forged["p7_production_status"], "RECONCILIATION_REQUIRED")
+        self.assertIn("p7_production_readiness",
+                      forged["reconciliation_components"])
+        self.assertFalse(forged["permission_to_dispatch"])
+        with patch(
+            "alpha_research.orchestration.research_control_plane.inspect_p6_integrated_release",
+            return_value={
+                "schema_version": 1, "task_id": task_id,
+                "status": "P6_PRODUCTION_BLOCKED", "audit_mode": "READ_ONLY",
+                "blockers": [{"untrusted": "not a blocker"}],
+                "permission_to_dispatch": False,
+            },
+        ):
+            invalid = self.summary(task_id)
+        self.assertIn("production_readiness",
+                      invalid["reconciliation_components"])
+        self.assertEqual(invalid["p6_production_status"], "RECONCILIATION_REQUIRED")
+
     def test_cli_one_command_never_builds_gateway_or_model(self):
         prefix = [
             "--state-root", str(self.root),
