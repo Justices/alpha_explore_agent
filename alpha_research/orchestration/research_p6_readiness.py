@@ -18,15 +18,30 @@ from alpha_research.orchestration.research_remote_reconciliation import (
 from alpha_research.orchestration.research_sdk_boundary import (
     build_research_sdk_request_plan, inspect_research_sdk_usage,
 )
+from alpha_research.orchestration.research_model_cost_boundary import (
+    ceil_cost_usd_micros,
+)
 from alpha_research.orchestration.research_p5_release import (
     inspect_research_p5_canary_gate,
 )
 from alpha_research.state.fingerprint import fingerprint_json
 
-_ALLOWED_HOSTS = frozenset({
-    "api.deepseek.com", "open.bigmodel.cn", "api.moonshot.cn",
-})
-_TASKS = frozenset({"construct_super", "optimize_alpha"})
+# Host, path and credential identity form ONE provider-specific contract.
+# A host from provider A cannot silently inherit provider B's API root.
+_PROVIDER_ENDPOINTS = {
+    "api.deepseek.com": {
+        "paths": ("", "/", "/v1"),
+        "key": "DEEPSEEK_API_KEY",
+    },
+    "open.bigmodel.cn": {
+        "paths": ("/api/paas/v4",),
+        "key": "ZAI_API_KEY",
+    },
+    "api.moonshot.cn": {
+        "paths": ("/v1",),
+        "key": "MOONSHOT_API_KEY",
+    },
+}
 
 
 def inspect_p6_provider_plan(orchestrator, task_id, model_config,
@@ -44,17 +59,21 @@ def inspect_p6_provider_plan(orchestrator, task_id, model_config,
     raw_url = backend.get("base_url")
     if not isinstance(raw_url, str):
         raise OrchestrationError("P6 registered backend HTTPS URL missing")
-    parsed = urlsplit(raw_url)
-    if (parsed.scheme != "https" or parsed.hostname not in _ALLOWED_HOSTS
-            or parsed.port not in (None, 443)
+    try:
+        parsed = urlsplit(raw_url)
+        endpoint = _PROVIDER_ENDPOINTS.get(parsed.hostname)
+        port = parsed.port
+    except ValueError as exc:
+        raise OrchestrationError("P6 provider HTTPS endpoint invalid") from exc
+    if (parsed.scheme != "https" or endpoint is None
+            or port not in (None, 443)
             or parsed.username is not None or parsed.password is not None
             or parsed.query or parsed.fragment
-            or parsed.path not in ("", "/", "/v1", "/api/paas/v4")
+            or parsed.path not in endpoint["paths"]
             or backend.get("provider") != "openai_sdk"
             or backend.get("kind") != "llm_api"
             or backend.get("model") != sdk["fixed_sdk_options"]["model"]
-            or not isinstance(backend.get("api_key_env"), str)
-            or not backend["api_key_env"].endswith("_API_KEY")):
+            or backend.get("api_key_env") != endpoint["key"]):
         raise OrchestrationError("P6 provider is not a pinned registered HTTPS backend")
     return {
         "schema_version": 1,
@@ -117,10 +136,13 @@ def inspect_p6_provider_metering(provider_plan, sdk_plan, usage, receipt,
                    for k in ("input_rate_micros_per_million",
                              "output_rate_micros_per_million"))):
         raise OrchestrationError("P6 signed price rates missing")
-    numerator = (
-        usage["prompt_tokens"] * claims["input_rate_micros_per_million"]
-        + usage["completion_tokens"] * claims["output_rate_micros_per_million"])
-    estimate = (numerator + 999_999) // 1_000_000
+    estimate = ceil_cost_usd_micros(
+        input_tokens=usage["prompt_tokens"],
+        output_tokens=usage["completion_tokens"],
+        input_rate_micros_per_million=claims[
+            "input_rate_micros_per_million"],
+        output_rate_micros_per_million=claims[
+            "output_rate_micros_per_million"])
     variance = None if billed_usd_micros is None else billed_usd_micros - estimate
     status = "P6_REPORTED_USAGE_ESTIMATE_ONLY"
     if estimate > upper:
