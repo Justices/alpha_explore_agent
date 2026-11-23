@@ -1883,5 +1883,73 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertEqual(client.snapshot("a"*32)["reserved_attempts"], 0)
 
 
+    def test_p6_release_denied_brain_frame_and_bad_metering_are_not_verified(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_integrated_release, inspect_p6_brain_catalog_frame,
+            inspect_p6_provider_plan, inspect_p6_provider_metering,
+            inspect_p6_signed_provider_readback,
+        )
+        provider = inspect_p6_provider_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        sdk = build_research_sdk_request_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        # A supplier-reported token count which exceeds its declared input
+        # ceiling is a reconciliation incident, not successful billing.
+        metering = inspect_p6_provider_metering(
+            provider, sdk,
+            {"prompt_tokens": 701, "completion_tokens": 500,
+             "total_tokens": 1201}, self.receipt)
+        denied = inspect_p6_brain_catalog_frame(
+            self.runner, self.task_id, {"cmd": "simulate_super"})
+        evidence, trust = self.readback()
+        signed = inspect_p6_signed_provider_readback(
+            self.task_id, self.receipt, self.ack, "f" * 32,
+            evidence, trust, expected_operation_id="remote-provider-op",
+            max_input_tokens=1000, max_output_tokens=1000,
+            max_total_cost_usd_micros=15000, now=self.now)
+        release = inspect_p6_integrated_release(
+            self.runner, self.task_id, provider_report=provider,
+            metering_report=metering, brain_report=denied,
+            signed_readback=signed)
+        self.assertEqual(release["milestones"]["p6_3_billing"],
+                         "RECONCILIATION_REQUIRED")
+        self.assertEqual(release["milestones"]["p6_4_brain_read"],
+                         "READ_ONLY_FRAME_DENIED")
+        self.assertIn("P6_METERING_RECONCILIATION_REQUIRED",
+                      release["blockers"])
+        self.assertIn("P6_BRAIN_READ_FRAME_DENIED", release["blockers"])
+        self.assertFalse(release["permission_to_dispatch"])
+
+    def test_p6_release_does_not_accept_forged_negative_audit_claims(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_integrated_release,
+        )
+        valid = {
+            "task_id": self.task_id,
+            "status": "P6_SIGNED_READBACK_AUDITED_BILLING_UNVERIFIED",
+            "permission_to_dispatch": False,
+            "real_provider_invoice_verified": False,
+            "server_to_provider_readback_executed": False,
+            "remote_operation_id_matches_journal": True,
+            "safe_to_retry": False,
+        }
+        for name, value in (
+            ("permission_to_dispatch", True),
+            ("real_provider_invoice_verified", True),
+            ("server_to_provider_readback_executed", True),
+            ("remote_operation_id_matches_journal", False),
+            ("safe_to_retry", True),
+        ):
+            with self.subTest(name=name):
+                forged = {**valid, name: value}
+                with self.assertRaises(OrchestrationError):
+                    inspect_p6_integrated_release(
+                        self.runner, self.task_id, signed_readback=forged)
+
+
 if __name__ == "__main__":
     unittest.main()
