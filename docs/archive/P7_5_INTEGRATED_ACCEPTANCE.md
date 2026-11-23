@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P7.5 — Cross-module acceptance and production release gate
 
 **Result:** the repository now has a single read-only P7 release matrix, explicitly incapable of granting production or live execution authorization.

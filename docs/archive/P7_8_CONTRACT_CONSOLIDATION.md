@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P7.8 — Shared negative status contracts
 
 P7.2–P7.5 use a single Provider hostname catalog and closed Billing/BRAIN/Canary status vocabularies in `research_p7_contracts.py`. The offline BRAIN producer and integrated release verifier share one decision table; Canary producer and verifier share a single Stop-first status function.

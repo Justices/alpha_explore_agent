@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P4.3 Production admission review — static, read-only
 
 **Scope:** current `refactor/configurable-codex-agy-runtime` branch.

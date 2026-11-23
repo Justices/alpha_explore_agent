@@ -1,3 +1,5 @@
+> **历史档案**：原有设计/验收描述不再是当前真相来源。详见 [整体设计](../CURRENT_DESIGN.md)。
+
 # P0 — Controlled live research readiness
 
 This is an operator runbook for the **existing** Regular/Super/Optimization
@@ -21,7 +23,7 @@ verified in the repository or offline CI. It does not authorize Simulation,
 Alpha submission, or tag/property mutation.
 
 For the consolidated status and document index, see
-[Current Design](CURRENT_DESIGN.md).
+[Current Design](../CURRENT_DESIGN.md).
 
 ## Implemented locally (no network)
 

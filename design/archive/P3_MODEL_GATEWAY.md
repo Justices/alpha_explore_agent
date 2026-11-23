@@ -1,3 +1,5 @@
+> **历史档案**：原有设计/验收描述不再是当前真相来源。详见 [整体设计](../CURRENT_DESIGN.md)。
+
 # P3: model connectivity and BRAIN tool boundary
 
 ## Merge baseline

@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P7.6 — Offline evidence-integrity hardening
 
 Implementation-only follow-up to P7.3–P7.5 on `refactor/configurable-codex-agy-runtime`.

@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P4.5.1 / P4.5.2 — Simulation admission scope and safe pre-POST lifecycle
 
 **P4.7 update:** The staging write order and evidence schema in Section 3

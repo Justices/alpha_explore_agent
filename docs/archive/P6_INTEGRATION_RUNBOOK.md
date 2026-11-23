@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P6.1–P6.6 integration runbook (offline evidence, production blocked)
 
 This phase implements and tests the *local/offline contract* for the proposed
@@ -18,7 +20,7 @@ approval to operate a real account.
 | P6.6 Release | Integrated negative-only P6 matrix inside top-level production release gate | Always PRODUCTION_BLOCKED until evidence/controls exist; no bypass switch |
 
 The P6 inspection module is
-[`alpha_research/orchestration/research_p6_readiness.py`](../alpha_research/orchestration/research_p6_readiness.py).
+[`alpha_research/orchestration/research_p6_readiness.py`](../../alpha_research/orchestration/research_p6_readiness.py).
 All returns explicitly include `permission_to_dispatch=false`.
 The implementation uses the already reviewed P4/P5 signed operator Grant,
 single-use ACK, expense reservations, remote recovery observations and stop.

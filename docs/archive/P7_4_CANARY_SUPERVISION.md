@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P7.4 — Canary monitoring, watchdog decision and stop policy
 
 P7.4 provides a **pure, offline supervision decision engine**, not a deployed watchdog or automatic irreversible control action. It composes the existing P5.5 persistent Stop and monitor with P7 billing/BRAIN audit states.

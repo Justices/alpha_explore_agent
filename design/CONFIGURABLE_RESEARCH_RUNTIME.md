@@ -5,6 +5,10 @@
 
 # Configurable Agent / LLM Runtime — Offline Contract
 
+> Adapter-specific implementation details; for the current system-wide trust
+> and production boundaries see [Current Design](CURRENT_DESIGN.md) and
+> [Release Acceptance](../docs/RELEASE_ACCEPTANCE.md).
+
 Status: feature-branch implementation; not live BRAIN research authorization.
 
 The active project boundaries are AGENTS.md and design/RESEARCH_SCOPE.md.
@@ -52,7 +56,7 @@ No consumer Google account is silently scripted as a model backend.
 To install the optional official SDK dependency:
     pip install -e ".[agy]"
 
-## P0 mock smoke command
+## Offline model smoke
 
 The following is a MANUAL test command, not a production run:
 
@@ -85,7 +89,7 @@ P0 does not claim crash-resilient multi-round learning, task queue support,
 production tool execution, RA/PC/SC qualification or live API verification.
 
 
-## P1 durable mock research
+## Durable offline research
 
 The durable loop is a separate, opt-in CLI mode:
 
@@ -132,7 +136,7 @@ after simulation intents exist. Operator action is required for the subsequent
 resume_blocked=True call. An experimental source remains NOT_EVALUATED.
 
 
-## P1/P2 safety hardening (offline scope)
+## Model isolation, budget and recovery
 
 - PENDING or FAILED fixture results are **unsettled**, not performance
   evidence. The engine stops before AGY attribution or Codex reflection.

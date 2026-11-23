@@ -1,14 +1,16 @@
-# Main Orchestrator — offline-first P1–P4
+# Main Orchestrator — offline-first task and recovery architecture
+
+> Module details only; current cross-module design and release boundaries are in [Current Design](CURRENT_DESIGN.md) and [Release Acceptance](../docs/RELEASE_ACCEPTANCE.md).
 
 The control plane lives in `alpha_research/orchestration/engine.py`. It does not create a BRAIN gateway, call live APIs, run a Simulation, or submit an Alpha.
 
-## P1: task contract and state machine
+## Task contract and state machine
 
 Supported workflows: `regular`, `super`, `optimization`. Each task has an immutable request digest, independent task ID, bounded experiment budget, durable step checkpoints, and status `CREATED / RUNNING / COMPLETED / BLOCKED`. A completed task is **not** a qualified Candidate; qualification is a separate step/result.
 
 The orchestration steps are `validate → execute → qualify → collect`. Step outputs are JSON objects stored under `state/research_v1_1/orchestration/<task-id>.json`.
 
-## P2: crash/fault handling
+## Crash handling and reconciliation
 
 Before calling an adapter, the orchestrator writes a `RUNNING` step and reserves experiment budget. If the adapter raises, the task is blocked. Re-entry never automatically replays a blocked step; an independently verified receipt may be recorded with `reconcile` and processing can then resume from the next step. This is intentionally conservative: it cannot infer that a crashed external Simulation failed.
 
@@ -39,11 +41,11 @@ requires a one-batch orchestration budget and reconciles Campaign state without
 starting another batch. These recovery paths can resume/poll an existing
 platform runner, but never create a new Simulation request.
 
-## P3: Candidate Pool
+## Candidate Pool projection
 
 The `pool_snapshot` function builds a policy-aware, read-only view of the existing global Candidate Pool. The `collect` adapter step carries qualification output but cannot promote a Candidate by itself. The existing `CandidateQualificationService` remains the sole admission authority.
 
-## P4: mock integration
+## Offline integration
 
 `OfflineResearchAdapter` accepts fixture keys such as `regular.validate`, `regular.execute`, `regular.qualify`, `regular.collect`. It cannot call a live gateway. Unit tests cover all three workflows, checkpoint durability, unknown execute outcome, manual reconciliation, no replay, missing fixtures, and request tampering.
 

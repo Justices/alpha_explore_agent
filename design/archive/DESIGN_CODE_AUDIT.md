@@ -1,6 +1,8 @@
+> **历史档案**：原有设计/验收描述不再是当前真相来源。详见 [整体设计](../CURRENT_DESIGN.md)。
+
 # 设计—代码一致性审计（2026-11-20）
 
-> 审计范围：`refactor/configurable-codex-agy-runtime` 功能分支的关键代码与现行设计文档；**静态代码审计**，不是自动化测试通过声明，也不是 BRAIN 生产验收。遵循 [AGENTS.md](../AGENTS.md) 和 [RESEARCH_SCOPE.md](RESEARCH_SCOPE.md)。
+> 审计范围：`refactor/configurable-codex-agy-runtime` 功能分支的关键代码与现行设计文档；**静态代码审计**，不是自动化测试通过声明，也不是 BRAIN 生产验收。遵循 [AGENTS.md](../../AGENTS.md) 和 [RESEARCH_SCOPE.md](../RESEARCH_SCOPE.md)。
 
 ## 离线 CI 验收实证（2026-11-20）
 

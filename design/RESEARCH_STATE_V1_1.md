@@ -182,7 +182,7 @@ Platform references: BRAIN documentation pages `superalpha-overview`,
 - Use the existing configured gates and current agent contract. This schema
   introduces no new threshold, automatic submission or property mutation.
 
-## Implementation order
+## State schema integration and migration considerations
 
 1. Add read/write validation for versioned Campaign, subtask, combination,
    budget, source and branch records without changing existing schema 1 reads.

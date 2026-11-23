@@ -1,3 +1,5 @@
+> **历史档案**：此处保留迭代期的记录，不是当前设计或生产授权依据。请优先阅读 [整体设计](../../design/CURRENT_DESIGN.md) 和 [统一验收](../RELEASE_ACCEPTANCE.md)。
+
 # P7.2 — Provider Token and invoice reconciliation (offline)
 
 P7.2 implements **a bounded offline billing reconciliation module**, not a live Provider invoice integration. It is intentionally grouped as one business module: operation and attempt linkage, exact invoice-set admission, conservative integer micro-USD re-estimation, reservation checks, variance reporting and integration into the existing negative-only production release gate.

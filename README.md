@@ -44,169 +44,32 @@ uses an offline adapter. The existing live commands dispatch to the workflow
 implementations in `workflows/` through the CLI.
 
 
-## Code optimization batches — final review
+## System architecture, operations and release boundaries
 
-The four module refactoring batches (authority, LLM, BRAIN Driver, research
-orchestration) and the fifth cross-module review are documented in the
-[Optimization Batch Ledger](docs/OPTIMIZATION_BATCH_LEDGER.md).
-The review corrected P6 release milestone reporting and bounded BRAIN
-subprocess shutdown. **These optimization changes have not yet received
-their unified static, offline or cross-platform test acceptance.**
-Production dispatch remains `PRODUCTION_BLOCKED`.
+The project is organized by **workflow, model and platform integrations,
+evidence, orchestration, budgeting, recovery and authorization**, rather
+than historical delivery milestones. Use these maintained entrypoints:
 
-## Orchestrated research runtime — status and P4.29 release audit
+| Topic | Current document |
+| --- | --- |
+| Architecture and workflow ownership | [System Design](design/CURRENT_DESIGN.md) |
+| Package responsibilities | [Component Architecture](design/RESEARCH_ARCHITECTURE_V1_1.md) |
+| Read-only Task audit, local Authority and operational safety | [Operations](docs/OPERATIONS.md) |
+| CI, audit evidence and production blockers | [Release Acceptance](docs/RELEASE_ACCEPTANCE.md) |
+| Historical implementation records | [Archive](docs/archive/README.md) |
 
-For Super Alpha / Optimization tasks under the new orchestration control
-plane, start with the [Research Runtime Operator Guide](docs/RESEARCH_RUNTIME_OPERATOR_GUIDE.md).
-The read-only command `orchestration-research-status <TASK_ID>` reports
-Agent preparation, model attempt, immutable Manifest, local grant audit,
-Catalog scope, and production blockers **without requiring a manual Manifest
-file**. Use the same `--state-root` as the original Task.
+`orchestration-research-status <TASK_ID>` reports preparation,
+attempts, recovery and blockers without dispatch. The read-only
+`orchestration-release-gate <TASK_ID>` correlates Provider billing,
+BRAIN scoped-read observations, Canary telemetry and external requirements.
+The local Authority and SDK MockTransport are isolation references,
+not externally attested production infrastructure.
 
-P4.25–P4.29 add independent-ledger readback verification, a transactional
-single-use Grant reference service, signed Driver session evidence, signed
-model-price validation, atomic USD spend-reservation reference storage,
-non-replayable remote-outcome reconciliation and an integrated Canary review
-matrix. Run **orchestration-release-gate <TASK_ID>** for an entirely read-only
-production-blocker report, including its **research_p4_canary** component.
-See the operator guide for the external deployments and approvals still needed.
-
-The production research adapter remains independently blocked: the reference
-services have no trusted remote deployment or independently provisioned runtime
-credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
-Simulation or Alpha submission is enabled. A local signature, canary review or
-offline CI run does not unlock these operations.
-
-## P7.3–P7.5 complete offline control-plane modules
-
-The P7 implementation now includes a Task/ACK/Scope-bound BRAIN read-only
-session audit, independent Canary telemetry freshness and Stop decision, and a
-cross-module P7 release matrix. P7.5 is wired into both
-`orchestration-release-gate` and the read-only research control-plane status.
-The system **does not** open a real BRAIN read-only session, execute a live
-watchdog, attest a Provider invoice, or authorize Simulation.
-
-See [P7.3 BRAIN Catalog session scope](docs/P7_3_BRAIN_READ_SESSION.md),
-[P7.4 Canary supervision](docs/P7_4_CANARY_SUPERVISION.md), and
-[P7.5 integrated acceptance](docs/P7_5_INTEGRATED_ACCEPTANCE.md).
-Regression tests have been added, but final static/offline/cross-platform
-acceptance has not been claimed. Production remains `PRODUCTION_BLOCKED`.
-
-## P7.2 offline Provider billing reconciliation
-
-The complete **offline** Provider invoice reconciliation module binds attempt
-IDs to recorded operation IDs, rejects incomplete or duplicate invoices,
-recomputes integer micro-USD costs and flags reservation breaches and invoice
-variance. It is connected to the negative-only P6 release matrix. Even matching
-supplied invoice rows are **not provider-authenticated evidence**, do not settle
-the ledger or refund reserved budget, and cannot authorize a live operation.
-See [P7.2 Provider billing](docs/P7_2_PROVIDER_BILLING.md).
-Code optimization tests are written but have not yet been executed in this pass.
-Production remains `PRODUCTION_BLOCKED`.
-
-## P7.1 deployment hardening — isolated local authority
-
-P7 adds a second, stricter deployment target for the **independent
-audit/recovery authority only**: an operator-provisioned non-root Linux
-container with mandatory mutual TLS, owner-only file-based API/admin
-tokens, persistent recovery SQLite, a read-only readiness CLI and
-host-loopback-only networking (no published ports). Neither the Docker
-configuration nor a green readiness check authorizes real Provider/BRAIN
-execution. External host deployment and independent service identity are
-not attested by this code.
-
-See [P7 authority deployment and recovery runbook](docs/P7_AUTHORITY_DEPLOYMENT.md).
-Production status remains `PRODUCTION_BLOCKED`.
-
-## P6.1–P6.6 offline-to-production readiness work
-
-P6 adds an optional **mutual TLS** loopback transport (real client/server
-certificate validation), an isolated non-root Docker pilot build, pinned
-registered HTTPS model request audits, integer token/cost and invoice-variance
-checks, exact BRAIN read-only frame inspection, and an integrated P6 release
-matrix. Existing paid SDK and research BRAIN driver entrypoints remain
-independently disabled; neither TLS context construction nor signed mock
-evidence authorizes a live call.
-
-See [P6 integration runbook](docs/P6_INTEGRATION_RUNBOOK.md).
-P6's deliverable is *offline contract validation*, not a claim of
-production deployment. Status remains `PRODUCTION_BLOCKED`.
-
-## P5.5 local Canary emergency-stop and release barrier
-
-The separately launched local research authority now persists a **one-way
-GLOBAL emergency stop** in the same SQLite journal as grants and spending.
-The stop is checked under the spend reservation transaction; an offline
-SDK MockTransport run also rechecks after reserving. The API-only monitor
-returns redacted aggregate counters and budget/UNKNOWN alerts, while only
-the admin token can irreversibly trigger stop. A negative-only P5 Canary
-release report is integrated into the production gate. **ARMED only means
-the offline pilot is not stopped; it is never live authority.**
-
-See [P5.5 Canary stop and release contract](docs/P5_5_CANARY_STOP_RELEASE.md).
-Production remains PRODUCTION_BLOCKED.
-
-## P5.4 durable provider operation and signed recovery audit
-
-The P5.3 SDK MockTransport now records the returned operation ID in the
-independent authority's durable journal before reporting completion. After
-crash/restart, a read-only Task/attempt lookup recovers the operation ID and
-previously signed remote observations. A separately provisioned Ed25519
-recovery signer and **admin** API can append exact Task/ACK/attempt-bound
-remote readbacks, with replay, mismatch and charge-over-reservation checks.
-The spend ledger never interprets these reports as verified provider invoices:
-UNKNOWN/RESERVED capacity stays held and neither retry nor settlement is
-authorized. [P5.4 remote recovery contract](docs/P5_4_REMOTE_RECOVERY_AND_AUDIT.md).
-
-## P5.3 offline OpenAI-compatible SDK integration
-
-The OpenAI Python SDK is now exercised against an **in-process HTTP
-MockTransport**, after signed Grant/ledger/tariff verification and a
-Task-bound atomic USD reservation in the independent local pilot service.
-It sets `max_retries=0` and validates exact ChatCompletion kwargs, bounded
-messages and returned token ceilings. A lost, truncated or invalid response
-is quarantined as **UNKNOWN** in the remote spend ledger without refunding
-reserved capacity. Both OpenAI SDK 2.x (HTTPX) and 3.x (HTTPX2) native mock
-clients are supported; no provider API key is read or paid model invoked.
-
-See [P5.3 SDK pilot & cost boundary](docs/P5_3_SDK_PILOT_AND_METERING.md).
-This is an offline executable *contract test*, not production dispatch.
-The genuine paid SDK route, BRAIN Driver, Simulation and Alpha submission
-remain blocked.
-
-## P5.1–P5.2 independent authority pilot and driver-frame audit
-
-A new **loopback-only, separately launched local research authority pilot**
-provides authenticated, transactional single-use Grant consumption, signed
-ledger readback, atomic per-Grant/global USD reservation and independent
-operator revocation. The corresponding client deliberately has no automatic
-retry. The BRAIN driver now exposes an evidence-bound Catalog read-frame
-audit that checks signed Grant/ACK/ledger/session evidence before validating
-the exact scope; **it still does not start a live research Driver**.
-
-See [P5 local authority pilot and driver contract](docs/P5_RESEARCH_AUTHORITY_LOCAL_PILOT.md)
-for the opt-in local server, strict API boundaries, test commands and remaining
-external dependencies. No BRAIN Simulation, paid SDK call or Alpha submission
-is unlocked by these changes.
-
-## P4.7 Simulation authorization integrity (offline only)
-
-A canonical one-use Simulation authorization index is now written before
-the staged journal and PREPARED Intent. Read-only audits cross-check the exact
-staged request, workflow/Run/Batch/Research IDs, reciprocal authorization
-identity and model-budget uncertainty. Incomplete or legacy staging evidence
-requires manual reconciliation and **never** grants BRAIN dispatch.
-See [P4.7 authorization index](docs/P4_7_AUTHORIZATION_INDEX.md) and
-[P4.7.2 external consent audit](docs/P4_7_2_EXTERNAL_CONSENT_AUDIT.md), and
-[P4.7.3 pre-dispatch escrow](docs/P4_7_3_PREDISPATCH_ESCROW.md), and
-[P4.8 production release audit / remaining gates](docs/P4_8_RELEASE_AUDIT_AND_REMAINING_GATES.md).
-New read-only CLI commands `orchestration-simulation-recovery-audit` and
-`orchestration-release-gate` classify unknown outcomes and explicit production
-blockers without contacting a model or BRAIN.
-The new Ed25519 verification and single-use approval reservation are
-**audit-only**; no trusted approval issuer or executable production grant
-consumer is installed. Real provider calls, BRAIN Simulation and Alpha
-submission remain independently disabled.
+The current research control plane remains **`P7_PRODUCTION_BLOCKED`**:
+a signed local report, matching caller invoice, or green offline test
+never authorizes live BRAIN read/Simulation, paid model dispatch or Alpha
+submission. See [Release Acceptance](docs/RELEASE_ACCEPTANCE.md) for
+independently owned deployment and operator approval prerequisites.
 
 ## Current boundary
 
@@ -411,7 +274,7 @@ do not persist threads.
 A real model smoke test requires an explicit `--allow-model-call` flag.
 It never authorizes BRAIN Simulation or Alpha submission.
 
-### P0: local live-readiness check (no external calls)
+### Local readiness inspection (no external calls)
 
 Before choosing a live Regular/Super/Optimization command, verify the local
 research configuration, model role IDs, registered backend prerequisites,
@@ -424,7 +287,7 @@ python -m alpha_research --state-root "<state-root>" \
 
 `READY_LOCAL` is **not** a login or API contract check, and does not grant
 Simulation permission. Follow the staged acceptance checklist in
-[Controlled live research readiness](design/P0_LIVE_READINESS.md).
+[Current operations and authorization boundaries](docs/OPERATIONS.md).
 BRAIN read-only planning commands (`plan-regular`, `plan-super`,
 `plan-optimization`) do not require a model registry or Lead/Executor
 selection; they do require authorized BRAIN access when executed.
@@ -620,7 +483,7 @@ Nested remedy preconditions can match exact live catalog facts under
 do not satisfy a condition. Remedy outcome writes happen after `READ_BACK` and
 are idempotently retried by recovery.
 
-## Unified orchestration: offline preparation and domain handoff (P1)
+## Unified orchestration: offline preparation and domain handoff
 
 Before an explicitly reviewed production integration, a task and its selected
 model identities can be prepared without opening a BRAIN session or calling a
@@ -739,16 +602,15 @@ nq --state-root "$STATE_ROOT" --lead deepseek --executor deepseek \
   orchestration-admission-audit <TASK_ID>
 ```
 
-P4 static review and deferred regression matrix:
-[`docs/P4_REVIEW_AND_RELEASE_GATE.md`](docs/P4_REVIEW_AND_RELEASE_GATE.md).
-This code-only phase does not establish a passing regression or real BRAIN
-execution authorization.
+For the current regression and production blocker matrix, see
+[Release Acceptance](docs/RELEASE_ACCEPTANCE.md). A local offline success
+never authorizes real BRAIN execution.
 
 The audit result is always `NOT_AUTHORIZED`. It checks proposal/identity,
 budget, config provenance, review receipt state and mock isolation, but cannot
 create execution permission or a provider token. The production adapter
-remains fail-closed. See `docs/P3_EXECUTION_BOUNDARIES.md` for the contract
-and implementation gaps.
+remains fail-closed. See [Release Acceptance](docs/RELEASE_ACCEPTANCE.md) for the contract
+and remaining external prerequisites.
 
 This dry run is **not** a BRAIN research Simulation or a domain end-to-end
 Mock run. It validates the prepared immutable execution identity and proposal,
