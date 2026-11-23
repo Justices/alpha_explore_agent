@@ -10,7 +10,7 @@ if str(IMPORT_ROOT) not in sys.path:
 
 from alpha_research.integrations.brain.runtime import PlatformRuntime, WorldQuantClient  # noqa: E402
 from alpha_research.integrations.brain.guarded_protocol import (
-    GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
+    GUARDED_ORCHESTRATION_READS, READONLY_PROBE_COMMANDS,
     guarded_request_allowed,
 )  # noqa: E402
 from alpha_research.orchestration.research_catalog_protocol import (
@@ -99,7 +99,16 @@ def main():
             if not line:
                 continue
             try:
+                # A read-only/guarded client cannot ask the driver to parse
+                # an unbounded JSON line and exhaust its memory before the
+                # request is examined. Legacy business frames are unaffected.
+                if (read_only or guarded) and len(line) > 65_536:
+                    write({"ok": False, "error": "driver request too large"})
+                    continue
                 request = json.loads(line)
+                if not isinstance(request, dict):
+                    write({"ok": False, "error": "driver frame must be an object"})
+                    continue
                 command = request.get("cmd")
                 if command == "shutdown":
                     write({"ok": True, "stage": "shutdown"})
@@ -118,11 +127,9 @@ def main():
                     write({"ok": False, "error":
                            "untrusted orchestration authorization claims refused"})
                     continue
-                # Independent driver-side authorization barrier: a caller
-                # cannot bypass Gateway.read_only by writing raw JSON to stdin.
-                if read_only and command not in {
-                    "get_platform_setting_options", "readonly_probe_datasets",
-                }:
+                # The driver independently checks the same immutable
+                # positive probe allowlist as the Gateway.
+                if read_only and command not in READONLY_PROBE_COMMANDS:
                     write({"ok": False, "error":
                            "read-only driver refuses this command"})
                     continue
