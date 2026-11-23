@@ -88,6 +88,23 @@ class ResearchAuthorityApplication:
                 consumer_signer.public_key().public_bytes_raw(),
                 ledger_signer.public_key().public_bytes_raw(),
             }
+            # Operator consent and provider readback must not share custody.
+            if not isinstance(operator_trust, dict):
+                raise OrchestrationError("research operator trust invalid")
+            operators = operator_trust.get("issuers", {})
+            if not isinstance(operators, dict):
+                raise OrchestrationError("research operator issuer map invalid")
+            for operator in operators.values():
+                try:
+                    operator_pub = base64.b64decode(
+                        operator["public_key_b64"], validate=True)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise OrchestrationError(
+                        "research operator public key invalid") from exc
+                if len(operator_pub) != 32:
+                    raise OrchestrationError(
+                        "research operator public key size invalid")
+                own_keys.add(operator_pub)
             for entry in recovery_trust["issuers"].values():
                 try:
                     public = base64.b64decode(
