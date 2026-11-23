@@ -103,6 +103,9 @@ and the appropriate Bearer token:
 | /v1/spend/attempt | API | Read Task-bound attempt status after restart/revocation |
 | /v1/spend/reconcile | Admin | Append independently signed observation without settling spend |
 | /v1/grant/revoke | Admin | Revoke Grant; no new reservations or readback |
+| /v1/canary/stop | Admin | Irreversibly latch global stop; no reset API |
+| /v1/canary/monitor | API | Redacted read-only aggregate metrics and alerts |
+| /v1/canary/preflight | API | Task/ACK and stop check for **offline MockTransport only** |
 | /healthz | Anonymous localhost | Liveness only; no authority |
 
 Responses deliberately contain **permission_to_dispatch=false**.
