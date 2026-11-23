@@ -25,6 +25,7 @@ from alpha_research.orchestration.research_p6_mtls import (
 from alpha_research.orchestration.research_authority_deployment import (
     inspect_local_authority_deployment,
     load_authority_transport_secrets,
+    make_protected_authority_mtls_context,
 )
 
 _CONFIG_FIELDS = {
@@ -173,10 +174,13 @@ def main(argv=None):
         if opts.require_mtls and not _TLS_CONFIG_FIELDS.issubset(config):
             raise OrchestrationError("authority deployment requires mTLS")
         application = _application_from_config(config)
-        tls = (make_authority_mtls_server_context(
-            certificate_file=config["server_certificate_file"],
-            private_key_file=config["server_private_key_file"],
-            client_ca_file=config["client_ca_file"])
+        tls = (
+            make_protected_authority_mtls_context(config)
+            if opts.require_mtls else
+            make_authority_mtls_server_context(
+                certificate_file=config["server_certificate_file"],
+                private_key_file=config["server_private_key_file"],
+                client_ca_file=config["client_ca_file"])
             if _TLS_CONFIG_FIELDS.issubset(config) else None)
         server = make_loopback_authority_server(
             application, api_token=api, admin_token=admin,
