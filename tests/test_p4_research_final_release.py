@@ -1509,6 +1509,19 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             .not_valid_after(now + timedelta(days=1))
             .add_extension(x509.BasicConstraints(ca=True, path_length=0),
                            critical=True)
+            .add_extension(
+                x509.SubjectKeyIdentifier.from_public_key(ca_key.public_key()),
+                critical=False)
+            .add_extension(
+                x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                    ca_key.public_key()), critical=False)
+            .add_extension(
+                x509.KeyUsage(digital_signature=False,
+                              content_commitment=False, key_encipherment=False,
+                              data_encipherment=False, key_agreement=False,
+                              key_cert_sign=True, crl_sign=True,
+                              encipher_only=False, decipher_only=False),
+                critical=True)
             .sign(ca_key, hashes.SHA256()))
 
         def identity(name, usage, server=False):
@@ -1523,6 +1536,21 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 .not_valid_after(now + timedelta(hours=1))
                 .add_extension(x509.BasicConstraints(ca=False, path_length=None),
                                critical=True)
+                .add_extension(
+                    x509.SubjectKeyIdentifier.from_public_key(key.public_key()),
+                    critical=False)
+                .add_extension(
+                    x509.AuthorityKeyIdentifier.from_issuer_public_key(
+                        ca_key.public_key()), critical=False)
+                .add_extension(
+                    x509.KeyUsage(digital_signature=True,
+                                  content_commitment=False,
+                                  key_encipherment=False,
+                                  data_encipherment=False,
+                                  key_agreement=False,
+                                  key_cert_sign=False, crl_sign=False,
+                                  encipher_only=False, decipher_only=False),
+                    critical=True)
                 .add_extension(x509.ExtendedKeyUsage([usage]), critical=False))
             if server:
                 builder = builder.add_extension(
