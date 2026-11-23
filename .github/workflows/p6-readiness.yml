@@ -43,6 +43,19 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - name: Normalize Windows temp path aliases
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $canonical = python -c "import os,pathlib; print(pathlib.Path(os.environ['TEMP']).resolve())"
+          "TEMP=$canonical" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "TMP=$canonical" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Normalize macOS temporary-directory alias
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          mkdir -p "$HOME/.cache/alpha-research-ci-tmp"
+          echo "TMPDIR=$(cd "$HOME/.cache/alpha-research-ci-tmp" && pwd -P)/" >> "$GITHUB_ENV"
       - name: Install package without provider credentials
         run: python -m pip install -e .
       - name: Compile all modules and tests
