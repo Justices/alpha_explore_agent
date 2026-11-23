@@ -214,6 +214,21 @@ release gate still returns PRODUCTION_BLOCKED.
 
 See [P5.4 remote recovery and audit](P5_4_REMOTE_RECOVERY_AND_AUDIT.md).
 
+## P5.5 — Local Canary controls and production barriers
+
+The independent loopback authority has an irreversible persisted GLOBAL
+stop and aggregate read-only telemetry. Budget reservations check the
+stop under a single immediate SQLite transaction, and the offline SDK
+MockTransport checks again after reservation. A stopped Grant can still
+be audited/quarantined, but no new budget is committed. These controls
+do not enable a real BRAIN/LLM consumer and are **not** a substitute
+for live independent enforcement or an operator-approved Canary.
+
+The negative-only P5 release gate reports outstanding service identity
+and mTLS, signed live approval, authenticated provider readback/billing,
+hard provider budget, incident supervision and separate BRAIN Simulation/
+Alpha submission approval. See [P5.5 stop/release runbook](P5_5_CANARY_STOP_RELEASE.md).
+
 ## Production release prerequisites
 
 The orchestrated live path remains **blocked** until all are implemented,
