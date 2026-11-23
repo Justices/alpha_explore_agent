@@ -19,6 +19,9 @@ from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from alpha_research.orchestration.engine import OrchestrationError
+from alpha_research.orchestration.research_canary_control_reference import (
+    assert_research_canary_not_stopped,
+)
 from alpha_research.orchestration.research_global_consumer import (
     _CONTEXT as ACK_CONTEXT,
 )
@@ -49,8 +52,9 @@ class ReferenceExternalGrantLedger:
     """Transactionally serialized consumption; isolated deployment required."""
 
     def __init__(self, database_path, *, signer, operator_trust,
-                 consumer_id, key_id, ledger_id):
-        if (not isinstance(signer, Ed25519PrivateKey)
+                 consumer_id, key_id, ledger_id, require_canary_arm=False):
+        if (type(require_canary_arm) is not bool
+                or not isinstance(signer, Ed25519PrivateKey)
                 or not all(isinstance(s, str) and
                            s.replace("_", "").replace("-", "").isalnum()
                            and 1 <= len(s) <= 80
@@ -62,6 +66,9 @@ class ReferenceExternalGrantLedger:
         self.consumer_id = consumer_id
         self.key_id = key_id
         self.ledger_id = ledger_id
+        # Pilot-only: consuming a Grant and latching Stop must serialize
+        # against one another on the same independently operated SQLite DB.
+        self.require_canary_arm = require_canary_arm
 
     def initialize_schema(self):
         """Explicit deployment migration; not called by the research app."""
@@ -140,6 +147,8 @@ class ReferenceExternalGrantLedger:
         with closing(self._connect()) as db:
             try:
                 db.execute("BEGIN IMMEDIATE")
+                if self.require_canary_arm:
+                    assert_research_canary_not_stopped(db)
                 revoked = db.execute(
                     "SELECT 1 FROM research_grant_revocations WHERE grant_id=?",
                     (fixed["grant_id"],)).fetchone()
