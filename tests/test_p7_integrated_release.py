@@ -234,6 +234,53 @@ class P7IntegratedOfflineTests(unittest.TestCase):
             inspect_p7_integrated_release(
                 self.orch, self.task_id, billing_report=altered)
 
+    def test_canary_detects_irreversible_stop_resurrection(self):
+        report = inspect_p7_canary_supervision(
+            task_id=self.task_id, monitor=_monitor(),
+            observed_at=_NOW,
+            previous_monitor=_monitor(stop=True),
+            previous_observed_at=_NOW - timedelta(seconds=20),
+            now=_NOW)
+        self.assertIn("P7_STOP_LATCH_REGRESSION", report["reasons"])
+        self.assertTrue(report["operator_admin_stop_required"])
+        self.assertFalse(report["permission_to_dispatch"])
+
+    def test_reconciliation_cannot_be_overwritten_by_clean_canary(self):
+        mismatch = inspect_p7_provider_invoice_batch(
+            task_id=self.task_id, provider_hostname="api.deepseek.com",
+            invoice_id="invoice-variance",
+            rates={"input_rate_micros_per_million": 1000000,
+                   "output_rate_micros_per_million": 2000000},
+            reservations=[{"attempt_id": "a1",
+                           "provider_operation_id": "op1",
+                           "reserved_usd_micros": 1000}],
+            invoice_rows=[{"attempt_id": "a1",
+                           "provider_operation_id": "op1",
+                           "input_tokens": 100, "output_tokens": 50,
+                           "billed_usd_micros": 210}])
+        brain = self.session()
+        canary = self.canary(brain=brain, billing=mismatch)
+        result = inspect_p7_integrated_release(
+            self.orch, self.task_id, billing_report=mismatch,
+            brain_report=brain, canary_report=canary)
+        self.assertIn("P7_BILLING_RECONCILIATION_REQUIRED",
+                      result["blockers"])
+        self.assertEqual(result["milestones"]["p7_2_billing"],
+                         "P7_RECONCILIATION_REQUIRED")
+        self.assertFalse(result["production_authorized"])
+
+    def test_forged_positive_permission_is_rejected(self):
+        report = self.session()
+        forged = {**report, "brain_read_invoked": True}
+        with self.assertRaises(OrchestrationError):
+            inspect_p7_integrated_release(
+                self.orch, self.task_id, brain_report=forged)
+        healthy = self.canary()
+        forged = {**healthy, "admin_stop_invoked": True}
+        with self.assertRaises(OrchestrationError):
+            inspect_p7_integrated_release(
+                self.orch, self.task_id, canary_report=forged)
+
     def test_top_level_release_includes_p7_and_stays_blocked(self):
         result = inspect_production_release_gate(
             self.orch, self.task_id, {},
