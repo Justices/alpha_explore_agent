@@ -44,6 +44,16 @@ _PROVIDER_ENDPOINTS = {
 }
 
 
+# These are observations, not permissions. A failed audit must not be
+# re-labelled as a completed milestone by the aggregate release gate.
+_METERING_VERDICTS = frozenset({
+    "P6_REPORTED_USAGE_ESTIMATE_ONLY",
+    "P6_RECONCILIATION_REQUIRED_TOKEN_OR_USAGE",
+    "P6_RECONCILIATION_REQUIRED_RESERVATION_BREACH",
+    "P6_RECONCILIATION_REQUIRED_INVOICE_VARIANCE",
+})
+
+
 def inspect_p6_provider_plan(orchestrator, task_id, model_config,
                              governance_policy, receipt, operator_trust, *,
                              task_name, declared_input_tokens,
@@ -242,10 +252,13 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
                 or metering_report.get("permission_to_dispatch") is not False
                 or metering_report.get("provider_invoice_independently_verified")
                    is not False
-                or not isinstance(metering_report.get("status"), str)
-                or not metering_report["status"].startswith("P6_")):
+                or metering_report.get("real_provider_invoked") is not False
+                or metering_report.get("status") not in _METERING_VERDICTS):
             raise OrchestrationError("P6 metering audit report invalid")
-        statuses["p6_3_billing"] = "OFFLINE_METERING_AUDITED"
+        if metering_report["status"] == "P6_REPORTED_USAGE_ESTIMATE_ONLY":
+            statuses["p6_3_billing"] = "OFFLINE_ESTIMATE_ONLY_INVOICE_UNVERIFIED"
+        else:
+            statuses["p6_3_billing"] = "RECONCILIATION_REQUIRED"
     if brain_report is not None:
         if (not isinstance(brain_report, dict)
                 or brain_report.get("task_id") != task_id
@@ -253,9 +266,15 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
                     "P6_READ_ONLY_FRAME_SHAPE_VERIFIED_NO_LIVE",
                     "P6_BRAIN_FRAME_DENIED")
                 or brain_report.get("permission_to_dispatch") is not False
-                or brain_report.get("brain_read_invoked") is not False):
+                or brain_report.get("brain_read_invoked") is not False
+                or brain_report.get("brain_session_authenticated") is not False
+                or brain_report.get("read_only_frame_shape_valid") is not (
+                    brain_report["status"] == "P6_READ_ONLY_FRAME_SHAPE_VERIFIED_NO_LIVE")):
             raise OrchestrationError("P6 BRAIN read report invalid")
-        statuses["p6_4_brain_read"] = "OFFLINE_FRAME_POLICY_VERIFIED"
+        statuses["p6_4_brain_read"] = (
+            "OFFLINE_FRAME_POLICY_VERIFIED"
+            if brain_report["read_only_frame_shape_valid"]
+            else "READ_ONLY_FRAME_DENIED")
     if signed_readback is not None:
         if (not isinstance(signed_readback, dict)
                 or signed_readback.get("task_id") != task_id
@@ -272,6 +291,10 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
         "P6_LIVE_CANARY_AND_OPERATOR_APPROVAL_MISSING",
         "P6_SEPARATE_SIMULATION_SUBMISSION_APPROVAL_REQUIRED",
     }
+    if statuses["p6_3_billing"] == "RECONCILIATION_REQUIRED":
+        blockers.add("P6_METERING_RECONCILIATION_REQUIRED")
+    if statuses["p6_4_brain_read"] == "READ_ONLY_FRAME_DENIED":
+        blockers.add("P6_BRAIN_READ_FRAME_DENIED")
     return {
         "schema_version": 1, "task_id": task_id,
         "workflow": baseline["workflow"],
