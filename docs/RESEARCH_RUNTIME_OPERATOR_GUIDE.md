@@ -195,6 +195,25 @@ P5.3 does not modify the production release gate.
 
 See [P5.3 SDK pilot and metering](P5_3_SDK_PILOT_AND_METERING.md).
 
+## P5.4 — Crash-safe provider operation and recovery audit
+
+The isolated authority now persists one unique SDK-returned provider
+operation ID per Task/attempt and supports Task/ACK-bound read-only
+attempt lookup after process restart, including following Grant revocation.
+An optional **server-side** independent recovery signer can provide
+Ed25519 remote-outcome observations, ingested only using the admin
+credential into an append-only audit table. Duplicate evidence, conflicting
+provider IDs, stale signatures and identity mismatches fail closed.
+
+A signed remote report, even one labelled SETTLED, is **not** verified
+billing or independent access to the actual provider. It never changes a
+RESERVED/UNKNOWN attempt's spend state, releases the previously committed
+budget, or permits a retry. Real provider identity/readback and invoice
+settlement remain independent outstanding requirements. The production
+release gate still returns PRODUCTION_BLOCKED.
+
+See [P5.4 remote recovery and audit](P5_4_REMOTE_RECOVERY_AND_AUDIT.md).
+
 ## Production release prerequisites
 
 The orchestrated live path remains **blocked** until all are implemented,
