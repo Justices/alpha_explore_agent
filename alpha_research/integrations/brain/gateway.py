@@ -214,10 +214,16 @@ class Gateway:
         return resp.get("result", resp)
 
     def shutdown(self) -> None:
-        if self.proc and self.proc.poll() is None:
-            try:
-                self._send({"cmd": "shutdown"})
-            except (OSError, ValueError, GatewayError):
-                # A closed pipe or broken child must not prevent cleanup.
-                pass
-        self._stop_driver()
+        try:
+            if self.proc and self.proc.poll() is None:
+                try:
+                    self._send({"cmd": "shutdown"})
+                    # Give the driver time to close its platform session and
+                    # flush any already committed local research evidence.
+                    self.proc.wait(timeout=10)
+                except (OSError, ValueError, GatewayError,
+                        subprocess.TimeoutExpired):
+                    # The cleanup helper terminates a hung or broken child.
+                    pass
+        finally:
+            self._stop_driver()
