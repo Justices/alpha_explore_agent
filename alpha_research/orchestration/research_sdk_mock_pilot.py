@@ -95,7 +95,7 @@ def _sdk_response_status(plan, completion):
         report = inspect_research_sdk_usage(plan, usage)
         if report["status"] != "PROVIDER_REPORTED_USAGE_WITHIN_DECLARED_CAPS_AUDIT_ONLY":
             raise OrchestrationError("mock SDK usage exceeded pinned ceiling")
-        return usage, completion.choices[0].message.content
+        return usage, completion.choices[0].message.content, completion.id
     except (AttributeError, IndexError, TypeError, ValueError) as exc:
         raise OrchestrationError("mock SDK response invalid") from exc
 
@@ -114,7 +114,8 @@ def run_research_sdk_offline_pilot(
     if (not isinstance(attempt_id, str) or not _HEX32.fullmatch(attempt_id)
             or fault not in (None, "timeout")
             or not all(callable(getattr(authority_client, name, None))
-                       for name in ("reserve", "quarantine"))):
+                       for name in ("reserve", "quarantine",
+                                    "bind_provider_operation"))):
         raise OrchestrationError("research SDK pilot attempt/authority invalid")
     safe_messages = _validate_messages(messages)
     if fault is None:
@@ -211,7 +212,7 @@ def run_research_sdk_offline_pilot(
                     model=opts["model"], messages=safe_messages,
                     max_tokens=opts["max_tokens"],
                     stream=opts["stream"], n=opts["n"])
-        usage, content = _sdk_response_status(plan, response)
+        usage, content, provider_operation_id = _sdk_response_status(plan, response)
         if len(observed) != 1:
             raise OrchestrationError("SDK mock unexpected retry")
         claims = receipt["claims"]
@@ -222,6 +223,15 @@ def run_research_sdk_offline_pilot(
         provider_reported_usd_micros = (numerator + 999_999) // 1_000_000
         if provider_reported_usd_micros > reservation["reserved_usd_micros"]:
             raise OrchestrationError("SDK reported charge exceeds reservation")
+        binding = authority_client.bind_provider_operation(
+            grant_id=ledger["grant_id"], task_id=task_id,
+            attempt_id=attempt_id, ack_sha256=fingerprint_json(ack),
+            provider_operation_id=provider_operation_id)
+        if (binding.get("status") != "PROVIDER_OPERATION_ID_RECORDED_AUDIT_ONLY"
+                or binding.get("provider_operation_id") != provider_operation_id
+                or binding.get("permission_to_dispatch") is not False):
+            raise OrchestrationError(
+                "SDK mock operation binding uncertain; reconcile before retry")
     except Exception as exc:
         # Error, HTTP exception, malformed usage or output-length stop:
         # the remote call would have an unknown outcome. Quarantine even
@@ -241,6 +251,8 @@ def run_research_sdk_offline_pilot(
         "sdk_max_retries": 0,
         "sdk_timeout_seconds": 5,
         "model": opts["model"],
+        "provider_operation_id": provider_operation_id,
+        "provider_operation_id_independently_verified": False,
         "response_content_sha256": fingerprint_json(content),
         "reported_input_tokens": usage["prompt_tokens"],
         "reported_output_tokens": usage["completion_tokens"],
