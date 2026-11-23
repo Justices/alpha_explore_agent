@@ -9,6 +9,9 @@ import json
 from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_json import decode_decision
 from alpha_research.integrations.model_prompts import instruction_for
+from alpha_research.agents.backend_validation import (
+    AgentConfigError, validate_backend,
+)
 
 
 def _usage(response):
@@ -27,6 +30,13 @@ def _usage(response):
 
 def complete_openai_sdk(client, task, context):
     config = client.config
+    # Do not trust a runtime caller to have passed through the model
+    # registry: the same allowlist/URL/secret-property validation is applied
+    # here immediately before any credentials or network client are loaded.
+    try:
+        validate_backend("runtime", config)
+    except AgentConfigError as exc:
+        raise ModelError("OpenAI SDK runtime backend contract invalid") from exc
     env_name = config.get("api_key_env")
     if not isinstance(env_name, str) or not env_name:
         raise ModelError("OpenAI SDK backend requires api_key_env")
@@ -83,9 +93,18 @@ def complete_openai_sdk(client, task, context):
         # terminal error type without exposing a remote response body.
         raise ModelError("OpenAI SDK model request failed") from exc
 
-    client.last_model = getattr(response, "model", None) or model
+    # A model alias silently changed by the provider is a different model
+    # and potentially a different pricing/risk profile. Reject it rather
+    # than declaring the requested backend to have responded successfully.
+    response_model = getattr(response, "model", None)
+    if response_model is not None and response_model != model:
+        raise ModelError("OpenAI SDK response model differs from pinned route")
+    client.last_model = response_model or model
     client.last_usage = _usage(response)
     try:
+        if (len(response.choices) != 1
+                or response.choices[0].finish_reason != "stop"):
+            raise ModelError("OpenAI SDK response truncated or incomplete")
         content = response.choices[0].message.content
     except (AttributeError, IndexError, KeyError, TypeError) as exc:
         raise ModelError("OpenAI SDK response is missing message content") from exc
