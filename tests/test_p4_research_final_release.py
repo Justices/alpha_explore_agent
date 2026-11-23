@@ -1205,7 +1205,9 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         # NOT_FOUND never proves that it is safe to retry or that a remote
         # provider operation exists. Later signed SETTLED stays audit-only.
         first = reconcile(signed(
-            remote_status="NOT_FOUND", evidence_id="1" * 32))
+            remote_status="NOT_FOUND", evidence_id="1" * 32,
+            prompt_tokens=0, completion_tokens=0,
+            charged_usd_micros=0))
         self.assertIn("UNCERTAIN", first["reconciliation_verdict"])
         self.assertIsNone(inspect()["provider_operation_id"])
         second = reconcile(signed(
@@ -1278,6 +1280,18 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 ledger_issuer_id="separate-ledger",
                 ledger_key_id="ledger-key",
                 global_max_usd_micros=20_000, recovery_trust=bad)
+        bad_operator = copy.deepcopy(trust)
+        bad_operator["issuers"]["remote-provider"]["public_key_b64"] = (
+            _pub(self.operator_private))
+        with self.assertRaises(OrchestrationError):
+            ResearchAuthorityApplication(
+                app.path, consumer_signer=app.grants.signer,
+                ledger_signer=app.signer, operator_trust=self.operator_trust,
+                consumer_id="consumer", consumer_key_id="consumer-key",
+                ledger_id="remote-ledger",
+                ledger_issuer_id="separate-ledger",
+                ledger_key_id="ledger-key",
+                global_max_usd_micros=20_000, recovery_trust=bad_operator)
         client.revoke("a" * 32)
         result = reconcile(signed())
         self.assertFalse(result["spend_settled"])
@@ -1294,6 +1308,16 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertEqual(inspect()["spend_state"], "RESERVED")
         self.assertFalse(report["reservation_released"])
         self.assertFalse(report["safe_to_retry"])
+
+
+    def test_p5_4_not_found_cannot_claim_charges_or_token_usage(self):
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        reserve()
+        with self.assertRaises(OrchestrationError):
+            reconcile(signed(remote_status="NOT_FOUND"))
+        self.assertEqual(inspect()["signed_observation_count"], 0)
+        self.assertEqual(inspect()["spend_state"], "RESERVED")
 
 
 if __name__ == "__main__":
