@@ -6,6 +6,13 @@ same constants prevents an accidental difference in their allowed commands.
 Legacy non-guarded clients remain outside this boundary.
 """
 
+# Exactly two commands are allowed in the narrow unauthorised platform
+# probe. Both Gateway and raw subprocess driver import this same constant;
+# growing the broader read-only Catalog must never expand this probe.
+READONLY_PROBE_COMMANDS = frozenset({
+    "get_platform_setting_options", "readonly_probe_datasets",
+})
+
 GUARDED_ORCHESTRATION_READS = frozenset({
     "get_platform_setting_options",
     "get_simulation_settings_schema",
