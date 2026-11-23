@@ -142,6 +142,22 @@ are refused. No BRAIN session is created. The existing
 read until independent trusted read-only admission can be implemented and
 separately authorized.
 
+## Integrated offline E2E rehearsal
+
+`run_p6_offline_canary(sdk_inputs=..., attempt_id=..., brain_read_frame=...)`
+composes the real installed OpenAI-compatible Python SDK *with its in-process
+HTTP MockTransport*, the P5.1 independently operating authority's signed
+Task/ACK reservation and stop preflight, the P6 provider contract,
+integer token-based cost audit, BRAIN Catalog frame allowlist and the P6
+negative release matrix. It never constructs a BRAIN session or routes HTTP
+to a paid provider.
+
+The P6 regression asserts **exactly one** synthetic ChatCompletion request,
+zero automatic retries, persisted provider operation ID, retained USD
+reservation after success, and an unconditional production-blocked outcome.
+Mutating BRAIN frames fail *before* a budget reservation is requested.
+Replaying the same model attempt ID fails closed.
+
 ## P6.5 dry-run Canary and P6.6 release
 
 `inspect_p6_integrated_release` composes the P5 gate with individual
