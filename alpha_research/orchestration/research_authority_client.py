@@ -16,6 +16,9 @@ _ROUTES = {
     "readback": "/v1/grant/readback",
     "reserve": "/v1/spend/reserve",
     "quarantine": "/v1/spend/quarantine",
+    "operation": "/v1/spend/operation",
+    "attempt": "/v1/spend/attempt",
+    "reconcile": "/v1/spend/reconcile",
     "snapshot": "/v1/spend/snapshot",
     "revoke": "/v1/grant/revoke",
 }
@@ -44,7 +47,7 @@ class LoopbackAuthorityClient:
     def _post(self, operation, body):
         if operation not in _ROUTES or not isinstance(body, dict):
             raise OrchestrationError("research authority operation invalid")
-        token = (self.admin_token if operation == "revoke"
+        token = (self.admin_token if operation in {"revoke", "reconcile"}
                  else self.api_token)
         if token is None:
             raise OrchestrationError("research authority admin token unavailable")
@@ -98,6 +101,28 @@ class LoopbackAuthorityClient:
         return self._post("quarantine", {
             "grant_id": grant_id, "task_id": task_id,
             "attempt_id": attempt_id, "ack_sha256": ack_sha256,
+        })
+
+    def bind_provider_operation(self, *, grant_id, task_id, attempt_id,
+                                ack_sha256, provider_operation_id):
+        return self._post("operation", {
+            "grant_id": grant_id, "task_id": task_id,
+            "attempt_id": attempt_id, "ack_sha256": ack_sha256,
+            "provider_operation_id": provider_operation_id,
+        })
+
+    def attempt_readback(self, *, grant_id, task_id, attempt_id, ack_sha256):
+        return self._post("attempt", {
+            "grant_id": grant_id, "task_id": task_id,
+            "attempt_id": attempt_id, "ack_sha256": ack_sha256,
+        })
+
+    def reconcile_remote_observation(self, *, grant_id, task_id, attempt_id,
+                                     ack_sha256, evidence):
+        return self._post("reconcile", {
+            "grant_id": grant_id, "task_id": task_id,
+            "attempt_id": attempt_id, "ack_sha256": ack_sha256,
+            "evidence": evidence,
         })
 
     def snapshot(self, grant_id):
