@@ -1488,5 +1488,332 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertFalse(global_release["production_authorized"])
 
 
+    def _p6_mtls_pair(self):
+        """Ephemeral offline-only PKI: separate CA, server and client keys."""
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+        import ipaddress
+
+        now = datetime.now(timezone.utc)
+        ca_key = ec.generate_private_key(ec.SECP256R1())
+        ca_name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                               "AlphaResearch Test CA")])
+        ca_cert = (
+            x509.CertificateBuilder()
+            .subject_name(ca_name).issuer_name(ca_name)
+            .public_key(ca_key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(now - timedelta(minutes=2))
+            .not_valid_after(now + timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0),
+                           critical=True)
+            .sign(ca_key, hashes.SHA256()))
+
+        def identity(name, usage, server=False):
+            key = ec.generate_private_key(ec.SECP256R1())
+            subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+            builder = (
+                x509.CertificateBuilder()
+                .subject_name(subject).issuer_name(ca_cert.subject)
+                .public_key(key.public_key())
+                .serial_number(x509.random_serial_number())
+                .not_valid_before(now - timedelta(minutes=2))
+                .not_valid_after(now + timedelta(hours=1))
+                .add_extension(x509.BasicConstraints(ca=False, path_length=None),
+                               critical=True)
+                .add_extension(x509.ExtendedKeyUsage([usage]), critical=False))
+            if server:
+                builder = builder.add_extension(
+                    x509.SubjectAlternativeName([
+                        x509.IPAddress(ipaddress.ip_address("127.0.0.1")),
+                    ]), critical=False)
+            cert = builder.sign(ca_key, hashes.SHA256())
+            cert_file = self.root / (name + ".crt")
+            key_file = self.root / (name + ".key")
+            cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+            key_file.write_bytes(key.private_bytes(
+                serialization.Encoding.PEM,
+                serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption()))
+            return cert_file, key_file
+
+        ca_path = self.root / "p6-test-ca.crt"
+        ca_path.write_bytes(ca_cert.public_bytes(serialization.Encoding.PEM))
+        server_cert, server_key = identity(
+            "p6-local-server", ExtendedKeyUsageOID.SERVER_AUTH, server=True)
+        client_cert, client_key = identity(
+            "p6-local-client", ExtendedKeyUsageOID.CLIENT_AUTH)
+        return ca_path, server_cert, server_key, client_cert, client_key
+
+    def test_p6_1_real_loopback_mtls_handshake_and_admin_stop(self):
+        from threading import Thread
+        from alpha_research.orchestration.research_authority_transport import (
+            make_loopback_authority_server,
+        )
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        from alpha_research.orchestration.research_p6_mtls import (
+            make_authority_mtls_server_context,
+            make_authority_mtls_client_context,
+            inspect_authority_transport_identity,
+        )
+        app, _, _plain, _, api, admin = self._p5_service()
+        ca, sc, sk, cc, ck = self._p6_mtls_pair()
+        server_ctx = make_authority_mtls_server_context(
+            certificate_file=sc, private_key_file=sk, client_ca_file=ca)
+        client_ctx = make_authority_mtls_client_context(
+            certificate_file=cc, private_key_file=ck, server_ca_file=ca)
+        inspected = inspect_authority_transport_identity(
+            host="127.0.0.1", server_context=server_ctx,
+            client_context=client_ctx)
+        self.assertTrue(inspected["peer_cert_required"])
+        self.assertFalse(inspected["production_mtls_deployed"])
+        server = make_loopback_authority_server(
+            app, api_token=api, admin_token=admin, tls_context=server_ctx)
+        th = Thread(target=server.serve_forever, daemon=True)
+        th.start()
+        self.addCleanup(th.join, timeout=5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        secure = LoopbackAuthorityClient(
+            "127.0.0.1", server.server_address[1],
+            api_token=api, admin_token=admin, tls_context=client_ctx)
+        self.assertEqual(secure.canary_monitor()["stop_state"], "ARMED")
+        self.assertEqual(secure.canary_stop()["stop_state"], "STOPPED")
+        self.assertFalse(secure.canary_monitor()["permission_to_dispatch"])
+
+    def test_p6_1_mtls_rejects_missing_client_certificate_and_bad_server_ca(self):
+        import ssl
+        from threading import Thread
+        from cryptography import x509
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.x509.oid import NameOID
+        from alpha_research.orchestration.research_authority_transport import (
+            make_loopback_authority_server,
+        )
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        from alpha_research.orchestration.research_p6_mtls import (
+            make_authority_mtls_server_context,
+            make_authority_mtls_client_context,
+        )
+        app, _, _plain, _, api, admin = self._p5_service()
+        ca, sc, sk, cc, ck = self._p6_mtls_pair()
+        server_ctx = make_authority_mtls_server_context(
+            certificate_file=sc, private_key_file=sk, client_ca_file=ca)
+        server = make_loopback_authority_server(
+            app, api_token=api, admin_token=admin, tls_context=server_ctx)
+        th = Thread(target=server.serve_forever, daemon=True)
+        th.start()
+        self.addCleanup(th.join, timeout=5)
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        no_client = ssl.create_default_context(cafile=str(ca))
+        with self.assertRaises(OrchestrationError):
+            LoopbackAuthorityClient(
+                "127.0.0.1", server.server_address[1],
+                api_token=api, tls_context=no_client).canary_monitor()
+        rogue_key = ec.generate_private_key(ec.SECP256R1())
+        now = datetime.now(timezone.utc)
+        subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME,
+                                               "Unknown CA")])
+        rogue = (x509.CertificateBuilder()
+                 .subject_name(subject).issuer_name(subject)
+                 .public_key(rogue_key.public_key())
+                 .serial_number(x509.random_serial_number())
+                 .not_valid_before(now - timedelta(seconds=10))
+                 .not_valid_after(now + timedelta(days=1))
+                 .add_extension(x509.BasicConstraints(ca=True,path_length=0),
+                                critical=True)
+                 .sign(rogue_key, hashes.SHA256()))
+        rogue_path = self.root / "rogue.crt"
+        rogue_path.write_bytes(rogue.public_bytes(serialization.Encoding.PEM))
+        wrong_ca = make_authority_mtls_client_context(
+            certificate_file=cc, private_key_file=ck,
+            server_ca_file=rogue_path)
+        with self.assertRaises(OrchestrationError):
+            LoopbackAuthorityClient(
+                "127.0.0.1", server.server_address[1],
+                api_token=api, tls_context=wrong_ca).canary_monitor()
+
+    def test_p6_2_provider_plan_is_pinned_https_and_never_dispatches(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_provider_plan,
+        )
+        inputs = dict(
+            task_name="construct_super",
+            declared_input_tokens=700,
+            max_output_tokens=900,
+            now=self.now)
+        result = inspect_p6_provider_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, **inputs)
+        self.assertEqual(result["provider_hostname"], "api.deepseek.com")
+        self.assertEqual(result["max_retries"], 0)
+        self.assertEqual(result["worst_case_usd_micros"], 5000)
+        self.assertFalse(result["permission_to_dispatch"])
+        self.assertFalse(result["provider_credentials_loaded"])
+        with self.assertRaises(OrchestrationError):
+            inspect_p6_provider_plan(
+                self.runner, self.task_id, self.model, self.policy,
+                self.receipt, self.operator_trust,
+                **{**inputs, "max_output_tokens": 1001})
+        tampered = copy.deepcopy(self.model)
+        for backend in tampered.get("backends", {}).values():
+            if backend.get("provider") == "openai_sdk":
+                backend["base_url"] = "https://127.0.0.1/evil"
+        with self.assertRaises(OrchestrationError):
+            inspect_p6_provider_plan(
+                self.runner, self.task_id, tampered, self.policy,
+                self.receipt, self.operator_trust, **inputs)
+
+    def test_p6_3_precise_metering_and_missing_invoice_hold(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_provider_plan, inspect_p6_provider_metering,
+        )
+        plan = build_research_sdk_request_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        bound = inspect_p6_provider_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        usage = {"prompt_tokens": 650, "completion_tokens": 500,
+                 "total_tokens": 1150}
+        report = inspect_p6_provider_metering(
+            bound, plan, usage, self.receipt)
+        self.assertEqual(report["billing_estimate_usd_micros"], 3300)
+        self.assertIsNone(report["reported_invoice_usd_micros"])
+        self.assertFalse(report["provider_invoice_independently_verified"])
+        variant = inspect_p6_provider_metering(
+            bound, plan, usage, self.receipt, billed_usd_micros=3400)
+        self.assertEqual(variant["estimated_invoice_variance_usd_micros"], 100)
+        self.assertEqual(variant["status"],
+                         "P6_RECONCILIATION_REQUIRED_INVOICE_VARIANCE")
+        for bad in (
+            {"prompt_tokens": 701, "completion_tokens": 500,
+             "total_tokens": 1201},
+            {"prompt_tokens": 650, "completion_tokens": 500,
+             "total_tokens": 1100},
+        ):
+            denied = inspect_p6_provider_metering(
+                bound, plan, bad, self.receipt)
+            self.assertEqual(
+                denied["status"], "P6_RECONCILIATION_REQUIRED_TOKEN_OR_USAGE")
+        with self.assertRaises(OrchestrationError):
+            inspect_p6_provider_metering(
+                bound, plan, usage, self.receipt, billed_usd_micros=True)
+
+    def test_p6_3_signed_readback_correlates_attempt_without_invoice_proof(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_signed_provider_readback,
+        )
+        evidence, trust = self.readback()
+        args = dict(
+            max_input_tokens=1000, max_output_tokens=1000,
+            max_total_cost_usd_micros=15000, now=self.now)
+        report = inspect_p6_signed_provider_readback(
+            self.task_id, self.receipt, self.ack, "f"*32,
+            evidence, trust, expected_operation_id="remote-provider-op",
+            **args)
+        self.assertTrue(report["remote_operation_id_matches_journal"])
+        self.assertFalse(report["real_provider_invoice_verified"])
+        self.assertFalse(report["safe_to_retry"])
+        with self.assertRaises(OrchestrationError):
+            inspect_p6_signed_provider_readback(
+                self.task_id, self.receipt, self.ack, "f"*32,
+                evidence, trust, expected_operation_id="another-op",
+                **args)
+
+    def test_p6_4_catalog_reads_allow_exact_shape_not_platform_execution(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_brain_catalog_frame,
+        )
+        scope = {"region": "USA", "delay": 1,
+                 "universe": "TOP3000", "instrument_type": "EQUITY"}
+        valid = inspect_p6_brain_catalog_frame(
+            self.runner, self.task_id, {"cmd": "get_datasets", **scope})
+        self.assertTrue(valid["read_only_frame_shape_valid"])
+        self.assertFalse(valid["brain_read_invoked"])
+        self.assertFalse(valid["permission_to_dispatch"])
+        for frame in (
+            {"cmd": "simulate_super", **scope},
+            {"cmd": "get_datasets", **{**scope, "delay": True}},
+            {"cmd": "get_datafields", **scope, "dataset_id": "../secret"},
+            {"cmd": "get_user_alphas", "stage": "IS",
+             "limit": 100, "offset": 0},
+        ):
+            with self.subTest(frame=frame):
+                denied = inspect_p6_brain_catalog_frame(
+                    self.runner, self.task_id, frame)
+                self.assertFalse(denied["read_only_frame_shape_valid"])
+                self.assertFalse(denied["permission_to_dispatch"])
+
+    def test_p6_5_6_integrated_release_remains_blocked_with_all_offline_inputs(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            inspect_p6_provider_plan, inspect_p6_provider_metering,
+            inspect_p6_brain_catalog_frame, inspect_p6_integrated_release,
+            inspect_p6_signed_provider_readback,
+        )
+        from alpha_research.orchestration.release_gate import (
+            inspect_production_release_gate,
+        )
+        _app, _server, client, _, _, _ = self._p5_service()
+        provider = inspect_p6_provider_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust,
+            task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        sdk = build_research_sdk_request_plan(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust,
+            task_name="construct_super",
+            declared_input_tokens=700, max_output_tokens=900, now=self.now)
+        meter = inspect_p6_provider_metering(
+            provider, sdk,
+            {"prompt_tokens": 650, "completion_tokens": 500,
+             "total_tokens": 1150}, self.receipt)
+        brain = inspect_p6_brain_catalog_frame(
+            self.runner, self.task_id,
+            {"cmd":"get_datasets","region":"USA","delay":1,
+             "universe":"TOP3000","instrument_type":"EQUITY"})
+        evidence, trust = self.readback()
+        signed = inspect_p6_signed_provider_readback(
+            self.task_id, self.receipt, self.ack, "f"*32,
+            evidence, trust, expected_operation_id="remote-provider-op",
+            max_input_tokens=1000,max_output_tokens=1000,
+            max_total_cost_usd_micros=15000,now=self.now)
+        complete = inspect_p6_integrated_release(
+            self.runner, self.task_id,
+            authority_monitor=client.canary_monitor(),
+            provider_report=provider, metering_report=meter,
+            brain_report=brain, signed_readback=signed)
+        self.assertEqual(complete["status"], "P6_PRODUCTION_BLOCKED")
+        self.assertEqual(complete["milestones"]["p6_2_provider"],
+                         "OFFLINE_REQUEST_CONTRACT_VERIFIED")
+        self.assertEqual(complete["milestones"]["p6_3_billing"],
+                         "SIGNED_OBSERVATION_ONLY_INVOICE_UNVERIFIED")
+        self.assertFalse(complete["production_authorized"])
+        self.assertFalse(complete["canary_rehearsal_only"] is False)
+        release = inspect_production_release_gate(
+            self.runner, self.task_id, self.model, self.policy,
+            config_source="user_config")
+        self.assertEqual(
+            release["components"]["research_p6_readiness"]["status"],
+            "P6_PRODUCTION_BLOCKED")
+        self.assertFalse(release["production_authorized"])
+        forged = copy.deepcopy(provider)
+        forged["permission_to_dispatch"] = True
+        with self.assertRaises(OrchestrationError):
+            inspect_p6_integrated_release(
+                self.runner, self.task_id, provider_report=forged)
+
+
 if __name__ == "__main__":
     unittest.main()
