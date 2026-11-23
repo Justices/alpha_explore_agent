@@ -177,6 +177,24 @@ reported by the client), enforce model-specific billable token semantics,
 perform recovery readback and independently authorize a supervised read-only
 canary. Simulation POST and Alpha submission remain distinct approvals.
 
+## P5.3 — Offline SDK preflight, budget reservation and quarantine
+
+The real OpenAI Python SDK is now used in an isolated end-to-end pilot
+against an **in-process MockTransport**, using either the native HTTPX
+(SDK 2.x) or HTTPX2 (SDK 3.x) transport family. A verified operator receipt,
+global consumption ACK, separate ledger readback, and signed model tariff
+are checked before the local authority reserves a bounded worst-case USD
+amount. The SDK is fixed at `max_retries=0` and at most one ChatCompletion.
+
+Malformed or truncated responses, exceeded token counts and synthetic
+transport timeouts mark that reserved attempt `UNKNOWN` remotely and keep
+the money reserved. Successful mock replies remain `RESERVED` until a
+separately verified provider settlement mechanism exists. The pilot cannot
+read API keys, connect to the network or authorize real SDK dispatch.
+P5.3 does not modify the production release gate.
+
+See [P5.3 SDK pilot and metering](P5_3_SDK_PILOT_AND_METERING.md).
+
 ## Production release prerequisites
 
 The orchestrated live path remains **blocked** until all are implemented,
