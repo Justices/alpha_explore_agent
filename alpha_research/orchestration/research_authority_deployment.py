@@ -48,6 +48,38 @@ def _secure_file(path, *, maximum=4096):
     return p
 
 
+def _read_protected_token(path):
+    """Verify metadata on the same opened FD used for the secret read.
+
+    On POSIX O_NOFOLLOW prevents an attacker from replacing the validated
+    final path component with a symbolic link between stat and open.
+    """
+    p = _secure_file(path)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(p, flags)
+    except OSError as exc:
+        raise OrchestrationError("authority secret file cannot be opened") from exc
+    try:
+        info = os.fstat(fd)
+        if (not stat.S_ISREG(info.st_mode)
+                or not 0 < info.st_size <= 4096
+                or (os.name != "nt" and (
+                    info.st_uid != os.getuid()
+                    or stat.S_IMODE(info.st_mode) & 0o077))):
+            raise OrchestrationError("authority opened secret has unsafe permissions")
+        data = os.read(fd, 4097)
+        if not 0 < len(data) <= 4096:
+            raise OrchestrationError("authority opened secret has invalid size")
+        try:
+            return data.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise OrchestrationError("authority secret encoding invalid") from exc
+    finally:
+        os.close(fd)
+
+
 def _load_token_from_env(environ, *, token_env, file_env, file_required):
     inline = environ.get(token_env)
     path = environ.get(file_env)
@@ -55,10 +87,7 @@ def _load_token_from_env(environ, *, token_env, file_env, file_required):
             or file_required and path is None):
         raise OrchestrationError("authority secret source ambiguous or missing")
     if path is not None:
-        try:
-            value = _secure_file(path).read_text(encoding="ascii")
-        except (OSError, UnicodeError) as exc:
-            raise OrchestrationError("authority secret file unreadable") from exc
+        value = _read_protected_token(path)
         # Only one conventional final line terminator may be accepted.
         value = value.removesuffix("\n").removesuffix("\r")
     else:
