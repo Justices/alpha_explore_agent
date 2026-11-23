@@ -34,6 +34,9 @@ from alpha_research.orchestration.research_price_provenance import (
 from alpha_research.orchestration.research_sdk_boundary import (
     build_research_sdk_request_plan, inspect_research_sdk_usage,
 )
+from alpha_research.orchestration.research_model_cost_boundary import (
+    ceil_cost_usd_micros,
+)
 from alpha_research.state.fingerprint import fingerprint_json
 
 _HEX32 = re.compile(r"[0-9a-f]{32}\Z")
@@ -237,11 +240,13 @@ def run_research_sdk_offline_pilot(
         if len(observed) != 1:
             raise OrchestrationError("SDK mock unexpected retry")
         claims = receipt["claims"]
-        numerator = (usage["prompt_tokens"]
-                     * claims["input_rate_micros_per_million"]
-                     + usage["completion_tokens"]
-                     * claims["output_rate_micros_per_million"])
-        provider_reported_usd_micros = (numerator + 999_999) // 1_000_000
+        provider_reported_usd_micros = ceil_cost_usd_micros(
+            input_tokens=usage["prompt_tokens"],
+            output_tokens=usage["completion_tokens"],
+            input_rate_micros_per_million=claims[
+                "input_rate_micros_per_million"],
+            output_rate_micros_per_million=claims[
+                "output_rate_micros_per_million"])
         if provider_reported_usd_micros > reservation["reserved_usd_micros"]:
             raise OrchestrationError("SDK reported charge exceeds reservation")
         binding = authority_client.bind_provider_operation(
