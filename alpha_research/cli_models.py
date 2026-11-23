@@ -12,12 +12,13 @@ from alpha_research.agents.registry import (
 )
 from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
-from alpha_research.agents.probe import run_model_probe, ModelProbeError
+from alpha_research.agents.probe import ModelProbeError
 from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError
 from alpha_research.integrations.model import ModelError
 
 
-def run_models_command(args, root, registry_path, registry_assignments):
+def run_models_command(args, root, registry_path, registry_assignments, *,
+                       model_probe):
     try:
         if args.models_action in {"budget", "acknowledge-unknown"}:
             if not args.research_id:
@@ -69,7 +70,7 @@ def run_models_command(args, root, registry_path, registry_assignments):
                     if args.role == "both":
                         reports = []
                         for role in roles:
-                            observed = run_model_probe(
+                            observed = model_probe(
                                 effective, root, role=role,
                                 allow_model_call=args.allow_model_call)
                             reports.append(observed)
@@ -89,7 +90,7 @@ def run_models_command(args, root, registry_path, registry_assignments):
                             "brain_invoked": False,
                         }
                     else:
-                        result = run_model_probe(
+                        result = model_probe(
                             effective, root, role=args.role,
                             allow_model_call=args.allow_model_call)
                     result["selected_registrations"] = registry_assignments

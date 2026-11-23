@@ -10,6 +10,7 @@ from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.agents.registry import (
     ModelRegistryError, bundled_registry_path, load_role_profile,
 )
+from alpha_research.agents.probe import run_model_probe
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.paths import default_state_root, expand_path
 from alpha_research.state.store import StopSignals, update_stop_flag
@@ -79,7 +80,9 @@ def main(argv=None):
         return run_probe_command(args, root, registry_path,
                                  gateway_factory=Gateway)
     if args.command == "models":
-        return run_models_command(args, root, registry_path, registry_assignments)
+        return run_models_command(
+            args, root, registry_path, registry_assignments,
+            model_probe=run_model_probe)
     if args.command in {"stop", "resume"}:
         try:
             update_stop_flag(stop_flag, args.command == "stop")
