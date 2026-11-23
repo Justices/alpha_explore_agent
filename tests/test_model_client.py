@@ -31,11 +31,11 @@ class OfflineOpenAISDK:
         if self.error is not None:
             raise self.error
         return SimpleNamespace(
-            model="sdk-model",
+            model=request["model"],
             usage=SimpleNamespace(
                 prompt_tokens=(self.usage or (31, 9))[0],
                 completion_tokens=(self.usage or (31, 9))[1]),
-            choices=[SimpleNamespace(
+            choices=[SimpleNamespace(finish_reason="stop",
                 message=SimpleNamespace(content=self.content))])
 
 
@@ -191,7 +191,7 @@ class TestConfiguredModelClient(unittest.TestCase):
         self.assertNotIn("tools", request)
         self.assertEqual(client.last_usage,
                          {"prompt_tokens": 31, "completion_tokens": 9})
-        self.assertEqual(client.last_model, "sdk-model")
+        self.assertEqual(client.last_model, "research-model")
 
     def test_openai_sdk_supports_fenced_json_and_none_response_format(self):
         requests = []
