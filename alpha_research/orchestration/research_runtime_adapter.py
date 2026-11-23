@@ -48,6 +48,18 @@ def _check_path(path):
         raise OrchestrationError("offline research runtime attempt path unsafe")
 
 
+_MAX_ATTEMPT_JOURNAL_BYTES = 65_536
+
+
+def _read_attempt_journal(path):
+    """Bound untrusted local recovery state before parsing any sealed record."""
+    _check_path(path)
+    if not path.is_file() or not 0 < path.stat().st_size <= _MAX_ATTEMPT_JOURNAL_BYTES:
+        raise OrchestrationError(
+            "research runtime journal missing, empty or oversized")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
 def inspect_runtime_attempt(orchestrator, task_id):
     """Strict read-only attempt recovery check; no model or BRAIN imports."""
     task = orchestrator.load(task_id)
@@ -67,7 +79,7 @@ def inspect_runtime_attempt(orchestrator, task_id):
         _check_path(path)
         if not path.exists():
             return {**base, "status": "NO_MODEL_ATTEMPT"}
-        raw = json.loads(path.read_text(encoding="utf-8"))
+        raw = _read_attempt_journal(path)
         if (not isinstance(raw, dict) or not is_sealed_state(raw)
                 or set(raw) != {
                     "schema_version", "task_id", "request_sha256",
@@ -279,7 +291,7 @@ class OfflineResearchRuntimeAdapter:
                 # Full schema, seal, scope, task and policy were validated
                 # while holding the lock. Recheck that no other writer
                 # changed this exact reservation before transition.
-                raw = json.loads(self._attempt.read_text(encoding="utf-8"))
+                raw = _read_attempt_journal(self._attempt)
                 if (not is_sealed_state(raw)
                         or raw["status"] != "MODEL_CALL_MAY_HAVE_STARTED"
                         or raw["task_id"] != self.task_id
