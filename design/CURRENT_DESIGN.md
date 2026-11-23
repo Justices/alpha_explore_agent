@@ -89,7 +89,7 @@ Knowledge:  Dataset / field / operator snapshots and research references
 
 预算至少在 Task / Research / Model Attempt 和全局 Provider 层保持一致的身份、调用次数与保留费用；费用采用整数 micro-USD 上取整估算，不把本地 token 估计当成真实账单。模型调用/网络 ACK 不明时保持预算保留及 `UNKNOWN`，不得通过自动切换 Backend、自动退款或重试规避限制。
 
-`research_p7_billing.py` 仅对**调用方提供**的发票行和保留记录做完整集合匹配、费用差额及超限审计；没有 Provider 独立认证就不能宣布结算。统一状态词表由 `research_p7_contracts.py` 管理，跨模块验收位于 `research_p7_release.py`。
+`research_p7_billing.py` 仅对**调用方提供**的发票行和保留记录做完整集合匹配、费用差额及超限审计；没有 Provider 独立认证就不能宣布结算。统一状态词表由 `release_contracts.py` 管理，证据校验集中于 `release_evidence.py`，跨模块集成由 `release_matrix.py` 负责。
 
 ## 5. 权限、密钥、BRAIN 只读与生产发布边界
 
@@ -107,7 +107,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 `research_p7_canary.py` 审核监控新鲜度、UNKNOWN、全局预算压力、不可逆 Stop、计数器回退及账单/BRAIN 证据漂移；返回停止建议，但不会自动调用 admin Stop。真实 Stop 需要独立受控的 admin 通道，不能靠本地文件/伪造日志撤销。
 
-`research_p7_release.py` 与上层 `release_gate.py` 的唯一正当结论是本地审计状态和真实生产阻断项；当前版本统一 **`P7_PRODUCTION_BLOCKED`**，所有生产 Dispatch、模型、BRAIN 只读、Simulation、Alpha 提交及自动重试授权标志为 `false`。即使本地账单完全匹配、Session 摘要有效、Canary 状态 ARMED，也不会变成真实生产授权。
+`release_matrix.py` 与上层 `release_gate.py` 的唯一正当结论是本地审计状态和真实生产阻断项；当前版本统一 **`P7_PRODUCTION_BLOCKED`**，所有生产 Dispatch、模型、BRAIN 只读、Simulation、Alpha 提交及自动重试授权标志为 `false`。即使本地账单完全匹配、Session 摘要有效、Canary 状态 ARMED，也不会变成真实生产授权。
 
 发布前不可由仓库代码单方面解决的条件：
 

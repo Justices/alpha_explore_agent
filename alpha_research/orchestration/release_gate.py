@@ -22,8 +22,8 @@ from alpha_research.orchestration.research_p5_release import (
 from alpha_research.orchestration.research_p6_readiness import (
     inspect_p6_integrated_release,
 )
-from alpha_research.orchestration.research_p7_release import (
-    inspect_p7_integrated_release,
+from alpha_research.orchestration.release_matrix import (
+    inspect_research_release,
 )
 from alpha_research.orchestration.platform_read_scope_binding import (
     inspect_platform_read_scope_binding,
@@ -76,7 +76,7 @@ def inspect_production_release_gate(orchestrator, task_id, model_config,
             orchestrator, task_id)
         reports["research_p6_readiness"] = inspect_p6_integrated_release(
             orchestrator, task_id)
-        reports["research_p7_acceptance"] = inspect_p7_integrated_release(
+        reports["research_p7_acceptance"] = inspect_research_release(
             orchestrator, task_id,
             billing_report=p7_billing_report,
             brain_report=p7_brain_report,

@@ -34,7 +34,7 @@ cli.py / workbench
 - `workflow_contract.py`、`dispatch.py`: 领域命令映射与适配器注入；
 - `research_preparation.py`、`research_runtime_adapter.py`: BRAIN/Model 前的离线证据准备，不可当成真实执行权；
 - `research_authority_*.py`、`research_grant_service_reference.py`、`research_spend_service_reference.py`: 独立 Reference Authority、单次消费、签名审计、费用保留和恢复；
-- `research_p7_billing.py`、`research_p7_brain_read.py`、`research_p7_canary.py`、`research_p7_release.py`: 账单/只读/Canary/综合负向门禁；共享状态见 `research_p7_contracts.py`；
+- `research_p7_billing.py`、`research_p7_brain_read.py`、`research_p7_canary.py`: 离线账单、BRAIN Frame 与 Canary 观察产生者；`release_contracts.py`、`release_evidence.py`、`release_matrix.py`: 统一状态词表、严格证据校验和跨模块发布矩阵；旧 P7 release 模块仅保留兼容导出；
 - `production_adapter.py`: 仍是不可执行的 fail-closed 接口，不是已授权的真实 BRAIN Adapter。
 
 ### 状态隔离与恢复

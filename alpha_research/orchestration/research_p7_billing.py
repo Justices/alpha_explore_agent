@@ -5,7 +5,7 @@ No SDK, credentials, network, retries, ledger mutation, or release permission.
 """
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_model_cost_boundary import ceil_cost_usd_micros
-from alpha_research.orchestration.research_p7_contracts import PROVIDER_HOSTNAMES
+from alpha_research.orchestration.release_contracts import PROVIDER_HOSTNAMES
 from alpha_research.state.fingerprint import fingerprint_json
 
 

@@ -26,8 +26,8 @@ from alpha_research.orchestration.research_runtime_plan import (
 from alpha_research.orchestration.research_p6_readiness import (
     inspect_p6_integrated_release,
 )
-from alpha_research.orchestration.research_p7_release import (
-    inspect_p7_integrated_release,
+from alpha_research.orchestration.release_matrix import (
+    inspect_research_release,
 )
 
 _COMPONENTS = ("research_preparation", "model_attempt", "manifest", "grant_audit",
@@ -136,7 +136,7 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
     # Surface P7.1-P7.5 readiness alongside the pre-existing P6 projection.
     # This is a negative-only local audit; no generated credentials or calls.
     try:
-        p7 = inspect_p7_integrated_release(orchestrator, task_id)
+        p7 = inspect_research_release(orchestrator, task_id)
         if (p7.get("status") != "P7_PRODUCTION_BLOCKED"
                 or p7.get("permission_to_dispatch") is not False
                 or not isinstance(p7.get("blockers"), list)

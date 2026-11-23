@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_p5_release import _check_monitor
-from alpha_research.orchestration.research_p7_contracts import (
+from alpha_research.orchestration.release_contracts import (
     BILLING_STATUSES, BRAIN_STATUSES, canary_status,
 )
 from alpha_research.state.fingerprint import fingerprint_json
@@ -55,6 +55,7 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         raise OrchestrationError("P7 Canary monitoring evidence incomplete")
     reasons = set()
     age = None
+    age_us = None
     stop_latched = False
     stop_state = "UNKNOWN"
     digest = None
@@ -65,12 +66,14 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         if observed_at is None:
             raise OrchestrationError("P7 Canary observation timestamp required")
         timestamp = _timestamp(observed_at)
-        precise_age = (current_time - timestamp).total_seconds()
-        if precise_age < -5:
+        delta = current_time - timestamp
+        age_us = (delta.days * 86_400_000_000
+                  + delta.seconds * 1_000_000 + delta.microseconds)
+        if age_us < -5_000_000:
             raise OrchestrationError("P7 Canary monitor timestamp in future")
-        if precise_age > max_age_seconds:
+        if age_us > max_age_seconds * 1_000_000:
             reasons.add("P7_MONITOR_STALE")
-        age = int(precise_age)
+        age = (abs(age_us) // 1_000_000) * (1 if age_us >= 0 else -1)
         digest = fingerprint_json(monitor)
         stop_state = monitor["stop_state"]
         stop_latched = stop_state == "STOPPED"
@@ -133,6 +136,8 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         "schema_version": 1, "task_id": task_id, "status": status,
         "monitor_sha256": digest,
         "monitor_age_seconds": age,
+        "monitor_age_microseconds": age_us,
+        "heartbeat_limit_seconds": max_age_seconds,
         "stop_state": stop_state, "stop_latched": stop_latched,
         "stop_required": stop_required,
         "reasons": sorted(reasons),

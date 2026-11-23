@@ -1,7 +1,7 @@
 """Pure shared P7 contract tests, no live calls or credentials."""
 import unittest
 
-from alpha_research.orchestration.research_p7_contracts import (
+from alpha_research.orchestration.release_contracts import (
     BILLING_STATUSES, BRAIN_STATUSES, CANARY_STATUSES, PROVIDER_HOSTNAMES,
     brain_read_status, canary_status,
 )

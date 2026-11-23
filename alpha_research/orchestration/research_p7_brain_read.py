@@ -10,7 +10,7 @@ from alpha_research.orchestration.research_driver_session import (
     inspect_driver_session_evidence, driver_read_frame_allowed,
 )
 from alpha_research.orchestration.research_p5_release import _check_monitor
-from alpha_research.orchestration.research_p7_contracts import brain_read_status
+from alpha_research.orchestration.release_contracts import brain_read_status
 from alpha_research.state.fingerprint import fingerprint_json, canonical_json_bytes
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")

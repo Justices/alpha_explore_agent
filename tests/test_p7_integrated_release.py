@@ -21,6 +21,9 @@ from alpha_research.orchestration.research_p7_brain_read import (
 from alpha_research.orchestration.research_p7_canary import (
     inspect_p7_canary_supervision,
 )
+from alpha_research.orchestration.release_matrix import (
+    inspect_research_release,
+)
 from alpha_research.orchestration.research_p7_release import (
     inspect_p7_integrated_release,
 )
@@ -418,6 +421,45 @@ class P7IntegratedOfflineTests(unittest.TestCase):
             self.canary(monitor=invalid)
         with self.assertRaises(OrchestrationError):
             self.session(monitor=invalid)
+
+    def test_canonical_release_entrypoint_matches_legacy(self):
+        canonical = inspect_research_release(self.orch, self.task_id)
+        legacy = inspect_p7_integrated_release(self.orch, self.task_id)
+        self.assertEqual(canonical, legacy)
+        self.assertFalse(canonical["permission_to_dispatch"])
+
+    def test_canary_heartbeat_policy_is_auditable(self):
+        report = self.canary(observed_at=_NOW - timedelta(seconds=91))
+        self.assertEqual(report["heartbeat_limit_seconds"], 90)
+        self.assertEqual(report["monitor_age_microseconds"], 91_000_000)
+        self.assertIn("P7_MONITOR_STALE", report["reasons"])
+        for mutation in (
+            {"reasons": [], "status": "P7_CANARY_OFFLINE_OBSERVATION_ONLY",
+             "stop_required": False, "operator_admin_stop_required": False},
+            {"heartbeat_limit_seconds": 3600},
+            {"monitor_age_microseconds": 90_000_000},
+            {"monitor_age_seconds": 90},
+            {"heartbeat_limit_seconds": True},
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(OrchestrationError):
+                    inspect_research_release(
+                        self.orch, self.task_id,
+                        canary_report={**report, **mutation})
+
+    def test_canary_subsecond_staleness_cannot_be_suppressed(self):
+        report = self.canary(
+            observed_at=_NOW - timedelta(seconds=90, microseconds=1))
+        self.assertEqual(report["monitor_age_microseconds"], 90_000_001)
+        self.assertEqual(report["monitor_age_seconds"], 90)
+        forged = {
+            **report, "reasons": [],
+            "status": "P7_CANARY_OFFLINE_OBSERVATION_ONLY",
+            "stop_required": False, "operator_admin_stop_required": False,
+        }
+        with self.assertRaises(OrchestrationError):
+            inspect_research_release(
+                self.orch, self.task_id, canary_report=forged)
 
     def test_top_level_release_includes_p7_and_stays_blocked(self):
         result = inspect_production_release_gate(
