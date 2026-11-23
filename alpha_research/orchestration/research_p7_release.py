@@ -92,9 +92,9 @@ def _check_brain(report, task_id):
             or not isinstance(frames, list)
             or not 1 <= len(frames) <= 64
             or report.get("frame_count") != len(frames)
-            or len(set(frames)) != len(frames)
             or any(not isinstance(h, str) or _HEX64.fullmatch(h) is None
                    for h in frames)
+            or len(set(frames)) != len(frames)
             or (report["status"] == "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
                 and (report.get("read_only_frames_valid") is not True
                      or report.get("authority_stop_state") != "ARMED"
@@ -123,6 +123,13 @@ def _check_canary(report, task_id):
             or (report["status"] == "P7_CANARY_OFFLINE_OBSERVATION_ONLY"
                 and (reasons or report.get("stop_state") != "ARMED"))):
         raise OrchestrationError("P7 Canary supervision verdict drift")
+    expected_status = (
+        "P7_CANARY_STOP_ALREADY_LATCHED"
+        if report["stop_latched"] else
+        "P7_CANARY_STOP_REQUIRED" if reasons else
+        "P7_CANARY_OFFLINE_OBSERVATION_ONLY")
+    if report["status"] != expected_status:
+        raise OrchestrationError("P7 Canary status does not match incident state")
 
 
 def inspect_p7_integrated_release(orchestrator, task_id, *, billing_report=None,
