@@ -1,7 +1,7 @@
 """P5.3 real OpenAI Python SDK protocol test with a forced in-process mock.
 
 This deliberately executes the actual installed openai.ChatCompletions SDK path,
-but httpx.MockTransport is constructed *inside* this function, no credentials
+but sdk_http.MockTransport is constructed *inside* this function, no credentials
 are read and no network connection is possible. It does NOT authorize paid
 model dispatch. Future real dispatch needs a separately reviewed, externally
 trusted production adapter; a fake signed report cannot enable it.
@@ -12,8 +12,17 @@ the mock response are quarantined durably; no automatic SDK or attempt retry.
 import json
 import re
 
-import httpx
 from openai import OpenAI
+
+# OpenAI Python SDK 3.x uses HTTPX2; SDK 2.x uses legacy HTTPX.
+# Bind the native transport family instead of making an unsafe custom-client
+# compatibility assumption. Neither family can contact a network here.
+try:
+    from openai import DefaultHttpx2Client as _NativeSdkClient  # noqa: F401
+except ImportError:
+    import httpx as sdk_http
+else:
+    import httpx2 as sdk_http
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_grant_ledger import (
@@ -166,8 +175,8 @@ def run_research_sdk_offline_pilot(
                        for k, v in opts.items())):
             raise OrchestrationError("SDK request shape or hard cap drift")
         if fault == "timeout":
-            raise httpx.ReadTimeout("synthetic SDK timeout")
-        return httpx.Response(
+            raise sdk_http.ReadTimeout("synthetic SDK timeout")
+        return sdk_http.Response(
             200,
             json={
                 "id": "chatcmpl-offline-" + attempt_id,
@@ -191,7 +200,7 @@ def run_research_sdk_offline_pilot(
     # The only SDK client constructed here is forced to in-process MockTransport:
     # no API key access, no remote DNS, and max_retries=0 regardless of defaults.
     try:
-        with httpx.Client(transport=httpx.MockTransport(handle)) as http_client:
+        with sdk_http.Client(transport=sdk_http.MockTransport(handle)) as http_client:
             with OpenAI(
                     api_key="synthetic-offline-token",
                     base_url="http://sdk-mock.invalid/v1",
