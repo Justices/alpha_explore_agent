@@ -60,6 +60,13 @@ jobs:
         run: python -m pip install -e .
       - name: Compile all modules and tests
         run: python -m compileall -q alpha_research tests
+      - name: P7 isolated authority secret and recovery readiness contracts
+        run: python -m unittest discover -s tests -p 'test_p7_authority_deployment.py' -v
+      - name: P7 container and Linux Compose build contract (no deploy)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          docker compose -f deploy/p7/compose.yaml config --quiet
+          docker build -f deploy/p7/Dockerfile -t alpha-research-authority:p7-ci .
       - name: P4-P6 authority, SDK, mTLS and Canary offline contracts
         run: python -m unittest discover -s tests -p 'test_p4_research_final_release.py' -v
       - name: Production release remains negative
