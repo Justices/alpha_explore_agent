@@ -124,7 +124,7 @@ class ResearchAuthorityApplication:
         self.grants = ReferenceExternalGrantLedger(
             self.path, signer=consumer_signer, operator_trust=operator_trust,
             consumer_id=consumer_id, key_id=consumer_key_id,
-            ledger_id=ledger_id)
+            ledger_id=ledger_id, require_canary_arm=True)
 
     def initialize_schema(self):
         """Explicit migration. No network, provider or BRAIN initialization."""
@@ -451,9 +451,11 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
                 "/v1/grant/revoke", "/v1/spend/reconcile",
                 "/v1/canary/stop"
             } else api_bytes)
-            supplied = self.headers.get("Authorization", "")
-            if not hmac.compare_digest(supplied.encode("utf-8"),
-                                       b"Bearer " + token):
+            supplied_headers = self.headers.get_all("Authorization", [])
+            supplied = supplied_headers[0] if len(supplied_headers) == 1 else ""
+            if (len(supplied_headers) != 1
+                    or not hmac.compare_digest(supplied.encode("utf-8"),
+                                               b"Bearer " + token)):
                 self.close_connection = True
                 self._reply(401, {"error": "unauthorized"})
                 return
@@ -462,7 +464,8 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
                     or not isinstance(size, str)
                     or not size.isascii() or not size.isdecimal()
                     or not 0 < int(size) <= _MAX_BODY
-                    or self.headers.get("Content-Type") != "application/json"):
+                    or self.headers.get_all("Content-Type", []) != ["application/json"]
+                    or len(self.headers.get_all("Content-Length", [])) != 1):
                 self.close_connection = True
                 self._reply(400, {"error": "invalid request envelope"})
                 return
