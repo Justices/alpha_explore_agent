@@ -67,6 +67,20 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P6.1–P6.6 offline-to-production readiness work
+
+P6 adds an optional **mutual TLS** loopback transport (real client/server
+certificate validation), an isolated non-root Docker pilot build, pinned
+registered HTTPS model request audits, integer token/cost and invoice-variance
+checks, exact BRAIN read-only frame inspection, and an integrated P6 release
+matrix. Existing paid SDK and research BRAIN driver entrypoints remain
+independently disabled; neither TLS context construction nor signed mock
+evidence authorizes a live call.
+
+See [P6 integration runbook](docs/P6_INTEGRATION_RUNBOOK.md).
+P6's deliverable is *offline contract validation*, not a claim of
+production deployment. Status remains `PRODUCTION_BLOCKED`.
+
 ## P5.5 local Canary emergency-stop and release barrier
 
 The separately launched local research authority now persists a **one-way
