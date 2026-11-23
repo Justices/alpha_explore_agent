@@ -253,7 +253,8 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
                 or metering_report.get("provider_invoice_independently_verified")
                    is not False
                 or metering_report.get("real_provider_invoked") is not False
-                or metering_report.get("status") not in _METERING_VERDICTS):
+                or not isinstance(metering_report.get("status"), str)
+                or metering_report["status"] not in _METERING_VERDICTS):
             raise OrchestrationError("P6 metering audit report invalid")
         if metering_report["status"] == "P6_REPORTED_USAGE_ESTIMATE_ONLY":
             statuses["p6_3_billing"] = "OFFLINE_ESTIMATE_ONLY_INVOICE_UNVERIFIED"
@@ -280,9 +281,16 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
                 or signed_readback.get("task_id") != task_id
                 or signed_readback.get("permission_to_dispatch") is not False
                 or signed_readback.get("status")
-                   != "P6_SIGNED_READBACK_AUDITED_BILLING_UNVERIFIED"):
+                   != "P6_SIGNED_READBACK_AUDITED_BILLING_UNVERIFIED"
+                or signed_readback.get("real_provider_invoice_verified") is not False
+                or signed_readback.get("server_to_provider_readback_executed") is not False
+                or signed_readback.get("remote_operation_id_matches_journal") is not True
+                or signed_readback.get("safe_to_retry") is not False):
             raise OrchestrationError("P6 signed readback report invalid")
-        statuses["p6_3_billing"] = "SIGNED_OBSERVATION_ONLY_INVOICE_UNVERIFIED"
+        # A signed operation report cannot clear a previously observed
+        # token, reservation or invoice discrepancy.
+        if statuses["p6_3_billing"] != "RECONCILIATION_REQUIRED":
+            statuses["p6_3_billing"] = "SIGNED_OBSERVATION_ONLY_INVOICE_UNVERIFIED"
     blockers = set(baseline["blockers"]) | {
         "P6_REAL_MTLS_DEPLOYMENT_NOT_PROVEN",
         "P6_LIVE_PROVIDER_DISPATCH_DISABLED",
