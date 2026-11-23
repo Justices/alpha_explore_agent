@@ -22,6 +22,9 @@ from alpha_research.orchestration.research_p5_release import (
 from alpha_research.orchestration.research_p6_readiness import (
     inspect_p6_integrated_release,
 )
+from alpha_research.orchestration.research_p7_release import (
+    inspect_p7_integrated_release,
+)
 from alpha_research.orchestration.platform_read_scope_binding import (
     inspect_platform_read_scope_binding,
 )
@@ -42,7 +45,10 @@ _BLOCKERS = (
 
 def inspect_production_release_gate(orchestrator, task_id, model_config,
                                     governance_policy, *, config_source,
-                                    platform_read_evidence_id=None):
+                                    platform_read_evidence_id=None,
+                                    p7_billing_report=None,
+                                    p7_brain_report=None,
+                                    p7_canary_report=None):
     """Assemble verified negative evidence; no write or network side effects."""
     task = orchestrator.load(task_id)
     baseline = audit_execution_admission(
@@ -70,7 +76,13 @@ def inspect_production_release_gate(orchestrator, task_id, model_config,
             orchestrator, task_id)
         reports["research_p6_readiness"] = inspect_p6_integrated_release(
             orchestrator, task_id)
+        reports["research_p7_acceptance"] = inspect_p7_integrated_release(
+            orchestrator, task_id,
+            billing_report=p7_billing_report,
+            brain_report=p7_brain_report,
+            canary_report=p7_canary_report)
         blockers.extend(reports["research_p6_readiness"]["blockers"])
+        blockers.extend(reports["research_p7_acceptance"]["blockers"])
         reports["simulation_dispatch"] = dispatch
         reports["simulation_recovery"] = recovery
         blockers.extend(dispatch["blockers"])
