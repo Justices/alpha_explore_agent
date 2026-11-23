@@ -91,7 +91,12 @@ def _check_brain(report, task_id):
     if (report.get("status") not in _BRAIN
             or not isinstance(frames, list)
             or not 1 <= len(frames) <= 64
+            or type(report.get("frame_count")) is not int
             or report.get("frame_count") != len(frames)
+            or any(not isinstance(report.get(name), str)
+                   or _HEX64.fullmatch(report[name]) is None
+                   for name in ("session_evidence_sha256", "grant_ack_sha256",
+                                "research_receipt_sha256", "frame_batch_sha256"))
             or any(not isinstance(h, str) or _HEX64.fullmatch(h) is None
                    for h in frames)
             or len(set(frames)) != len(frames)
@@ -123,6 +128,24 @@ def _check_canary(report, task_id):
             or (report["status"] == "P7_CANARY_OFFLINE_OBSERVATION_ONLY"
                 and (reasons or report.get("stop_state") != "ARMED"))):
         raise OrchestrationError("P7 Canary supervision verdict drift")
+    for field in ("monitor_sha256", "billing_report_sha256",
+                  "brain_report_sha256"):
+        digest = report.get(field)
+        if digest is not None and (
+                not isinstance(digest, str) or _HEX64.fullmatch(digest) is None):
+            raise OrchestrationError("P7 Canary evidence digest invalid")
+    if report.get("stop_state") not in {"ARMED", "STOPPED", "UNKNOWN"}:
+        raise OrchestrationError("P7 Canary Stop state invalid")
+    if report["stop_latched"] is not (report["stop_state"] == "STOPPED"):
+        raise OrchestrationError("P7 Canary Stop latch state mismatch")
+    if report["stop_state"] == "UNKNOWN":
+        if "P7_MONITOR_MISSING" not in reasons or report.get("monitor_sha256") is not None:
+            raise OrchestrationError("P7 Canary missing telemetry not disclosed")
+    elif report.get("monitor_sha256") is None:
+        raise OrchestrationError("P7 Canary monitor fingerprint missing")
+    age = report.get("monitor_age_seconds")
+    if age is not None and (type(age) is not int or age < -5):
+        raise OrchestrationError("P7 Canary heartbeat age invalid")
     expected_status = (
         "P7_CANARY_STOP_ALREADY_LATCHED"
         if report["stop_latched"] else
