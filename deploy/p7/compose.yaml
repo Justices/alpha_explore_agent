@@ -1,0 +1,43 @@
+# Linux-host-only isolated authority recovery pilot.
+# This is NOT the LLM, BRAIN, Simulation or Alpha submission runtime.
+# Run from repo root:
+#   docker compose -f deploy/p7/compose.yaml up --build -d
+# No ports are published: only the host's 127.0.0.1:8765 listener exists.
+services:
+  research-authority:
+    build:
+      context: ../..
+      dockerfile: deploy/p7/Dockerfile
+    image: alpha-research-authority:p7-audit-only
+    network_mode: host
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 64
+    init: true
+    restart: unless-stopped
+    environment:
+      ALPHA_RESEARCH_AUTHORITY_API_TOKEN_FILE: /run/alpha-research/api-token
+      ALPHA_RESEARCH_AUTHORITY_ADMIN_TOKEN_FILE: /run/alpha-research/admin-token
+      BRAIN_USERNAME: ""
+      BRAIN_PASSWORD: ""
+      BRAIN_API_TOKEN: ""
+      BRAIN_CREDENTIALS_FILE: ""
+      OPENAI_API_KEY: ""
+      DEEPSEEK_API_KEY: ""
+      ZAI_API_KEY: ""
+      MOONSHOT_API_KEY: ""
+      ANTHROPIC_API_KEY: ""
+    volumes:
+      - type: bind
+        source: ./private
+        target: /run/alpha-research
+        read_only: true
+      - type: bind
+        source: ./state
+        target: /var/lib/alpha-research
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
