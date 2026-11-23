@@ -62,7 +62,7 @@ def load_pilot_application(config_path):
         raise OrchestrationError("pilot authority config too large")
     cfg = json.loads(config_file.read_text(encoding="utf-8"))
     if (not isinstance(cfg, dict)
-            or set(cfg) != _CONFIG_FIELDS
+            or set(cfg) not in (_CONFIG_FIELDS, _CONFIG_FIELDS | {"recovery_trust_file"})
             or type(cfg["schema_version"]) is not int
             or cfg["schema_version"] != 1):
         raise OrchestrationError("pilot authority config schema invalid")
@@ -70,6 +70,12 @@ def load_pilot_application(config_path):
     if trust_path.stat().st_size > 65_536:
         raise OrchestrationError("pilot operator trust file too large")
     trust = json.loads(trust_path.read_text(encoding="utf-8"))
+    recovery_trust = None
+    if "recovery_trust_file" in cfg:
+        recovery_path = _safe_path(cfg["recovery_trust_file"])
+        if recovery_path.stat().st_size > 65_536:
+            raise OrchestrationError("pilot recovery trust file too large")
+        recovery_trust = json.loads(recovery_path.read_text(encoding="utf-8"))
     database = _safe_path(cfg["database_file"])
     if database.exists() and not database.is_file():
         raise OrchestrationError("pilot authority database path invalid")
@@ -84,6 +90,7 @@ def load_pilot_application(config_path):
         ledger_issuer_id=cfg["ledger_issuer_id"],
         ledger_key_id=cfg["ledger_key_id"],
         global_max_usd_micros=cfg["global_max_usd_micros"],
+        recovery_trust=recovery_trust,
     )
 
 
