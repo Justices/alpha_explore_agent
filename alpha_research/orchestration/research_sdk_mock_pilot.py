@@ -115,7 +115,8 @@ def run_research_sdk_offline_pilot(
             or fault not in (None, "timeout")
             or not all(callable(getattr(authority_client, name, None))
                        for name in ("reserve", "quarantine",
-                                    "bind_provider_operation"))):
+                                    "bind_provider_operation",
+                                    "canary_preflight"))):
         raise OrchestrationError("research SDK pilot attempt/authority invalid")
     safe_messages = _validate_messages(messages)
     if fault is None:
@@ -160,6 +161,26 @@ def run_research_sdk_offline_pilot(
         _quarantine(authority_client, ledger["grant_id"], task_id,
                     attempt_id, ack)
         raise OrchestrationError("SDK mock budget receipt mismatch; quarantined")
+
+    # Stop can latch between budget reservation and the SDK mock: recheck
+    # with the independent service. A failed check *quarantines* the
+    # committed budget, never dispatches or retries. This is not sufficient
+    # atomic authorization for a real remote provider and stays mock-only.
+    try:
+        preflight = authority_client.canary_preflight(
+            grant_id=ledger["grant_id"], task_id=task_id,
+            ack_sha256=fingerprint_json(ack))
+        if (preflight.get("status") != "OFFLINE_MOCK_CANARY_PREFLIGHT_ONLY"
+                or preflight.get("offline_mock_permitted") is not True
+                or preflight.get("permission_to_dispatch") is not False
+                or preflight.get("stop_state") != "ARMED"):
+            raise OrchestrationError("SDK mock canary stop preflight invalid")
+    except Exception as exc:
+        _quarantine(authority_client, ledger["grant_id"], task_id,
+                    attempt_id, ack)
+        raise OrchestrationError(
+            "SDK mock canary preflight failed; reserved spend quarantined"
+        ) from exc
 
     observed = []
     opts = plan["fixed_sdk_options"]
