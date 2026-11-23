@@ -4,7 +4,6 @@ This module cannot authorize an SDK request or BRAIN operation. A green local
 probe says only that the local audit/recovery database and operator-supplied
 transport materials can be read. It is not independent service attestation.
 """
-import json
 import os
 import re
 import sqlite3
@@ -33,14 +32,14 @@ _TABLES = frozenset({
 })
 
 
-def _secure_file(path):
+def _secure_file(path, *, maximum=4096):
     if not isinstance(path, str) or not path or "\x00" in path:
         raise OrchestrationError("authority secret path invalid")
     p = Path(path).expanduser()
     if not p.is_absolute() or p.is_symlink() or not p.is_file():
         raise OrchestrationError("authority secret file must be an absolute regular file")
     entry = p.stat()
-    if not 0 < entry.st_size <= 4096:
+    if not 0 < entry.st_size <= maximum:
         raise OrchestrationError("authority secret file unavailable or oversized")
     if os.name != "nt" and (
             entry.st_uid != os.getuid()
@@ -85,6 +84,17 @@ def load_authority_transport_secrets(environ=None, *, require_files=False):
     return api, admin
 
 
+def make_protected_authority_mtls_context(config):
+    """P7 deployment-only context with protected private-key custody."""
+    if not isinstance(config, dict) or not _TLS_FIELDS.issubset(config):
+        raise OrchestrationError("authority mTLS configuration incomplete")
+    _secure_file(config["server_private_key_file"], maximum=32_768)
+    return make_authority_mtls_server_context(
+        certificate_file=config["server_certificate_file"],
+        private_key_file=config["server_private_key_file"],
+        client_ca_file=config["client_ca_file"])
+
+
 def inspect_local_authority_deployment(config, *, require_mtls=False,
                                        require_file_secrets=False,
                                        environ=None):
@@ -104,10 +114,7 @@ def inspect_local_authority_deployment(config, *, require_mtls=False,
     if require_mtls and not has_tls:
         raise OrchestrationError("isolated service requires all mTLS materials")
     if has_tls:
-        make_authority_mtls_server_context(
-            certificate_file=config["server_certificate_file"],
-            private_key_file=config["server_private_key_file"],
-            client_ca_file=config["client_ca_file"])
+        make_protected_authority_mtls_context(config)
     db_path = config.get("database_file")
     if not isinstance(db_path, str) or not Path(db_path).is_absolute():
         raise OrchestrationError("authority database path invalid")
@@ -137,12 +144,13 @@ def inspect_local_authority_deployment(config, *, require_mtls=False,
                     " WHERE scope_id='GLOBAL'"
                 ).fetchone() if budget_table else None)
                 db.execute("COMMIT")
-            if (check == ("ok",) and row in (
-                    ("ARMED", None, None),) or
-                    check == ("ok",) and row is not None
-                    and row[0] == "STOPPED"
-                    and isinstance(row[1], str) and bool(row[1])
-                    and isinstance(row[2], str) and bool(row[2])):
+            valid_armed = row == ("ARMED", None, None)
+            valid_stopped = (
+                row is not None
+                and row[0] == "STOPPED"
+                and isinstance(row[1], str) and bool(row[1])
+                and isinstance(row[2], str) and bool(row[2]))
+            if check == ("ok",) and (valid_armed or valid_stopped):
                 stop_state = row[0]
                 ready = True
                 reason = ("LOCAL_AUDIT_ONLY"
