@@ -1,104 +1,44 @@
-"""Standalone command entry point for one research batch or recovery."""
-import argparse
+"""CLI boundary for research operations, recovery, local audits and opt-in IO."""
 import json
 import os
-import re
 import sys
 from types import SimpleNamespace
+
 from alpha_research.workflows.regular.agent import ResearchAgent
 from alpha_research.integrations.brain.gateway import Gateway
 from alpha_research.integrations.model import ModelError, build_model_client
 from alpha_research.agents.registry import (
-    ModelRegistryError, bundled_registry_path, load_registry, describe_registry,
-    select_registered_backends, load_role_profile, assert_live_model_routes,
+    ModelRegistryError, bundled_registry_path, load_role_profile,
 )
-from alpha_research.agents.inspect import inspect_roles
-from alpha_research.agents.doctor import check_registered_roles
-from alpha_research.agents.probe import run_model_probe, ModelProbeError
-from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError, validate_policy
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
-from alpha_research.knowledge import KnowledgeService
-from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT, default_state_root, expand_path
+from alpha_research.state.paths import default_state_root, expand_path
 from alpha_research.state.store import StopSignals, update_stop_flag
-from alpha_research.workflows.regular.campaign import campaign_can_resume
 from alpha_research.workflows.regular.scope import ScopeDiscoveryError
 from alpha_research.state.operation_lock import SubmissionGateError
-from alpha_research.orchestration.dispatch import COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research, _regular_scope, _constraint
+from alpha_research.orchestration.dispatch import (
+    COMMANDS as RESEARCH_COMMANDS, dispatch as dispatch_research,
+)
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
 from alpha_research.orchestration.offline_adapter import OfflineResearchAdapter
-from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
-from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
-from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
-from alpha_research.orchestration.admission_audit import audit_execution_admission
-from alpha_research.orchestration.execution_authorization import inspect_execution_receipt
-from alpha_research.orchestration.execution_reservation import reserve_non_executable_receipt
-from alpha_research.orchestration.simulation_scope import inspect_simulation_scope
-from alpha_research.orchestration.simulation_attempt_admission import (
-    stage_simulation_attempt, inspect_staged_simulation_attempt,
-)
-from alpha_research.orchestration.simulation_dispatch_preflight import inspect_simulation_dispatch_gate
 from alpha_research.orchestration.operator_consent import (
-    inspect_consent_reservation, verify_external_consent,
-    reserve_consent_for_audit,
+    verify_external_consent, reserve_consent_for_audit,
 )
-from alpha_research.orchestration.authorization_handoff import (
-    build_scope_issuer_request, build_operator_consent_issuer_request,
-)
-from alpha_research.orchestration.manifest_builder import (
-    inspect_generated_manifest, read_generated_manifest,
-)
-from alpha_research.orchestration.research_preparation import (
-    prepare_offline_research, inspect_research_preparation,
-)
-from alpha_research.orchestration.research_only_admission import (
-    build_research_issuer_request, inspect_research_live_readiness,
-)
-from alpha_research.orchestration.research_grant_audit import (
-    inspect_research_grant_claim, reserve_research_grant_audit,
-)
-from alpha_research.orchestration.research_catalog_protocol import (
-    inspect_catalog_read_contract,
-)
-from alpha_research.orchestration.research_runtime_adapter import (
-    inspect_runtime_attempt,
-)
-from alpha_research.orchestration.research_runtime_plan import (
-    inspect_research_runtime_plan,
-)
-from alpha_research.orchestration.research_control_plane import (
-    inspect_research_control_plane,
-)
-from alpha_research.orchestration.pre_dispatch_escrow import (
-    inspect_pre_dispatch_escrow, reserve_pre_dispatch_escrow,
-)
-from alpha_research.orchestration.simulation_recovery_audit import inspect_simulation_recovery_evidence
-from alpha_research.orchestration.release_gate import inspect_production_release_gate
 from alpha_research.orchestration.mock_workspace import marker_path
-from alpha_research.orchestration.runtime_config import (
-    prepare_registered_model_runtime, load_preparation_config,
-)
+from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
 from alpha_research.orchestration.runtime_context import CliRuntimeContext
-from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
-from alpha_research.orchestration.execution_proposal import persist_execution_proposal
-from alpha_research.orchestration.execution_identity import (
-    persist_execution_identity, inspect_domain_research_handoff,
-)
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.config import DEFAULT_CONFIG
-from alpha_research.preflight import local_preflight
-from alpha_research.orchestration.readonly_probe import run_readonly_probe
-from alpha_research.orchestration.platform_read_evidence import (
-    record_platform_read_evidence, inspect_platform_read_evidence,
-)
 from alpha_research.progress import write_progress
 from alpha_research.cli_parser import build_parser, _path_argument
 from alpha_research.cli_orchestration import (
-    ORCHESTRATION_COMMANDS, run_orchestration_command,
-    _resolve_simulation_manifest,
+    ORCHESTRATION_COMMANDS, run_orchestration_command, _resolve_simulation_manifest,
 )
 from alpha_research.cli_status import run_status_command
+from alpha_research.cli_models import run_models_command
+from alpha_research.cli_probe import PROBE_COMMANDS, run_probe_command
+from alpha_research.cli_knowledge import KNOWLEDGE_COMMANDS, run_knowledge_command
 
 
 def main(argv=None):
@@ -135,166 +75,11 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
-    if args.command == "brain-read-evidence-status":
-        result = inspect_platform_read_evidence(root, args.record_id)
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 0 if result["local_integrity_verified"] else 2
-    if args.command == "brain-readonly-check":
-        # This command is separate from domain Dispatch and never constructs
-        # a model client, research agent or simulation authorization.
-        if not args.allow_brain_read:
-            print("BRAIN read-only check requires --allow-brain-read",
-                  file=sys.stderr)
-            return 2
-        if marker_path(root).exists() or marker_path(root).is_symlink():
-            print("BRAIN read-only check forbidden in mock workspace",
-                  file=sys.stderr)
-            return 2
-        credential_location = os.environ.get("BRAIN_CREDENTIALS_FILE")
-        if not credential_location and args.config:
-            try:
-                config = json.loads(args.config.read_text(encoding="utf-8"))
-                variable = (config.get("auth") or {}).get(
-                    "credential_env", "BRAIN_CREDENTIALS_FILE")
-                credential_location = os.environ.get(variable)
-            except (OSError, ValueError, TypeError, AttributeError):
-                pass
-        if not credential_location:
-            print("BRAIN credentials file environment variable is required",
-                  file=sys.stderr)
-            return 2
-        gateway = Gateway(read_only=True)
-        previous_credentials = os.environ.get("BRAIN_CREDENTIALS_FILE")
-        try:
-            os.environ["BRAIN_CREDENTIALS_FILE"] = str(
-                expand_path(credential_location).resolve())
-            gateway.start()
-            result = run_readonly_probe(
-                gateway, region=args.region, delay=args.delay,
-                universe=args.universe)
-            if args.record_evidence and result["status"] == "READ_ONLY_SCOPE_VERIFIED":
-                receipt = record_platform_read_evidence(root, result)
-                result = {**result, "evidence_record_id": receipt["record_id"],
-                          "evidence_status": receipt["status"]}
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0 if result["status"] == "READ_ONLY_SCOPE_VERIFIED" else 2
-        except Exception as exc:
-            # Never echo provider errors, account data, credential filenames.
-            print("BRAIN read-only check blocked: " + type(exc).__name__,
-                  file=sys.stderr)
-            return 2
-        finally:
-            try:
-                gateway.shutdown()
-            except Exception:
-                pass
-            if previous_credentials is None:
-                os.environ.pop("BRAIN_CREDENTIALS_FILE", None)
-            else:
-                os.environ["BRAIN_CREDENTIALS_FILE"] = previous_credentials
-    if args.command == "preflight":
-        config_path = args.config or root / "config" / "nastu_quant.json"
-        report = local_preflight(
-            config_path, registry_path, lead=args.lead, executor=args.executor,
-            region=args.region)
-        print(json.dumps(report, ensure_ascii=False, indent=2))
-        return 0 if report["status"] == "READY_LOCAL" else 2
+    if args.command in PROBE_COMMANDS:
+        return run_probe_command(args, root, registry_path,
+                                 gateway_factory=Gateway)
     if args.command == "models":
-        try:
-            if args.models_action in {"budget", "acknowledge-unknown"}:
-                if not args.research_id:
-                    raise ModelBudgetError("model budget action requires --research-id")
-                config_path = args.config or root / "config" / "nastu_quant.json"
-                config = json.loads(config_path.read_text(encoding="utf-8"))
-                if (not isinstance(config, dict)
-                        or not isinstance(config.get("model_governance"), dict)):
-                    raise ModelBudgetError(
-                        "models budget requires a config with model_governance")
-                ledger = ModelCallLedger(root / "state", config["model_governance"])
-                if args.models_action == "acknowledge-unknown":
-                    if not args.call_id or not args.reason:
-                        raise ModelBudgetError(
-                            "acknowledge-unknown requires --call-id and --reason")
-                    ledger.acknowledge_unknown(
-                        args.research_id, args.call_id, reason=args.reason)
-                result = ledger.status(args.research_id)
-            else:
-                registered = load_registry(registry_path)
-                if args.models_action == "list":
-                    result = describe_registry(registered)
-                else:
-                    path = args.config or root / "config" / "nastu_quant.json"
-                    config = (json.loads(path.read_text(encoding="utf-8"))
-                              if path.exists() else None)
-                    profile = load_role_profile(None if registry_assignments else config)
-                    effective = select_registered_backends(
-                        profile, registered, assignments=registry_assignments)
-                    if args.models_action == "inspect":
-                        result = inspect_roles(effective, [])
-                        result["selected_registrations"] = registry_assignments
-                        result["registry_path"] = str(registry_path)
-                    elif args.models_action == "smoke":
-                        if args.role is None:
-                            raise ModelProbeError(
-                                "models smoke requires --role research_lead, research_executor or both")
-                        roles = (("research_lead", "research_executor")
-                                 if args.role == "both" else (args.role,))
-                        if args.allow_model_call:
-                            # An authorized remote smoke must never be a mock
-                            # fixture disguised as a successful real call.
-                            assert_live_model_routes(effective)
-                            ready = check_registered_roles(effective)
-                            if any(not ready["roles"][role]["ready_local"]
-                                   for role in roles):
-                                raise ModelProbeError(
-                                    "selected model has missing local prerequisites")
-                        if args.role == "both":
-                            reports = []
-                            for role in roles:
-                                observed = run_model_probe(
-                                    effective, root, role=role,
-                                    allow_model_call=args.allow_model_call)
-                                reports.append(observed)
-                                # A real contract failure must stop the sequence,
-                                # not spend more tokens on the next backend.
-                                if args.allow_model_call and observed["status"] != "PASS":
-                                    break
-                            result = {
-                                "status": (
-                                    "PASS" if len(reports) == 2 and
-                                    all(row["status"] == "PASS" for row in reports)
-                                    else "NOT_EXECUTED" if not args.allow_model_call
-                                    else reports[-1]["status"]
-                                ),
-                                "probes": reports,
-                                "provider_invoked": args.allow_model_call,
-                                "brain_invoked": False,
-                            }
-                        else:
-                            result = run_model_probe(
-                                effective, root, role=args.role,
-                                allow_model_call=args.allow_model_call)
-                        result["selected_registrations"] = registry_assignments
-                    else:
-                        result = check_registered_roles(effective)
-                        result["selected_registrations"] = registry_assignments
-        except Exception as exc:
-            # The models CLI is an operational boundary: don't leak provider
-            # credential-bearing exceptions, network payloads, or raw prompts.
-            if isinstance(exc, ModelRegistryError):
-                print(f"model runtime failed: {exc}", file=sys.stderr)
-                return 2
-            if isinstance(exc, (OSError, KeyError, ValueError, TypeError, ModelError,
-                                TimeoutError)):
-                print(f"model runtime failed: {type(exc).__name__}", file=sys.stderr)
-                return 2
-            raise
-        print(json.dumps(result, ensure_ascii=False, indent=2))
-        if args.models_action == "doctor" and result["status"] != "READY_LOCAL":
-            return 2
-        if args.models_action == "smoke" and result["status"] == "CONTRACT_MISMATCH":
-            return 2
-        return 0
+        return run_models_command(args, root, registry_path, registry_assignments)
     if args.command in {"stop", "resume"}:
         try:
             update_stop_flag(stop_flag, args.command == "stop")
@@ -359,58 +144,8 @@ def main(argv=None):
         except Exception as exc:
             print(f"void rejected: {exc}", file=sys.stderr)
             return 1
-    if args.command == "evidence-validity":
-        try:
-            cfg_path = args.config or root / "config" / "nastu_quant.json"
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-            with SingleWriterLock(root / "state" / "agent.lock"):
-                service = KnowledgeService(root / "state", root / "runs", cfg)
-                result = service.set_evidence_validity(
-                    args.evidence_id, args.status, args.reason, args.operator)
-            print(json.dumps(result, ensure_ascii=False))
-            return 0
-        except Exception as exc:
-            print(f"evidence update rejected: {exc}", file=sys.stderr)
-            return 1
-    if args.command == "knowledge":
-        try:
-            cfg_path = args.config or root / "config" / "nastu_quant.json"
-            cfg = json.loads(cfg_path.read_text(encoding="utf-8")) if cfg_path.exists() else {}
-            with SingleWriterLock(root / "state" / "agent.lock"):
-                service = KnowledgeService(root / "state", root / "runs", cfg)
-                if args.knowledge_command == "list":
-                    result = service.list_managed(args.kind)
-                elif args.knowledge_command == "show":
-                    result = service.get_managed(args.kind, args.id)
-                elif args.knowledge_command == "note":
-                    content = args.content_file.read_text(encoding="utf-8-sig")
-                    result = service.put_note(
-                        args.kind, args.key, content, args.source, date=args.date,
-                        validity=args.validity, replace=args.replace, reason=args.reason,
-                        operator=args.operator)
-                elif args.knowledge_command == "remedy":
-                    if args.remedy_command == "add":
-                        payload = json.loads(args.file.read_text(encoding="utf-8-sig"))
-                        result = service.add_remedy(payload, operator=args.operator)
-                    else:
-                        result = service.review_remedy(
-                            args.id, args.status, reviewer=args.reviewer,
-                            reason=args.reason)
-                else:
-                    tags = {"dataset_id": args.dataset,
-                            "mechanism": args.mechanism,
-                            "failure_signature": args.failure_signature,
-                            "field_generation": args.field_generation,
-                            "scope": {"region": args.region, "delay": args.delay,
-                                      "universe": args.universe}}
-                    result = service.search_evidence(
-                        tags, k=args.limit, query_text=args.text,
-                        include_history=args.include_history)
-            print(json.dumps(result, ensure_ascii=False))
-            return 0
-        except Exception as exc:
-            print(f"knowledge operation rejected: {exc}", file=sys.stderr)
-            return 1
+    if args.command in KNOWLEDGE_COMMANDS:
+        return run_knowledge_command(args, root)
     stop_signals = StopSignals(root / "state")
     if stop_signals.exists() and args.command not in {
             "recover", "recover-research", "recover-workflow", "recover-task",

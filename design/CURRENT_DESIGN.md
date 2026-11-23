@@ -121,7 +121,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 ## 6. CLI 与领域编排的模块边界
 
-`cli.py` 只负责统一入口、命令前置拦截和领域命令装配；`cli_parser.py` 单独定义命令与参数语法，不实例化 Gateway/Model；`cli_orchestration.py` 接管 30 多个审计、准备和 Mock 命令，在单次调用中共享同一个 `MainOrchestrator`；`cli_status.py` 负责完全只读的本地状态与候选索引汇总。CLI 向编排适配层显式注入 Consent Verify/Reserve 操作，以便审计和测试可以保持独立且不旁路鉴权。保留所有既有命令名称、JSON 结果、失败退出码及独立 Live 命令安全约束。
+`cli.py` 只负责统一入口、命令前置拦截和领域命令装配；`cli_parser.py` 单独定义命令与参数语法，不实例化 Gateway/Model；`cli_orchestration.py` 接管 30 多个审计、准备和 Mock 命令，在单次调用中共享同一个 `MainOrchestrator`；`cli_status.py` 负责完全只读的本地状态与候选索引汇总；`cli_models.py` 承担模型注册、Doctor、付费 Smoke 与预算处置，`cli_probe.py` 保留显式授权的 BRAIN 只读检查和本地 Preflight，`cli_knowledge.py` 统一知识库/证据的单写锁事务。CLI 向编排适配层显式注入 Consent Verify/Reserve 操作，以便审计和测试可以保持独立且不旁路鉴权。保留所有既有命令名称、JSON 结果、失败退出码及独立 Live 命令安全约束。
 
 ## 7. 持久化、重入和恢复语义
 

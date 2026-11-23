@@ -46,6 +46,24 @@ class CliBoundaryTests(unittest.TestCase):
             self.assertIn("unfinished_batches", data)
             self.assertIn("campaigns", data)
 
+    def test_probe_and_knowledge_commands_are_not_implicit_live(self):
+        from alpha_research.cli_probe import PROBE_COMMANDS
+        from alpha_research.cli_knowledge import KNOWLEDGE_COMMANDS
+        self.assertIn("brain-readonly-check", PROBE_COMMANDS)
+        self.assertNotIn("tag-alpha", PROBE_COMMANDS)
+        self.assertNotIn("orchestration-run", KNOWLEDGE_COMMANDS)
+        with tempfile.TemporaryDirectory() as location:
+            out, err = io.StringIO(), io.StringIO()
+            with (patch("alpha_research.cli.Gateway",
+                        side_effect=AssertionError("no BRAIN before explicit opt-in")),
+                  redirect_stdout(out), redirect_stderr(err)):
+                result = main(["--state-root", location,
+                               "brain-readonly-check", "--region", "USA",
+                               "--delay", "1", "--universe", "TOP3000"])
+            self.assertEqual(result, 2)
+            self.assertIn("--allow-brain-read", err.getvalue())
+            self.assertEqual(out.getvalue(), "")
+
     def test_orchestration_requires_roles_not_live_transport(self):
         with tempfile.TemporaryDirectory() as location:
             output, error = io.StringIO(), io.StringIO()
