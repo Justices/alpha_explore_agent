@@ -26,6 +26,9 @@ from alpha_research.orchestration.research_grant_service_reference import (
 from alpha_research.orchestration.research_spend_service_reference import (
     ReferenceExternalSpendLedger,
 )
+from alpha_research.orchestration.research_model_cost_boundary import (
+    ceil_cost_usd_micros,
+)
 from alpha_research.orchestration.research_model_recovery_reference import (
     RECOVERY_SCHEMA, ReferenceExternalModelRecovery,
 )
@@ -241,11 +244,12 @@ class ResearchAuthorityApplication:
                 or out > claims["max_output_tokens_per_call"]
                 or data["ack_sha256"] != fingerprint_json(ack)):
             raise OrchestrationError("research spend Task, token or ACK drift")
-        worst_case = (
-            n * claims["input_rate_micros_per_million"]
-            + out * claims["output_rate_micros_per_million"]
-            + 999_999
-        ) // 1_000_000
+        worst_case = ceil_cost_usd_micros(
+            input_tokens=n, output_tokens=out,
+            input_rate_micros_per_million=claims[
+                "input_rate_micros_per_million"],
+            output_rate_micros_per_million=claims[
+                "output_rate_micros_per_million"])
         result = self._spend(grant_id, claims).reserve_once(
             task_id=data["task_id"], attempt_id=data["attempt_id"],
             worst_case_usd_micros=worst_case,
