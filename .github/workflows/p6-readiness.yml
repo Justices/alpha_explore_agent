@@ -67,6 +67,9 @@ jobs:
         run: |
           docker compose -f deploy/p7/compose.yaml config --quiet
           docker build -f deploy/p7/Dockerfile -t alpha-research-authority:p7-ci .
+      - name: P7 disposable Linux Docker mTLS startup and durable Stop rehearsal
+        if: matrix.os == 'ubuntu-latest'
+        run: python deploy/p7/container_smoke.py
       - name: P4-P6 authority, SDK, mTLS and Canary offline contracts
         run: python -m unittest discover -s tests -p 'test_p4_research_final_release.py' -v
       - name: Production release remains negative
