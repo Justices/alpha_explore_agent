@@ -19,10 +19,42 @@ from alpha_research.state.fingerprint import fingerprint_json
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _SCOPE_FIELDS = {"region", "delay", "universe", "instrument_type"}
+_BILLING_FIELDS = {
+    "schema_version", "task_id", "status", "provider_hostname", "invoice_id",
+    "currency", "operation_count", "reserved_total_usd_micros",
+    "estimated_total_usd_micros", "billed_total_usd_micros",
+    "variance_total_usd_micros", "findings", "invoice_rows_sha256",
+    "reservation_rows_sha256", "provider_invoice_independently_verified",
+    "independent_invoice_source_authenticated", "settlement_authorized",
+    "budget_refund_authorized", "automatic_retry_allowed",
+    "real_provider_invoked", "permission_to_dispatch",
+}
+_BRAIN_FIELDS = {
+    "schema_version", "task_id", "status", "session_evidence_sha256",
+    "grant_ack_sha256", "research_receipt_sha256", "scope",
+    "source_alpha_id", "frame_digests", "frame_batch_sha256", "frame_count",
+    "read_only_frames_valid", "authority_stop_state",
+    "local_offline_admission_passed",
+    "platform_session_independently_authenticated",
+    "independent_brain_read_permission_verified", "driver_started",
+    "brain_read_invoked", "brain_simulation_invoked", "alpha_submission_invoked",
+    "automatic_retry_allowed", "permission_to_dispatch",
+}
+_CANARY_FIELDS = {
+    "schema_version", "task_id", "status", "monitor_sha256",
+    "monitor_age_seconds", "stop_state", "stop_latched", "stop_required",
+    "reasons", "billing_report_sha256", "brain_report_sha256",
+    "operator_admin_stop_required", "admin_stop_invoked", "watchdog_executed",
+    "independent_canary_attested", "live_canary_authorized",
+    "model_call_authorized", "brain_read_authorized",
+    "brain_simulation_authorized", "alpha_submission_authorized",
+    "automatic_retry_allowed", "permission_to_dispatch",
+}
 
 
-def _check_negative(report, task_id, mandatory_flags):
+def _check_negative(report, task_id, mandatory_flags, expected_fields):
     if (not isinstance(report, dict)
+            or set(report) != expected_fields
             or report.get("task_id") != task_id
             or type(report.get("schema_version")) is not int
             or report["schema_version"] != 1
@@ -35,7 +67,7 @@ def _check_billing(report, task_id):
     _check_negative(report, task_id, (
         "provider_invoice_independently_verified", "settlement_authorized",
         "budget_refund_authorized", "real_provider_invoked",
-        "automatic_retry_allowed"))
+        "automatic_retry_allowed"), _BILLING_FIELDS)
     rows = report.get("findings")
     if (not isinstance(report.get("status"), str)
             or report["status"] not in BILLING_STATUSES or not isinstance(rows, list)
@@ -97,7 +129,7 @@ def _check_brain(report, task_id, task):
         "platform_session_independently_authenticated",
         "independent_brain_read_permission_verified", "driver_started",
         "brain_read_invoked", "brain_simulation_invoked", "alpha_submission_invoked",
-        "automatic_retry_allowed"))
+        "automatic_retry_allowed"), _BRAIN_FIELDS)
     frames = report.get("frame_digests")
     if (not isinstance(report.get("status"), str)
             or report["status"] not in BRAIN_STATUSES
@@ -145,7 +177,7 @@ def _check_canary(report, task_id):
         "independent_canary_attested", "live_canary_authorized",
         "model_call_authorized", "brain_read_authorized",
         "brain_simulation_authorized", "alpha_submission_authorized",
-        "automatic_retry_allowed"))
+        "automatic_retry_allowed"), _CANARY_FIELDS)
     reasons = report.get("reasons")
     if (not isinstance(report.get("status"), str)
             or report["status"] not in CANARY_STATUSES

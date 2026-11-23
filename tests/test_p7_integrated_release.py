@@ -398,6 +398,27 @@ class P7IntegratedOfflineTests(unittest.TestCase):
         self.assertIn("P7_MONITOR_STALE", report["reasons"])
         self.assertTrue(report["stop_required"])
 
+    def test_integrated_release_rejects_extra_positive_authority_fields(self):
+        reports = {
+            "billing_report": self.billing,
+            "brain_report": self.session(),
+            "canary_report": self.canary(),
+        }
+        for component, source in reports.items():
+            with self.subTest(component=component):
+                forged = {**source, "production_authorized": True}
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_integrated_release(
+                        self.orch, self.task_id, **{component: forged})
+
+    def test_malformed_canary_alert_is_domain_error(self):
+        invalid = _monitor()
+        invalid["alerts"] = [["nested-unhashable-alert"]]
+        with self.assertRaises(OrchestrationError):
+            self.canary(monitor=invalid)
+        with self.assertRaises(OrchestrationError):
+            self.session(monitor=invalid)
+
     def test_top_level_release_includes_p7_and_stays_blocked(self):
         result = inspect_production_release_gate(
             self.orch, self.task_id, {},

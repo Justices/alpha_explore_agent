@@ -69,9 +69,10 @@ def _check_monitor(monitor):
         raise OrchestrationError("research P5 canary global reservation drift")
     alerts = monitor["alerts"]
     if (not isinstance(alerts, list)
-            or len(alerts) != len(set(alerts))
+            or len(alerts) > 256
             or any(not isinstance(s, str) or not _ALERT.fullmatch(s)
-                   for s in alerts)):
+                   for s in alerts)
+            or len(alerts) != len(set(alerts))):
         raise OrchestrationError("research P5 canary alert schema invalid")
     state = monitor["stop_state"]
     if (state == "ARMED" and
