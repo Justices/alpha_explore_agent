@@ -66,12 +66,12 @@ class Gateway:
         self.alpha_lookup = alpha_lookup
         self._audit_evidence = {}
         self._credentials = credentials
-        self.read_only = bool(read_only)
+        self.read_only = read_only
         # New orchestration integration MUST use this boundary. Existing
         # legacy Gateway callers remain independent of the control plane.
         # No trusted live admission consumer exists yet: guarded mutating
         # commands are always refused, even if a caller fabricates params.
-        self.orchestration_guarded = bool(orchestration_guarded)
+        self.orchestration_guarded = orchestration_guarded
         # Exact research-only profile is separate from legacy Gateway and
         # the narrow read_only probe. It is NOT a grant or live enablement.
         self.research_catalog_scope = research_catalog_scope
@@ -106,11 +106,13 @@ class Gateway:
             command,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1, env=env)
-        if self._credentials is not None:
-            self.proc.stdin.write(json.dumps(self._credentials) + "\n")
-            self.proc.stdin.flush()
-            self._credentials = None
         try:
+            if self._credentials is not None:
+                # Credentials never appear in the CLI or process environment.
+                # Discard the original object after handing it to the child.
+                self.proc.stdin.write(json.dumps(self._credentials) + "\n")
+                self.proc.stdin.flush()
+                self._credentials = None
             self.auth_info = self._read_response()
             if not isinstance(self.auth_info, dict) or not self.auth_info.get("ok"):
                 raise GatewayError("platform runtime did not become ready")
@@ -132,11 +134,11 @@ class Gateway:
         try:
             if proc.poll() is None:
                 proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=5)
         finally:
             for stream in (getattr(proc, "stdin", None),
                            getattr(proc, "stdout", None)):
