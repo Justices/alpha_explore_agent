@@ -37,8 +37,19 @@ class TestGateway(unittest.TestCase):
                 pass
             def flush(self):
                 pass
+            def close(self):
+                pass
         class FakeProcess:
             stdin = FakePipe()
+            stdout = FakePipe()
+            def poll(self):
+                return None
+            def terminate(self):
+                pass
+            def wait(self, timeout=None):
+                return 0
+            def kill(self):
+                pass
         from unittest.mock import patch
         with patch("alpha_research.integrations.brain.gateway.subprocess.Popen",
                    return_value=FakeProcess()):
