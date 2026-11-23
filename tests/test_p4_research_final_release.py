@@ -944,6 +944,13 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertFalse(output["independent_provider_billing_verified"])
         self.assertEqual(client.snapshot("a" * 32)["by_status"],
                          {"RESERVED": 1})
+        persisted = client.attempt_readback(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="5" * 32, ack_sha256=fingerprint_json(inputs["ack"]))
+        self.assertEqual(persisted["provider_operation_id"],
+                         "chatcmpl-offline-" + "5" * 32)
+        self.assertEqual(persisted["provider_operation_source"], "SDK_REPORTED")
+        self.assertFalse(persisted["safe_to_retry"])
         with self.assertRaises(OrchestrationError):
             run_research_sdk_offline_pilot(
                 **{**inputs, "attempt_id": "5" * 32})
