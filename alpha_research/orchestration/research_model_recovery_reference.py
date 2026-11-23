@@ -159,6 +159,12 @@ class ReferenceExternalModelRecovery:
             now=clock)
         signed_claims = evidence["claims"]
         provider_id = signed_claims["provider_operation_id"]
+        if (signed_claims["remote_status"] == "NOT_FOUND"
+                and any(signed_claims[key] != 0 for key in (
+                    "prompt_tokens", "completion_tokens", "total_tokens",
+                    "charged_usd_micros"))):
+            raise OrchestrationError(
+                "remote NOT_FOUND must not assert observed provider billing")
         if not _PROVIDER_ID.fullmatch(provider_id):
             raise OrchestrationError("model recovery provider operation ID invalid")
         digest = fingerprint_json(evidence)
