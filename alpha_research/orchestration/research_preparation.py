@@ -82,6 +82,11 @@ def _safe_journal(path):
 
 def _load_journal(path, task_id):
     try:
+        _safe_journal(path)
+        # A hostile or accidentally corrupted journal must not allocate
+        # unbounded memory merely because an operator inspected the Task.
+        if not path.is_file() or not 0 < path.stat().st_size <= 65_536:
+            raise ValueError("research journal absent or exceeds size limit")
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         raise OrchestrationError(
