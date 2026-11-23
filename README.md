@@ -67,6 +67,22 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P5.3 offline OpenAI-compatible SDK integration
+
+The OpenAI Python SDK is now exercised against an **in-process HTTP
+MockTransport**, after signed Grant/ledger/tariff verification and a
+Task-bound atomic USD reservation in the independent local pilot service.
+It sets `max_retries=0` and validates exact ChatCompletion kwargs, bounded
+messages and returned token ceilings. A lost, truncated or invalid response
+is quarantined as **UNKNOWN** in the remote spend ledger without refunding
+reserved capacity. Both OpenAI SDK 2.x (HTTPX) and 3.x (HTTPX2) native mock
+clients are supported; no provider API key is read or paid model invoked.
+
+See [P5.3 SDK pilot & cost boundary](docs/P5_3_SDK_PILOT_AND_METERING.md).
+This is an offline executable *contract test*, not production dispatch.
+The genuine paid SDK route, BRAIN Driver, Simulation and Alpha submission
+remain blocked.
+
 ## P5.1–P5.2 independent authority pilot and driver-frame audit
 
 A new **loopback-only, separately launched local research authority pilot**
