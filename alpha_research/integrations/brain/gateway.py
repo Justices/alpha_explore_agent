@@ -13,6 +13,7 @@ from alpha_research.qualification.gates import (
 )
 from alpha_research.integrations.brain.guarded_protocol import (
     GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
+    READONLY_PROBE_COMMANDS,
     guarded_request_allowed,
 )
 from alpha_research.orchestration.research_catalog_protocol import (
@@ -45,9 +46,6 @@ READ_ONLY_COMMANDS = {
 
 # Strict probe actions: no state-changing research commands, even if the
 # broader Gateway whitelist grows over time.
-READONLY_PROBE_COMMANDS = frozenset({
-    "get_platform_setting_options", "readonly_probe_datasets",
-})
 # Orchestration production mode defaults to a minimal *positive* read
 # allowlist. Future commands cannot silently become authorized writes.
 class GatewayError(RuntimeError):
@@ -62,6 +60,8 @@ class Gateway:
                  research_catalog_source_alpha_id=None):
         """alpha_lookup: callable(alpha_id) -> alpha state dict, used for
         the correlation precondition check (design §3.3, second layer)."""
+        if type(read_only) is not bool or type(orchestration_guarded) is not bool:
+            raise GatewayError("Gateway execution modes require explicit booleans")
         self.driver_path = driver_path or (Path(__file__).with_name("driver.py"))
         self.alpha_lookup = alpha_lookup
         self._audit_evidence = {}
