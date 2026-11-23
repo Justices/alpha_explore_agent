@@ -27,9 +27,9 @@ class OfflineSDK:
         self.requests.append(kwargs)
         text, usage = next(self.responses)
         return SimpleNamespace(
-            model="offline-sdk",
+            model=kwargs["model"],
             usage=(None if usage is None else SimpleNamespace(**usage)),
-            choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=text))])
 
 
 class ModelTransportBoundaryTests(unittest.TestCase):
