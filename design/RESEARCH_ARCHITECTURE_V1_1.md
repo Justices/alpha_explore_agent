@@ -1,62 +1,50 @@
-# Research Architecture V1.1
+# Alpha Research — 组件与依赖架构
 
-This architecture implements the approved [research scope](RESEARCH_SCOPE.md).
-See [Current Design](CURRENT_DESIGN.md) for the consolidated system overview,
-verified status and maintained document index.
-The root [agent contract](../AGENTS.md) and approved scope are normative;
-older design files are historical references. The architecture is a target
-until each workflow's execution, recovery and audit path is verified.
+本文件是 [整体设计](CURRENT_DESIGN.md) 的**模块级详细补充**。业务决策以 [已批准范围](RESEARCH_SCOPE.md) 为准，研究安全以 [AGENTS.md](../AGENTS.md) 为准。本文不授予执行权限。
 
-## Package boundaries
+## 业务边界
 
-`alpha_research` names the system capability shared by Regular, BRAIN-native
-Super, and optimization of existing Alphas. The top-level package is independent
-of the selected model provider and orchestration implementation.
-
-| Module | Responsibility | Boundary |
+| 业务 / 共享能力 | 入口与依赖 | 不变量 |
 | --- | --- | --- |
-| `cli` | Parse commands, compose dependencies, and acquire the state writer lock | Delegates research decisions and evidence checks |
-| `orchestration` | Route commands, checkpoint tasks, account for budgets, and coordinate recovery | The task engine uses an injected adapter. The current task adapter is offline-only |
-| `workflows.regular` | Discover Campaign scope, schedule Dataset subtasks, run and recover Regular batches | Owns Regular scope and batch decisions |
-| `workflows.super_alpha` | Build and execute BRAIN-native Super research | Owns Super scope and mechanism |
-| `workflows.optimization` | Read the source Alpha and evaluate independent branches | Uses the source family constraints and a read-only baseline |
-| `expressions` | Parse and validate Regular and Super expressions | Both Super and Optimization use the shared selection/combo validator |
-| `simulation` | Persist experiment intents, match recovery evidence, and cache backtest evidence | Workflow and task recovery retain their own state transitions |
-| `qualification` | Apply Candidate, Preferred, and optional PPA policies and maintain the pools | Gate order and qualification are determined by evidence |
-| `state` | Resolve state paths, validate shared records, and implement file writes and locks | Storage is independent of model and BRAIN clients |
-| `integrations` | Bridge BRAIN operations and configurable model providers | Callers supply the research scope and operation inputs |
-| `knowledge`, `config` | Supply research context and effective configuration | Workflows consume the context and persist decision provenance |
+| Regular | `workflows/regular/` | Campaign → Dataset → Combination → Batch，Delay 1、规则覆盖和完整模拟意图 |
+| Super | `workflows/super_alpha/workflow.py` | 使用 BRAIN-native 选择/组合机制；不套用 Regular Dataset 规则 |
+| Optimization | `workflows/optimization/workflow.py` | 源 Alpha 设置只读，候选分支独立研究和审计 |
+| Qualification | `qualification/` | RA/相关性/指标先于 Candidate；Preferred 只能消费 Candidate |
+| Research context | `knowledge.py`, `expressions/` | 规则、字段、操作符、平台证据与模型推理分离 |
 
-The CLI composes the system. Command dispatch selects the workflow, which
-owns scope resolution and experiment decisions. Workflows receive platform
-operations through an injected gateway and share deterministic validation,
-qualification, and state services. Optimization reuses expression validation
-without importing the Super workflow. The task engine operates on adapter
-outputs and saved records. The driver is a separate process behind the BRAIN
-gateway, with a local JSON protocol.
+## 技术边界
 
+```text
+cli.py / workbench
+  -> agents (Registry + Role Profile)
+  -> orchestration (Task, checkpoints, release/audit, recovery)
+  -> workflows (domain ownership)
+      -> integrations/brain (Gateway / Driver)
+      -> integrations/model* (CLI / SDK / LLM API)
+      -> expressions + simulation + qualification
+  -> state (file storage, locks, attempts, evidence)
+  -> knowledge (Dataset/field/operator snapshots)
+```
 
-## Decision and evidence flow
+依赖方向以业务功能为中心：模型和 BRAIN 都是可替换的外围适配器；同一个任务不得创建额外的第二份预算或审批权威。CLI 只能装配角色与解析输入；领域流程拥有研究设置和候选决策。平台响应是事实来源，模型文本是建议，签名审计是技术观察，独立部署的 Grant/预算/Stop 才可能构成后续生产授权链的一部分。
 
-Each workflow separates four layers from the confirmed conversation:
-Workflow Scope, Research Scope, Research Profile, and Execution Policy.
-User constraints and approved system rules are immutable inputs. Model
-decisions may fill only open choices. The workflow validates each decision
-against current platform evidence and records the choice, rationale, rule
-source hashes, and exact effective settings before an experiment.
+### Orchestration 控制平面
 
-Platform responses, model decisions and local audit results are separate
-artifacts. Simulation intents precede any POST. Recovery reconciles uncertain
-intents before further work. Candidate status requires the complete applicable
-audit; neither a model response nor simulation completion can promote it.
+- `engine.py`: `validate → execute → qualify → collect`、任务身份、预算检查点和重入；
+- `workflow_contract.py`、`dispatch.py`: 领域命令映射与适配器注入；
+- `research_preparation.py`、`research_runtime_adapter.py`: BRAIN/Model 前的离线证据准备，不可当成真实执行权；
+- `research_authority_*.py`、`research_grant_service_reference.py`、`research_spend_service_reference.py`: 独立 Reference Authority、单次消费、签名审计、费用保留和恢复；
+- `research_p7_billing.py`、`research_p7_brain_read.py`、`research_p7_canary.py`、`research_p7_release.py`: 账单/只读/Canary/综合负向门禁；共享状态见 `research_p7_contracts.py`；
+- `production_adapter.py`: 仍是不可执行的 fail-closed 接口，不是已授权的真实 BRAIN Adapter。
 
-## Delivery sequence
+### 状态隔离与恢复
 
-1. Regular: complete independent Dataset subtask records, bounded scheduling,
-   recovery, coverage accounting and PPA Profile.
-2. Optimization: capture a read-only source; derive family-specific branches,
-   simulate with the appropriate mechanism, compare against baseline and
-   audit each branch independently.
-3. Super: inspect live BRAIN selection/combo settings and ACTIVE submitted
-   Alpha pool; implement native simulation, recovery and Super audit.
-4. Verify execution, recovery and qualification through all three routes.
+Task/Model Attempt/BRAIN Intent/费用保留/授权消费/资格审计各自有唯一 ID、状态和恢复语义。模型输出或本地 Mock 完成，不得推进尚未完成的 BRAIN 操作；结果未知先进入协调状态而不是调用下一次 `POST`。本地文件摘要只检测变更，不能替代数字签名或远程读回。详细的数据模型见 [RESEARCH_STATE_V1_1.md](RESEARCH_STATE_V1_1.md) 和 [RESEARCH_REFACTOR_BOUNDARIES.md](RESEARCH_REFACTOR_BOUNDARIES.md)。
+
+## 执行与权限边界
+
+现有新 Research 控制平面只提供本地离线准备/审计及负向生产状态。真实 SDK 调用、BRAIN Session 和 Simulation 与自动提交不能因组合模块而被开启。**`P7_PRODUCTION_BLOCKED`** 是现行发布结果。参考 [整体设计](CURRENT_DESIGN.md#5-权限密钥brain-只读与生产发布边界)、[运行手册](../docs/OPERATIONS.md)、[发布验收](../docs/RELEASE_ACCEPTANCE.md)。
+
+## 维护准则
+
+架构文档依照**责任、依赖方向、数据与信任边界**组织；不依历史开发顺序列功能清单。若新增新的模块或操作，先确认领域所有权、状态机、平台副作用、预算归属和操作授权，再更新本文与整体设计。

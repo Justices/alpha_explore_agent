@@ -1,124 +1,158 @@
-# 当前系统设计总览（Current Design）
+# Alpha Research 系统整体设计
 
-> 状态：当前功能分支的设计导航与实现核对记录。本文为**说明性文档**，不是新的权限、数值阈值或平台事实来源。
-> 规范优先级：根目录 [AGENTS.md](../AGENTS.md) 与已批准的 [研究范围](RESEARCH_SCOPE.md) 优先；具体实现行为必须与代码、配置和可验证的运行证据核对。
+> **当前设计入口（2026-11-23）**。本文描述功能分支中的系统能力、依赖、信任边界和实施状态，不是授权令牌、生产就绪证明或新阈值来源。
+>
+> **规范优先级**：项目 [AGENTS.md](../AGENTS.md) 和已批准的 [RESEARCH_SCOPE.md](RESEARCH_SCOPE.md) 控制研究范围与权限；代码及实际配置决定接口行为；运行结果须以与提交 SHA 绑定的 CI/平台/供应商证据为准。发生冲突时不得由本文扩大已批准范围。
 
-## 1. 目标、范围和完成边界
+## 1. 产品能力与总体原则
 
-`alpha_research` 是 BRAIN Alpha 研究与评估系统，支持：
-- **Regular Alpha Campaign**：明确 Region，按 Dataset/有效范围组合研究；PPA 是显式开启的 Regular Profile，而非第四种工作流。
-- **BRAIN-native Super Alpha**：使用平台原生 Super 机制和平台确认的输入集合；不套用 Regular Dataset 约束。
-- **Alpha Optimization**：给定源 Alpha ID，读取原始 Regular/Super Alpha 的只读基线，创建独立候选分支，不修改源 Alpha。
+`alpha_research` 是围绕 WorldQuant BRAIN 的研究、评估、资格审计和恢复系统，覆盖三种**业务工作流**：
 
-系统将研究计划、模型决策、模拟意图、读回证据、资格审计和恢复状态持久化。**模型输出不能替代平台证据或确定性的资格门槛。**
+| 工作流 | 核心输入 | 研究机制 | 不变量 |
+| --- | --- | --- | --- |
+| Regular Campaign | Region，研究目标；可选 Dataset、Category、Universe | 按当前平台证据发现合法组合、筛选字段、预注册、模拟与审计 | Regular Delay 1；未覆盖的 Dataset/组合必须记录；单表达式不得跨 Dataset |
+| BRAIN-native Super Alpha | Region、目标、平台支持的 Super 设置 | 使用平台原生选股、组合和 Super 仿真契约 | 不从 Regular 推断 Super 的有效数据与机制 |
+| Alpha Optimization | 源 Alpha ID、目标、可验证的源设置 | 读取源对象只读基线，独立分支进行研究与审计 | 不修改原 Alpha；源对象类型和范围由平台证据确认 |
 
-当前禁止自动 Alpha 提交和未经授权的属性更新；Regular 的已验证模拟结果可依现有契约处理研究溯源标签。任何真实 BRAIN Simulation、标签写入、模型收费调用必须在各自的显式授权边界内运行。
+PPA 只是用户**显式要求**时应用于 Regular 的特殊 Profile，不是另一条工作流。只有充分验证的平台读回与完整适用的 RA/相关性/指标规则才能产生 Candidate；Preferred 在 Candidate 集上独立优选。局部 PPA 判断不等于平台 PPA 分类。**Alpha 自动提交禁止**。
 
-## 2. 架构及责任边界
+系统的运行原则是：范围先于模型决策，意图先于非幂等调用，证据先于结论，失败/未知先于重试，执行权先于平台副作用。
+
+## 2. 架构总图：业务、平台与控制平面
 
 ```text
-CLI / Workbench (入口和装配，不决定研究结论)
-  |-- model selection -> Role Profile + Model Registry
-  |                        |-- Research Lead
-  |                        |-- Research Executor
-  |                        '-- Agent CLI / SDK 或 LLM API Adapter
-  |-- orchestration       -> 持久检查点、预算、执行与恢复协调
-  |-- workflows           -> regular / super_alpha / optimization
-  |-- integrations        -> BRAIN Gateway / 模型调用和审计
-  |-- simulation          -> Intent、读回、恢复、回测缓存
-  |-- qualification       -> Candidate / Preferred / 可选 PPA
-  |-- knowledge           -> 规则、字段、操作符及证据检索
-  '-- state               -> 文件存储、指纹、互斥和恢复日志
+CLI / Workbench / Operator
+     |
+     +--> Configuration + Role Registry -----------------------+
+     |     Lead / Executor -> Agent CLI | SDK Agent | LLM API   |
+     |                                                        v
+     +--> MainOrchestrator / Task checkpoints ---------> Model runtime
+     |      identity / budget / preparation / recovery       |
+     |      |                                                 | hypotheses & decisions
+     |      v                                                 v
+     |   Workflow dispatcher <--------------------------------+
+     |      +--> Regular Campaign / Dataset tasks
+     |      +--> Super-native workflow
+     |      +--> Optimization branch workflow
+     |                   |
+     |     Evidence / expression / simulation-intent
+     |                   |
+     |                BRAIN Gateway -> isolated Driver -> BRAIN
+     |                   |            (separate authorization boundary)
+     |     Platform readback + deterministic qualification
+     |                   |
+     |        Candidate / Preferred / audit & reports
+     |
+     +--> Research control plane (read-only reports)
+              |
+              +--> Grant / independent authority reference service
+              +--> Provider attempt & micro-USD spend ledger
+              +--> Signed session / scoped Catalog read audit
+              +--> Canary monitor / irreversible Stop
+              +--> Cross-module negative release matrix
+
+State root: versioned records, evidence fingerprints, intents, journals,
+            single-writer locks, recovery and auditable results
+Knowledge:  Dataset / field / operator snapshots and research references
 ```
 
-**权责划分**：
-- 工作流拥有 Scope 决策和研究步骤；统一调度器负责阶段检查点和恢复协调，不能越权调用 BRAIN。
-- BRAIN Gateway 负责平台会话、事实读取与被授权操作；模型 Provider 不拥有 BRAIN 工具和 Simulation 提交权限。
-- 验证、Candidate/Preferred、相关性规则属于可审计的确定性逻辑；模型只能提出假设、构造、解释与建议。
-- `MainOrchestrator` 当前默认拒绝真实执行；另有独立的 `ProductionWorkflowAdapter` 安全骨架在 `validate` 阶段即拒绝未授权执行，不会预留执行预算。生产 Dispatch 仍未接入统一入口，不能将离线编排测试当成真实 BRAIN 集成通过。
-- 统一调度和已有领域流程保留各自检查点/恢复语义，禁止因结构整合而自动重放结果未知的请求。
+### 模块边界与代码定位
 
-模块级边界详见 [架构](RESEARCH_ARCHITECTURE_V1_1.md)；并发、锁、日志与恢复的细节详见 [重构边界](RESEARCH_REFACTOR_BOUNDARIES.md)。
+| 层 | 代码主体 | 负责 | 不负责 |
+| --- | --- | --- | --- |
+| 入口 / 装配 | `cli.py`, `workbench/`, `config.py` | 命令、角色装配、显式配置和可见状态 | 自行设定 Alpha 资格或代替外部授权 |
+| 模型角色与治理 | `agents/`, `integrations/model*.py` | 已注册 Agent/LLM 选择、预算、提示、调用日志与响应校验 | 持有 BRAIN 真实权限或决定 Candidate |
+| 编排 / 控制 | `orchestration/engine.py`, `dispatch.py`, `research_*.py` | Task、检查点、证据交接、授权审计、事务和恢复协调 | 绕过领域 Intent 重新执行 Simulation |
+| 业务领域 | `workflows/regular/`, `super_alpha/`, `optimization/` | 各自研究范围、生成和执行协议 | 创建第二套权限发行与账本 |
+| 平台适配 | `integrations/brain/`, `simulation/` | Catalog、精确范围、Driver 协议、Intent、读回 | 以模型文本或本地报告代替 BRAIN 事实 |
+| 纯确定性逻辑 | `expressions/`, `qualification/` | 语法规则、Candidate、Preferred、PPA 和相关性核验 | 未见证据时默认成功 |
+| 状态与知识 | `state/`, `knowledge.py` | 原子持久化、证据定位、只读快照、锁与日志 | 把普通 SHA-256 当成远程数字签名 |
 
-## 3. 模型注册、路由与凭证
+`MainOrchestrator` 采用注入 Adapter 的方式，默认不启用真实执行；独立 `ProductionWorkflowAdapter` 仍会在前置校验阻断生产 Dispatch。既有领域 CLI 入口与新编排控制面是不同路径：前者具有按命令独立检查的执行契约，不能被「统一门禁未放开」误写为所有命令物理上不可能访问 BRAIN。任何真实调用均需确认具体入口的权限和副作用。
 
-- `alpha_research/agents/model_registry.json` 为默认模型注册项；可由 `--registry` 或 `<state-root>/config/model_registry.json` 覆盖。
-- `alpha_research/agents/role_profile.json` 统一定义 Research Lead、Research Executor 和任务路由；`--lead`、`--executor` 必须分别选定已注册的 Backend。
-- Agent Runtime（例如 Codex、Claude Code、Antigravity）和 LLM API（例如 DeepSeek、GLM、Kimi）是**不同传输类型**，不是业务角色。LLM API 当前使用兼容 OpenAI Chat Completions 的官方 Python SDK。
-- 根据现行 `AGENTS.md`，模型 API Key **只允许从配置指定的环境变量读取**，不能在提交的配置文件、调用日志或状态快照中保存明文密钥。
-- 显式指定角色时，CLI 从权威 Role Profile 构建路由，旧业务 `model` 字段不能覆盖已选注册项。
-- `models inspect` 与 `models doctor` 为本地检查；`READY_LOCAL` 不是远程鉴权成功。`models smoke --allow-model-call` 会真实调用模型，但不调用 BRAIN。
-- 模型调用账本预留调用额度、记录服务商报告的 Tokens、绑定 Role/Backend 身份和研究 ID；未知结局不自动重试、不自动切换模型。
+## 3. 研究、模型与资格的端到端证据链
 
-详见 [注册与选择](MODEL_AGENT_REGISTRY.md)、[模型治理](MODEL_RUNTIME_GOVERNANCE.md)。
+1. **Scope**：记录用户约束、Region、Dataset/源 Alpha、适用平台设置和精确时间范围；用户给定条件不得静默替换。
+2. **Platform Catalog**：使用现行账号、Region/Delay/Universe/Instrument 证据核对 Dataset、字段与操作符，并保存快照及摘要。Regular 缺省 Dataset/Category/Universe 代表覆盖义务，不代表任意合法化。
+3. **Hypothesis/Plan**：Lead 给经济假设和研究目标，Executor 生成可验证计划、表达式和属性推理；两者必须绑定角色、Backend、输入摘要和 Research/Task 身份。
+4. **Preparation & validation**：表达式、字段、操作符、参数和预算在任何仿真 Intent 前验证；保留预注册研究证据，禁止用模型建议填造平台结果。
+5. **Intent & authorization**：先持久化模拟 Intent、审批引用与准确范围；只有独立可信签发/验证/预算/单次消费机制以及该入口的独立许可才可能考虑真实非幂等 POST。现有新研究控制面继续 **fail closed**。
+6. **Readback & reconciliation**：严格绑定返回的请求/operation/Alpha 身份；丢失 ACK 或未知结果隔离为 UNKNOWN，先协调读回，不自动重放。
+7. **Qualification**：适用 RA 要求通过后才进入进一步相关性及指标核验；缺失、失败、无法读取的证据不得作为通过。Candidate/Preferred/PPA 分开记录。
+8. **Report**：写入候选、失败原因、未覆盖范围、费用和血缘信息；报表状态不是额外的执行许可。
 
-## 4. 三类工作流的证据链
+研究决策层四种边界必须分开：Workflow Scope（业务流程类型）、Research Scope（用户/平台有效范围）、Research Profile（如显式 PPA）、Execution Policy（批准的权限与预算）。`Research Lead` 与 `Research Executor` 是角色，Codex/Antigravity/Claude 等是 Agent Runtime，DeepSeek/GLM/Kimi 等是注册的模型服务；**角色、执行客户端与模型服务三者不能混淆**。
 
-### Regular
+## 4. 模型服务与费用治理
 
-`Scope -> 有效 Dataset/组合 -> 字段/操作符准入 -> 假设和预登记 -> Simulation Intent -> 授权 POST -> 平台读回 -> 完整资格审计 -> 结果记录`
+`agents/model_registry.json` 维护可用后端预设，`agents/role_profile.json` 为角色配置；启动时 `--lead` 和 `--executor` 指定已注册后端。可能的传输类型包括 CLI Agent、SDK Agent、OpenAI Python SDK 兼容接口及确定性 Mock。模型密钥仅可从已注册的环境变量读入，不得写入仓库、Task、状态或日志。调用前再次核对 Provider 主机、API 路径、配置身份与请求输出上限；不允许凭响应文本升级权限。
 
-Regular Campaign 遵循已批准的 Delay 1、Dataset 轮换与预算规则；省略 Dataset/Category/Universe 触发基于平台证据的覆盖义务，不代表可以编造范围。字段池最多 100 个，须持久化并用于恢复。PPA 规则仅在显式要求时启用。
+预算至少在 Task / Research / Model Attempt 和全局 Provider 层保持一致的身份、调用次数与保留费用；费用采用整数 micro-USD 上取整估算，不把本地 token 估计当成真实账单。模型调用/网络 ACK 不明时保持预算保留及 `UNKNOWN`，不得通过自动切换 Backend、自动退款或重试规避限制。
 
-### Super
+`research_p7_billing.py` 仅对**调用方提供**的发票行和保留记录做完整集合匹配、费用差额及超限审计；没有 Provider 独立认证就不能宣布结算。统一状态词表由 `research_p7_contracts.py` 管理，跨模块验收位于 `research_p7_release.py`。
 
-从平台 Super 机制读取支持的设置、候选 ACTIVE Alpha 集合，执行原生构造和适用的模拟/审计。任何缺失的机制能力或证据都标记未决，不以 Regular 语义替代。
+## 5. 权限、密钥、BRAIN 只读与生产发布边界
 
-### Optimization
+### 控制平面与独立 Authority
 
-读取原始 Alpha 的类型与设置，保持源对象只读；独立记录候选分支、差异、有效设置、模拟意图、读回与审计。结果未知的请求先走恢复，不得再次 POST。
+`research_grant_service_reference.py`、`research_spend_service_reference.py` 和 `research_authority_*.py` 实现单次 Grant 消费、签名 ACK、SQLite 事务化费用保留、审计读回、恢复和持久的 Global Stop。独立运行的**本地参考服务**可以演练 mTLS、身份与崩溃恢复，但不是已完成的生产部署。
 
-三者最后进入统一 `CandidateQualificationService`。Candidate 必须满足完整证据和适用的 RA、相关性、指标检查；**只有 `CANDIDATE` 才进入 Preferred 评估**。Preferred 不修改 Candidate 判定、不自动提交。全球候选池为从版本化评估记录衍生的视图，不是新的审批源。
+`deploy/p7/` 提供**仅 Linux host-network/loopback** 的隔离容器配置，默认非 root、只读根文件系统、mTLS、独立的 API/admin token 文件和可持久化 SQLite。真正的 CA/签名私钥、证书轮换、机主身份、备份恢复、告警及 on-call 责任都需要外部独立配置。
 
-## 5. 持久化、恢复与安全不变量
+### BRAIN 边界
 
-- BRAIN 目录快照位于仓库 `knowledge/`；其余运行数据默认存于独立 `state-root`；不得将本地凭证、Cookie 或密钥纳入仓库。
-- 每次模型决策绑定精确的研究 ID、角色、后端、任务、输入摘要、预算和审计记录；批次和 Session 索引必须一致。
-- 模型请求、Simulation 请求都可能在写入/回包之间中断。对结果不明的操作保留 UNKNOWN/阻断状态，只有具备可核验收据的显式协调才能推进。
-- Task、恢复目标、研究调用和账本保持各自粒度的跨进程锁；失败不能隐式改判为成功或重新扣用未知额度。
-- 文件引用、哈希和安全路径校验提供审计完整性，但不是针对有权限重写本地文件的攻击者的数字签名；Windows 文件竞争保护有已知的 best-effort 限制。
+BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名单和 Session/ACK 绑定进行二次校验。只读 `research_p7_brain_read.py` 验证已签名的本地 Session 观察、框架摘要、Authority Stop 和调用方报告的读回血缘，**不登录平台、不启动真实研究 Driver、不独立认证响应，也不授权任何 BRAIN 请求**。Simulation POST、溯源标签写入和 Alpha 属性操作各自需要不同的操作权限；自动 Alpha 提交依项目政策禁止。
 
-具体数据结构详见 [研究状态](RESEARCH_STATE_V1_1.md)；重试、锁、调用记录及路径信任边界详见 [重构边界](RESEARCH_REFACTOR_BOUNDARIES.md)。
+### Canary / emergency Stop / release
 
-## 6. 已验证事实与尚未通过的发布关口
+`research_p7_canary.py` 审核监控新鲜度、UNKNOWN、全局预算压力、不可逆 Stop、计数器回退及账单/BRAIN 证据漂移；返回停止建议，但不会自动调用 admin Stop。真实 Stop 需要独立受控的 admin 通道，不能靠本地文件/伪造日志撤销。
 
-| 项目 | 状态 | 证据边界 |
+`research_p7_release.py` 与上层 `release_gate.py` 的唯一正当结论是本地审计状态和真实生产阻断项；当前版本统一 **`P7_PRODUCTION_BLOCKED`**，所有生产 Dispatch、模型、BRAIN 只读、Simulation、Alpha 提交及自动重试授权标志为 `false`。即使本地账单完全匹配、Session 摘要有效、Canary 状态 ARMED，也不会变成真实生产授权。
+
+发布前不可由仓库代码单方面解决的条件：
+
+- 在独立生产主机部署和审计 mTLS/PKI/密钥托管、Grant、预算、审计存储、恢复、告警和运维责任；
+- 从 Provider 独立认证真实 operation/readback、Tokens、发票、价格版本和硬扣费上限；
+- 在 BRAIN 端独立认证可撤销、精确 Scope 的真实只读 Session 与请求/响应读回；
+- 由授权操作者监督真实 Canary，验证从 Stop 到各真实执行端点的传递；
+- 对任何 BRAIN Simulation POST 获取另外的限额/范围授权；Alpha 自动提交继续禁止。
+
+详细的运维与证据矩阵参见 [运行手册](../docs/OPERATIONS.md) 和 [验收与发布](../docs/RELEASE_ACCEPTANCE.md)。
+
+## 6. 持久化、重入和恢复语义
+
+- `MainOrchestrator` 的 Task 状态与 `validate → execute → qualify → collect` 检查点必须在持久化层确认；Task 完成不等于 Candidate 合格。
+- Regular Campaign 的 Dataset/组合/批次，Super/Optimization 的模拟 Intent，模型 Attempt、授权消费和独立费用账本为**不同状态机**；不能为了复用接口合并为单一可重试状态。
+- 非幂等请求前持久化 Intent，返回未知时留在 UNKNOWN/blocked。恢复凭原请求和已验证的独立读回/收据进入，不能替换收到过但不可核实的结果。
+- `state/fingerprint.py` 的普通 SHA-256 只用于检测普通修改；攻击者可改写本地文件时不能视为远程真实性证明。
+- 状态数据写入配置的 state root；仓库共享 `knowledge/` 保存按 Scope/账号约束的 Catalog 快照。原子保存、单写锁、文件路径信任、跨进程占用及多次调用账本须保留 OS 差异与故障恢复语义。
+
+详见 [State 模型](RESEARCH_STATE_V1_1.md)、[重构/并发边界](RESEARCH_REFACTOR_BOUNDARIES.md) 和 [统一调度](MAIN_ORCHESTRATOR.md)。
+
+## 7. 真实实施状态与验收证据
+
+| 维度 | 代码/离线状态 | 尚未证明 |
 | --- | --- | --- |
-| 双角色 DeepSeek Smoke | 已获得操作者本地 `PASS` 报告 | 两次 `model_probe_v1` 请求成功，未调用 BRAIN；不代表完整研究成功 |
-| 显式模型选择与旧业务配置冲突修复 | 功能分支已提交 | Python 自动测试结果仍需核验 |
-| Doctor 细粒度本地诊断 | 代码已提交 | 已静态核对，需运行离线回归 |
-| 离线模型路由、交接和三类工作流测试 | 测试代码已提交 | 未取得本地 unittest/CI 通过证据 |
-| BRAIN 只读准入与真实工作流全链路 | 未验证 | 必须单独执行经授权的只读预检 |
-| 真实 Simulation、恢复和标签写入 | 未授权且未验证 | 不得因模型 Smoke 通过而执行 |
-| 自动 Alpha 提交 | 不支持 | 不属于当前产品边界 |
+| 三类研究工作流及 Mock 流程 | 代码与离线测试覆盖，包含 Candidate / PPA / recovery 规则 | 各种真实 BRAIN 凭证、仿真及可提交能力 |
+| Agent/LLM 路由 | 预设 Registry、Role、治理、SDK Mock 与跨平台回归 | 真实 Provider 用量/价格/收费合规 |
+| 审计与参考 Authority | 本地签名、账本、mTLS 与一次性 Stop 演练 | 独立部署、生产证书与服务端执行权 |
+| BRAIN read audit | 有签名观察和纯本地 Frame 校验 | 独立 BRAIN Session 认证/真实读回 |
+| 费用、Canary 与发布门禁 | 完整报告校验、状态决策、持久阻断 | Provider 官方发票、监督真实 Canary、上线批准 |
 
-不要把“代码已实现”“测试已编写”“本地测试通过”“真实平台验证通过”视为同一个状态。
+截至 `e0f76f9` 提交，GitHub Actions [主流程离线验收](https://github.com/Justices/alpha_explore_agent/actions/runs/45188802861) 五个 Job 和 [隔离 Authority 验收](https://github.com/Justices/alpha_explore_agent/actions/runs/45188802903) 三个 Job 全部成功；Ubuntu 全量回归为 **959 tests, OK**。这是**与该提交绑定的离线证据**，不证明真实 BRAIN/Provider 部署。之后的修复应在对应提交的 CI 结束后再补入验收结论。
 
-本轮设计—代码逐项审计、离线统一编排适配、三类流程的恢复状态映射、凭证安全修复与跨平台 CI 验收门槛，见 [设计—代码一致性审计](DESIGN_CODE_AUDIT.md)。
+## 8. 统一文档结构
 
-## 7. 建议的推进次序
-
-1. 在 Windows 项目虚拟环境中执行离线单元与集成测试，修复失败并核查不发生真实调用。
-2. 审计 Session/模型预算/模拟 Intent 的恢复一致性，并做离线故障注入。
-3. 在获得独立授权后进行 BRAIN 只读准入测试。
-4. 在明确 Simulation 数量、成本和权限并单独授权后执行受控真实研究。
-5. 完成最终 Review、证据核验，再决定是否合并功能分支。
-
-受控上线步骤详见 [P0 就绪手册](P0_LIVE_READINESS.md)。
-
-## 8. 现行设计文档索引
-
-| 文档 | 唯一职责 |
+| 文档 | 用途 |
 | --- | --- |
-| [AGENTS.md](../AGENTS.md) | 最高优先级的项目行为、安全和研究代理契约 |
-| [RESEARCH_SCOPE.md](RESEARCH_SCOPE.md) | 已批准的产品边界、范围、Candidate 与 Preferred 规则 |
-| 本文 | 现行架构总览、实现与证据状态、阅读入口 |
-| [RESEARCH_ARCHITECTURE_V1_1.md](RESEARCH_ARCHITECTURE_V1_1.md) | 包和组件职责、依赖方向 |
-| [RESEARCH_STATE_V1_1.md](RESEARCH_STATE_V1_1.md) | Campaign、分支、状态和证据数据模型 |
-| [RESEARCH_REFACTOR_BOUNDARIES.md](RESEARCH_REFACTOR_BOUNDARIES.md) | 并发、调用账本、重放、文件信任和恢复协议 |
-| [MODEL_AGENT_REGISTRY.md](MODEL_AGENT_REGISTRY.md) | 注册格式、模型/Agent 选择与传输 |
-| [MODEL_RUNTIME_GOVERNANCE.md](MODEL_RUNTIME_GOVERNANCE.md) | Doctor、预算、身份固定与未知结局 |
-| [P0_LIVE_READINESS.md](P0_LIVE_READINESS.md) | 运维预检、分阶段授权和验收手册 |
-| [DESIGN_CODE_AUDIT.md](DESIGN_CODE_AUDIT.md) | 当前设计与代码的逐项映射、修复状态和验证门槛 |
+| [AGENTS.md](../AGENTS.md) | 项目行为、安全与代理契约（规范性） |
+| [RESEARCH_SCOPE.md](RESEARCH_SCOPE.md) | 用户批准的工作流、Scope、PPA、Candidate/Preferred 规则（规范性） |
+| **本文** | **现行整体架构、真实状态、关键设计和唯一主导航** |
+| [RESEARCH_ARCHITECTURE_V1_1.md](RESEARCH_ARCHITECTURE_V1_1.md) | Package 依赖关系与适配器边界细节 |
+| [MODEL_AGENT_REGISTRY.md](MODEL_AGENT_REGISTRY.md) / [MODEL_RUNTIME_GOVERNANCE.md](MODEL_RUNTIME_GOVERNANCE.md) | 注册、路由、费用治理、失败语义 |
+| [RESEARCH_STATE_V1_1.md](RESEARCH_STATE_V1_1.md) / [RESEARCH_REFACTOR_BOUNDARIES.md](RESEARCH_REFACTOR_BOUNDARIES.md) | 状态数据结构、文件锁、恢复及路径边界 |
+| [MAIN_ORCHESTRATOR.md](MAIN_ORCHESTRATOR.md) | 任务状态机与领域恢复映射 |
+| [OPERATIONS.md](../docs/OPERATIONS.md) | 只读日常运维、容器参考演练、独立部署事项 |
+| [RELEASE_ACCEPTANCE.md](../docs/RELEASE_ACCEPTANCE.md) | 统一离线验收及外部生产阻断矩阵 |
 
-曾有的三份 `AGENT_REQUIREMENTS.md`、`AGENT_DESIGN.md` 与 `AGENT_KNOWLEDGE_DESIGN.md` 属于已被现行范围/架构/知识实现替代的原始设计，不再作为当前分支的维护入口；若需考证历史，可从 Git 提交历史中读取。
+旧的迭代日志与阶段性说明将归档，不再作为当前系统设计的主入口。任何新模块都应更新本文对应**架构职责**，而不是新建同义的阶段文档。
