@@ -148,7 +148,12 @@ class Gateway:
             for stream in (getattr(proc, "stdin", None),
                            getattr(proc, "stdout", None)):
                 if stream is not None:
-                    stream.close()
+                    try:
+                        stream.close()
+                    except OSError:
+                        # The child is already stopped; a broken pipe on
+                        # close must not mask the original driver failure.
+                        pass
 
     def _read_response(self) -> dict:
         line = self.proc.stdout.readline()
@@ -219,16 +224,20 @@ class Gateway:
         return resp.get("result", resp)
 
     def shutdown(self) -> None:
+        """Bound shutdown even when a child never acknowledges its exit.
+
+        Never synchronously read a shutdown acknowledgement: waiting for that
+        JSON line could deadlock indefinitely if the driver is unresponsive.
+        """
         try:
             if self.proc and self.proc.poll() is None:
                 try:
-                    self._send({"cmd": "shutdown"})
-                    # Give the driver time to close its platform session and
-                    # flush any already committed local research evidence.
+                    self.proc.stdin.write('{"cmd":"shutdown"}\n')
+                    self.proc.stdin.flush()
                     self.proc.wait(timeout=10)
-                except (OSError, ValueError, GatewayError,
-                        subprocess.TimeoutExpired):
-                    # The cleanup helper terminates a hung or broken child.
+                except (OSError, ValueError, subprocess.TimeoutExpired):
+                    # Absent acknowledgement is not a reason to retry BRAIN
+                    # operations or leave a hung subprocess running.
                     pass
         finally:
             self._stop_driver()
