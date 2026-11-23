@@ -53,6 +53,15 @@ class StopSignalSymlinkTests(unittest.TestCase):
         self.assertIn("symlinked stop flag", stderr.getvalue())
         self.assertEqual(sentinel.read_text(), "UNCHANGED")
 
+    def test_resume_cannot_clear_a_symlinked_stop_flag(self):
+        sentinel = self.root / "resume-sentinel.txt"
+        sentinel.write_text("KEEP STOP")
+        self.link(self.stop, sentinel)
+        with self.assertRaisesRegex(ValueError, "symlinked stop flag"):
+            update_stop_flag(self.stop, False)
+        self.assertTrue(StopSignals(self.root).exists())
+        self.assertEqual(sentinel.read_text(), "KEEP STOP")
+
     def test_stop_flag_set_does_not_follow_symlink(self):
         sentinel = self.root / "sentinel.txt"
         sentinel.write_text("DO NOT MODIFY")

@@ -130,7 +130,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 - Regular Campaign 的 Dataset/组合/批次，Super/Optimization 的模拟 Intent，模型 Attempt、授权消费和独立费用账本为**不同状态机**；不能为了复用接口合并为单一可重试状态。
 - 非幂等请求前持久化 Intent，返回未知时留在 UNKNOWN/blocked。恢复凭原请求和已验证的独立读回/收据进入，不能替换收到过但不可核实的结果。
 - `state/fingerprint.py` 的普通 SHA-256 只用于检测普通修改；攻击者可改写本地文件时不能视为远程真实性证明。
-- 状态数据写入配置的 state root；仓库共享 `knowledge/` 保存按 Scope/账号约束的 Catalog 快照。原子保存、单写锁、文件路径信任、跨进程占用及多次调用账本须保留 OS 差异与故障恢复语义。
+- 状态数据写入配置的 state root；仓库共享 `knowledge/` 保存按 Scope/账号约束的 Catalog 快照。原子保存、单写锁、文件路径信任、跨进程占用及多次调用账本须保留 OS 差异与故障恢复语义。Task/Recovery 的 JSON 对象读取使用 `state/json_contract.py` 严格拒绝重复字段、NaN、非对象记录与直接符号链接；原子写入不再允许 NaN/Infinity。停止标记的符号链接在 stop 和 resume 操作中均视为不可修改，避免不可信链接被误清除。
 
 详见 [State 模型](RESEARCH_STATE_V1_1.md)、[重构/并发边界](RESEARCH_REFACTOR_BOUNDARIES.md) 和 [统一调度](MAIN_ORCHESTRATOR.md)。
 

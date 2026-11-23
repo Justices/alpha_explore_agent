@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.json_contract import read_strict_object
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _canonical_sha256
 
@@ -49,7 +50,10 @@ class RecoveryCoordinator:
         self._simulation_recover = simulation_recover
 
     def _resolve_target(self, target):
-        path = Path(target).expanduser().resolve()
+        candidate = Path(target).expanduser()
+        if candidate.is_symlink() or candidate.parent.is_symlink():
+            raise RecoveryError("recovery target cannot be a symlink")
+        path = candidate.resolve()
         if not path.is_relative_to(self.state_root):
             raise RecoveryError("recovery target is outside the configured state root")
         if not path.exists():
@@ -58,13 +62,7 @@ class RecoveryCoordinator:
 
     @staticmethod
     def _read_json(path, label):
-        try:
-            value = json.loads(Path(path).read_text(encoding="utf-8"))
-        except (OSError, ValueError) as exc:
-            raise RecoveryError(f"{label} is missing or unreadable") from exc
-        if not isinstance(value, dict):
-            raise RecoveryError(f"{label} must contain a JSON object")
-        return value
+        return read_strict_object(path, label, error_type=RecoveryError)
 
     def _inspect(self, path):
         if path.is_dir():

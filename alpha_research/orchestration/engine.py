@@ -12,6 +12,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json
+from alpha_research.state.json_contract import read_strict_object
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _hash
 from alpha_research.qualification.pool import CandidatePool, policy_hash
@@ -63,8 +64,11 @@ class MainOrchestrator:
 
     def load(self, task_id):
         path = self._path(task_id)
-        task = json.loads(path.read_text(encoding="utf-8"))
-        if task.get("task_id") != task_id or task.get("schema_version") != SCHEMA_VERSION:
+        task = read_strict_object(
+            path, "orchestration Task", error_type=OrchestrationError)
+        if (task.get("task_id") != task_id
+                or type(task.get("schema_version")) is not int
+                or task["schema_version"] != SCHEMA_VERSION):
             raise OrchestrationError("orchestration record identity/schema mismatch")
         if task.get("request_sha256") != _hash(task.get("request")):
             raise OrchestrationError("orchestration request was changed")
@@ -158,7 +162,10 @@ class MainOrchestrator:
         expected_kind = "regular_batch" if task["workflow"] == "regular" else "simulation_intent"
         if kind != expected_kind:
             raise OrchestrationError("recovery target kind does not match workflow")
-        path = Path(reference).expanduser().resolve()
+        original = Path(reference).expanduser()
+        if original.is_symlink() or original.parent.is_symlink():
+            raise OrchestrationError("recovery target cannot be a symlink")
+        path = original.resolve()
         if not path.is_relative_to(self.state_root) or not path.exists():
             raise OrchestrationError("recovery target must exist under the configured state root")
         if kind == "regular_batch":

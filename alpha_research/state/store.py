@@ -23,7 +23,7 @@ def atomic_write_json(path: Path, data) -> None:
     """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    encoded = json.dumps(data, ensure_ascii=False, indent=2)
+    encoded = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
     fd, temporary = tempfile.mkstemp(
         prefix="." + path.name + ".tmp-", dir=path.parent)
     tmp_path = Path(temporary)
@@ -174,9 +174,10 @@ class StopSignals:
 def update_stop_flag(path: Path, stopped: bool) -> None:
     path = Path(path)
     with SubmissionGate(path.parent):
+        # A resume must not silently remove an untrusted dangling stop link.
+        if path.is_symlink():
+            raise ValueError("refusing to overwrite a symlinked stop flag")
         if stopped:
-            if path.is_symlink():
-                raise ValueError("refusing to overwrite a symlinked stop flag")
             path.write_text("stop\n", encoding="utf-8")
         else:
             path.unlink(missing_ok=True)
