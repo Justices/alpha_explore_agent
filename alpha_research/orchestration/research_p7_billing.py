@@ -66,7 +66,8 @@ def inspect_p7_provider_invoice_batch(*, task_id, provider_hostname,
         if not isinstance(item, dict) or set(item) != required:
             raise OrchestrationError("P7 billing invoice row schema invalid")
         operation, attempt = item["provider_operation_id"], item["attempt_id"]
-        if operation not in reserved_by_key or operation in seen:
+        if (not isinstance(operation, str) or not isinstance(attempt, str)
+                or operation not in reserved_by_key or operation in seen):
             raise OrchestrationError("P7 billing unknown or duplicate operation")
         expected_attempt, reserved = reserved_by_key[operation]
         if attempt != expected_attempt:

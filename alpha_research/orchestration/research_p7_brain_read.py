@@ -44,7 +44,7 @@ def inspect_p7_brain_read_session(orchestrator, task_id, receipt, ack,
     for frame in frames:
         try:
             size = len(canonical_json_bytes(frame))
-        except (ValueError, TypeError, OverflowError) as exc:
+        except (ValueError, TypeError, OverflowError, RecursionError) as exc:
             raise OrchestrationError("P7 BRAIN read frame cannot be encoded") from exc
         if size > _MAX_FRAME_BYTES:
             raise OrchestrationError("P7 BRAIN read frame too large")
@@ -115,9 +115,15 @@ def inspect_p7_brain_readback_observation(session_report, *, frame_index,
     if not isinstance(observed_response, dict) or set(observed_response) != required:
         raise OrchestrationError("P7 BRAIN response envelope invalid")
     digest = observed_response["payload_sha256"]
+    try:
+        same_scope = (isinstance(observed_response["scope"], dict)
+                      and canonical_json_bytes(observed_response["scope"]) ==
+                      canonical_json_bytes(session_report["scope"]))
+    except (TypeError, ValueError, OverflowError, RecursionError):
+        same_scope = False
     if (observed_response["task_id"] != session_report["task_id"]
             or observed_response["frame_sha256"] != session_report["frame_digests"][frame_index]
-            or observed_response["scope"] != session_report["scope"]
+            or not same_scope
             or type(observed_response["http_status"]) is not int
             or observed_response["http_status"] != 200
             or type(observed_response["record_count"]) is not int

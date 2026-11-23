@@ -67,6 +67,12 @@ class P7BillingTests(unittest.TestCase):
             with self.subTest(value=value), self.assertRaises(OrchestrationError):
                 self.run_audit(invoice_rows=rows)
 
+    def test_non_string_operation_id_is_domain_rejection(self):
+        rows = [dict(x) for x in self.kwargs["invoice_rows"]]
+        rows[0]["provider_operation_id"] = []
+        with self.assertRaises(OrchestrationError):
+            self.run_audit(invoice_rows=rows)
+
     def test_provider_currency_and_rate_binding(self):
         for mutation in (
             {"currency": "CNY"},

@@ -361,6 +361,43 @@ class P7IntegratedOfflineTests(unittest.TestCase):
                         {**clean, **mutation}, frame_index=0,
                         observed_response=response)
 
+    def test_p7_rejects_non_string_enum_and_unhashable_inputs(self):
+        cases = (
+            ("billing", {"status": []}),
+            ("billing", {"provider_hostname": []}),
+            ("brain", {"status": []}),
+            ("brain", {"authority_stop_state": []}),
+            ("canary", {"status": []}),
+            ("canary", {"stop_state": []}),
+        )
+        reports = {
+            "billing": self.billing, "brain": self.session(),
+            "canary": self.canary(),
+        }
+        for kind, mutation in cases:
+            with self.subTest(kind=kind, mutation=mutation):
+                data = {**reports[kind], **mutation}
+                kwargs = {kind + "_report": data}
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_integrated_release(self.orch, self.task_id, **kwargs)
+
+    def test_readback_scope_rejects_bool_int_equality(self):
+        clean = self.session()
+        response = {
+            "task_id": self.task_id, "frame_sha256": clean["frame_digests"][0],
+            "scope": {**_SCOPE, "delay": True},
+            "http_status": 200, "record_count": 1,
+            "payload_sha256": "c" * 64,
+        }
+        with self.assertRaises(OrchestrationError):
+            inspect_p7_brain_readback_observation(
+                clean, frame_index=0, observed_response=response)
+
+    def test_canary_precise_heartbeat_expiry(self):
+        report = self.canary(observed_at=_NOW - timedelta(seconds=90, milliseconds=500))
+        self.assertIn("P7_MONITOR_STALE", report["reasons"])
+        self.assertTrue(report["stop_required"])
+
     def test_top_level_release_includes_p7_and_stays_blocked(self):
         result = inspect_production_release_gate(
             self.orch, self.task_id, {},

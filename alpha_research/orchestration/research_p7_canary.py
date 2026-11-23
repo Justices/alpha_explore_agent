@@ -69,11 +69,12 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         if observed_at is None:
             raise OrchestrationError("P7 Canary observation timestamp required")
         timestamp = _timestamp(observed_at)
-        age = int((current_time - timestamp).total_seconds())
-        if age < -5:
+        precise_age = (current_time - timestamp).total_seconds()
+        if precise_age < -5:
             raise OrchestrationError("P7 Canary monitor timestamp in future")
-        if age > max_age_seconds:
+        if precise_age > max_age_seconds:
             reasons.add("P7_MONITOR_STALE")
+        age = int(precise_age)
         digest = fingerprint_json(monitor)
         stop_state = monitor["stop_state"]
         stop_latched = stop_state == "STOPPED"
@@ -108,7 +109,8 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
     if billing_report is not None:
         if (not isinstance(billing_report, dict)
                 or billing_report.get("task_id") != task_id
-                or billing_report.get("status") not in _BILLING
+                or not isinstance(billing_report.get("status"), str)
+                or billing_report["status"] not in _BILLING
                 or billing_report.get("permission_to_dispatch") is not False
                 or billing_report.get("provider_invoice_independently_verified") is not False):
             raise OrchestrationError("P7 Canary billing evidence invalid")
@@ -117,7 +119,8 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
     if brain_report is not None:
         if (not isinstance(brain_report, dict)
                 or brain_report.get("task_id") != task_id
-                or brain_report.get("status") not in _BRAIN
+                or not isinstance(brain_report.get("status"), str)
+                or brain_report["status"] not in _BRAIN
                 or brain_report.get("permission_to_dispatch") is not False
                 or brain_report.get("brain_read_invoked") is not False
                 or brain_report.get("platform_session_independently_authenticated") is not False):

@@ -45,12 +45,14 @@ def _check_billing(report, task_id):
         "budget_refund_authorized", "real_provider_invoked",
         "automatic_retry_allowed"))
     rows = report.get("findings")
-    if (report.get("status") not in _BILLING or not isinstance(rows, list)
+    if (not isinstance(report.get("status"), str)
+            or report["status"] not in _BILLING or not isinstance(rows, list)
             or not rows or len(rows) != report.get("operation_count")
             or type(report.get("operation_count")) is not int
             or len(rows) > 10000):
         raise OrchestrationError("P7 billing report shape invalid")
-    if (report.get("provider_hostname") not in _PROVIDER_HOSTS
+    if (not isinstance(report.get("provider_hostname"), str)
+            or report["provider_hostname"] not in _PROVIDER_HOSTS
             or not isinstance(report.get("invoice_id"), str)
             or not report["invoice_id"].strip()
             or report.get("currency") != "USD"
@@ -64,11 +66,16 @@ def _check_billing(report, task_id):
     mismatched = False
     attempts, operations = set(), set()
     for row in rows:
-        if not isinstance(row, dict):
+        if (not isinstance(row, dict)
+                or set(row) != {"attempt_id", "provider_operation_id",
+                                    "reserved_usd_micros", "estimated_usd_micros",
+                                    "billed_usd_micros", "variance_usd_micros",
+                                    "reservation_breached"}):
             raise OrchestrationError("P7 billing finding invalid")
         attempt, operation = row.get("attempt_id"), row.get("provider_operation_id")
         if (not isinstance(attempt, str) or not attempt
                 or not isinstance(operation, str) or not operation
+                or len(attempt) > 256 or len(operation) > 256
                 or attempt in attempts or operation in operations):
             raise OrchestrationError("P7 billing finding duplicate")
         attempts.add(attempt)
@@ -100,7 +107,8 @@ def _check_brain(report, task_id, task):
         "brain_read_invoked", "brain_simulation_invoked", "alpha_submission_invoked",
         "automatic_retry_allowed"))
     frames = report.get("frame_digests")
-    if (report.get("status") not in _BRAIN
+    if (not isinstance(report.get("status"), str)
+            or report["status"] not in _BRAIN
             or not isinstance(frames, list)
             or not 1 <= len(frames) <= 64
             or type(report.get("frame_count")) is not int
@@ -118,6 +126,7 @@ def _check_brain(report, task_id, task):
     admitted = report.get("local_offline_admission_passed")
     stop = report.get("authority_stop_state")
     if (type(valid) is not bool or type(admitted) is not bool
+            or not isinstance(stop, str)
             or stop not in {"ARMED", "STOPPED", "NOT_SUPPLIED"}):
         raise OrchestrationError("P7 BRAIN evidence state invalid")
     expected = ("P7_BRAIN_READ_SCOPE_DENIED" if not valid else
@@ -149,8 +158,10 @@ def _check_canary(report, task_id):
         "brain_simulation_authorized", "alpha_submission_authorized",
         "automatic_retry_allowed"))
     reasons = report.get("reasons")
-    if (report.get("status") not in _CANARY
+    if (not isinstance(report.get("status"), str)
+            or report["status"] not in _CANARY
             or not isinstance(reasons, list)
+            or len(reasons) > 256
             or any(not isinstance(value, str) or not value
                    for value in reasons)
             or reasons != sorted(set(reasons))
@@ -168,7 +179,8 @@ def _check_canary(report, task_id):
         if digest is not None and (
                 not isinstance(digest, str) or _HEX64.fullmatch(digest) is None):
             raise OrchestrationError("P7 Canary evidence digest invalid")
-    if report.get("stop_state") not in {"ARMED", "STOPPED", "UNKNOWN"}:
+    if (not isinstance(report.get("stop_state"), str)
+            or report["stop_state"] not in {"ARMED", "STOPPED", "UNKNOWN"}):
         raise OrchestrationError("P7 Canary Stop state invalid")
     if (("P7_GLOBAL_STOP_LATCHED" in reasons) !=
             (report["stop_state"] == "STOPPED")):
