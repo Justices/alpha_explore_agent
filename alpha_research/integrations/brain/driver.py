@@ -87,8 +87,8 @@ def main():
     except Exception as exc:
         # Do not reflect credential/account/provider details in guarded
         # orchestration session responses. The Gateway also redacts errors.
-        error = ("guarded platform configuration failed" if guarded
-                 else str(exc)[:1000])
+        error = ("protected platform configuration failed"
+                 if guarded or read_only else str(exc)[:1000])
         write({"ok": False, "stage": "configuration", "error": error})
         return 2
 
@@ -137,7 +137,8 @@ def main():
                 result = runtime.dispatch(command, params)
                 write({"ok": True, "result": result})
             except Exception as exc:
-                error = ("guarded platform operation failed" if guarded
+                error = ("protected platform operation failed"
+                         if guarded or read_only
                          else f"{type(exc).__name__}: {str(exc)[:4000]}")
                 write({"ok": False, "error": error})
     finally:
