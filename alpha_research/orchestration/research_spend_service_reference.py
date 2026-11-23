@@ -247,14 +247,24 @@ class ReferenceExternalSpendLedger:
                 "permission_to_dispatch": False}
 
     def snapshot(self):
+        """One transaction/snapshot for global and per-Grant accounting."""
         with closing(self._connect()) as db:
-            global_committed = db.execute(
-                "SELECT COALESCE(SUM(reserved_usd_micros),0)"
-                " FROM research_model_spend").fetchone()[0]
-            rows = db.execute(
-                "SELECT status, COUNT(*), SUM(reserved_usd_micros)"
-                " FROM research_model_spend WHERE grant_id=? GROUP BY status",
-                (self.grant_id,)).fetchall()
+            try:
+                db.execute("BEGIN")
+                self._verify_limits(db)
+                global_committed = db.execute(
+                    "SELECT COALESCE(SUM(reserved_usd_micros),0)"
+                    " FROM research_model_spend").fetchone()[0]
+                rows = db.execute(
+                    "SELECT status, COUNT(*), SUM(reserved_usd_micros)"
+                    " FROM research_model_spend WHERE grant_id=? GROUP BY status",
+                    (self.grant_id,)).fetchall()
+                db.execute("COMMIT")
+            except (sqlite3.Error, OrchestrationError) as exc:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise OrchestrationError(
+                    "research spend snapshot unavailable or policy drift") from exc
         return {
             "grant_id": self.grant_id,
             "max_model_calls": self.max_model_calls,
