@@ -19,12 +19,18 @@ from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_authority_transport import (
     ResearchAuthorityApplication, make_loopback_authority_server,
 )
+from alpha_research.orchestration.research_p6_mtls import (
+    make_authority_mtls_server_context,
+)
 
 _CONFIG_FIELDS = {
     "schema_version", "database_file", "operator_trust_file",
     "consumer_private_key_file", "ledger_private_key_file",
     "consumer_id", "consumer_key_id", "ledger_id",
     "ledger_issuer_id", "ledger_key_id", "global_max_usd_micros",
+}
+_TLS_CONFIG_FIELDS = {
+    "server_certificate_file", "server_private_key_file", "client_ca_file",
 }
 
 
@@ -55,6 +61,15 @@ def _load_private_key(raw):
     return key
 
 
+def load_pilot_config(config_path):
+    """Read non-secret config for TLS only; no automatic production enable."""
+    path = _safe_path(config_path)
+    if path.stat().st_size > 32_768:
+        raise OrchestrationError("pilot authority config too large")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data
+
+
 def load_pilot_application(config_path):
     """Strict opt-in configuration; never reads a credential via CLI args."""
     config_file = _safe_path(config_path)
@@ -62,7 +77,11 @@ def load_pilot_application(config_path):
         raise OrchestrationError("pilot authority config too large")
     cfg = json.loads(config_file.read_text(encoding="utf-8"))
     if (not isinstance(cfg, dict)
-            or set(cfg) not in (_CONFIG_FIELDS, _CONFIG_FIELDS | {"recovery_trust_file"})
+            or set(cfg) not in (
+                _CONFIG_FIELDS,
+                _CONFIG_FIELDS | {"recovery_trust_file"},
+                _CONFIG_FIELDS | _TLS_CONFIG_FIELDS,
+                _CONFIG_FIELDS | _TLS_CONFIG_FIELDS | {"recovery_trust_file"})
             or type(cfg["schema_version"]) is not int
             or cfg["schema_version"] != 1):
         raise OrchestrationError("pilot authority config schema invalid")
@@ -96,7 +115,7 @@ def load_pilot_application(config_path):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Isolated read-only research authority LOCAL PILOT; no live dispatch")
+        description="Isolated read-only research authority LOCAL PILOT; optional mTLS; no live dispatch")
     parser.add_argument("--config", required=True,
                         help="absolute path to non-secret pilot configuration JSON")
     parser.add_argument("--port", required=True, type=int)
@@ -111,8 +130,15 @@ def main(argv=None):
         api = os.environ.get("ALPHA_RESEARCH_AUTHORITY_API_TOKEN", "")
         admin = os.environ.get("ALPHA_RESEARCH_AUTHORITY_ADMIN_TOKEN", "")
         application = load_pilot_application(opts.config)
+        config = load_pilot_config(opts.config)
+        tls = (make_authority_mtls_server_context(
+            certificate_file=config["server_certificate_file"],
+            private_key_file=config["server_private_key_file"],
+            client_ca_file=config["client_ca_file"])
+            if _TLS_CONFIG_FIELDS.issubset(config) else None)
         server = make_loopback_authority_server(
-            application, api_token=api, admin_token=admin, port=opts.port)
+            application, api_token=api, admin_token=admin,
+            port=opts.port, tls_context=tls)
         try:
             application.initialize_schema()
             print("Research authority LOCAL PILOT: 127.0.0.1:"
