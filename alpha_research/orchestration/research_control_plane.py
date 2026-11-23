@@ -23,6 +23,9 @@ from alpha_research.orchestration.research_catalog_protocol import (
 from alpha_research.orchestration.research_runtime_plan import (
     inspect_research_runtime_plan,
 )
+from alpha_research.orchestration.research_p6_readiness import (
+    inspect_p6_integrated_release,
+)
 
 _COMPONENTS = ("research_preparation", "model_attempt", "manifest", "grant_audit",
                "catalog_contract", "live_plan")
@@ -112,6 +115,21 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
             "blockers": ["RESEARCH_RUNTIME_PLAN_UNAVAILABLE"],
         }
     statuses["live_plan"] = live_plan["status"]
+    # One control-plane query should surface the latest P6 production
+    # blockers without pretending historical P4 readiness was a live grant.
+    # P6 reads only the local Task/evidence; no transport is constructed.
+    try:
+        production = inspect_p6_integrated_release(orchestrator, task_id)
+        if (production.get("status") != "P6_PRODUCTION_BLOCKED"
+                or production.get("permission_to_dispatch") is not False
+                or not isinstance(production.get("blockers"), list)
+                or not production["blockers"]):
+            raise OrchestrationError("P6 production readiness contract drift")
+        production_status = production["status"]
+        production_blockers = list(production["blockers"])
+    except (OrchestrationError, OSError, ValueError, TypeError, KeyError):
+        production_status = "RECONCILIATION_REQUIRED"
+        production_blockers = ["P6_READINESS_EVIDENCE_UNAVAILABLE"]
     if set(statuses) != set(_COMPONENTS):
         raise OrchestrationError("research status component list drift")
     uncertain = {
@@ -130,7 +148,9 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
         needs_reconciliation.add("research_preparation")
     if model_complete and not prepared:
         needs_reconciliation.add("model_attempt")
-    needs_reconciliation = sorted(needs_reconciliation)
+    if production_status == "RECONCILIATION_REQUIRED":
+        needs_reconciliation.add("production_readiness")
+    needs_reconciliation = sorted(set(needs_reconciliation))
     if needs_reconciliation:
         state = "RECONCILIATION_REQUIRED"
         next_required = "MANUAL_STATE_AND_EVIDENCE_RECONCILIATION"
@@ -162,6 +182,8 @@ def inspect_research_control_plane(orchestrator, task_id, model_config,
         },
         "components": statuses,
         "live_blockers": sorted(set(live_plan["blockers"])),
+        "p6_production_status": production_status,
+        "p6_production_blockers": sorted(set(production_blockers)),
         "reconciliation_components": needs_reconciliation,
         "next_required": next_required,
         "manual_manifest_required": False,
