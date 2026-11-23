@@ -25,6 +25,8 @@ _CANARY = {
     "P7_CANARY_STOP_ALREADY_LATCHED", "P7_CANARY_STOP_REQUIRED",
     "P7_CANARY_OFFLINE_OBSERVATION_ONLY",
 }
+_PROVIDER_HOSTS = {"api.deepseek.com", "open.bigmodel.cn", "api.moonshot.cn"}
+_SCOPE_FIELDS = {"region", "delay", "universe", "instrument_type"}
 
 
 def _check_negative(report, task_id, mandatory_flags):
@@ -48,6 +50,16 @@ def _check_billing(report, task_id):
             or type(report.get("operation_count")) is not int
             or len(rows) > 10000):
         raise OrchestrationError("P7 billing report shape invalid")
+    if (report.get("provider_hostname") not in _PROVIDER_HOSTS
+            or not isinstance(report.get("invoice_id"), str)
+            or not report["invoice_id"].strip()
+            or report.get("currency") != "USD"
+            or report.get("independent_invoice_source_authenticated") is not False
+            or any(not isinstance(report.get(name), str)
+                   or _HEX64.fullmatch(report[name]) is None
+                   for name in ("invoice_rows_sha256",
+                                "reservation_rows_sha256"))):
+        raise OrchestrationError("P7 billing provenance metadata invalid")
     totals = [0, 0, 0]
     mismatched = False
     attempts, operations = set(), set()
@@ -81,7 +93,7 @@ def _check_billing(report, task_id):
         raise OrchestrationError("P7 billing aggregation or verdict drift")
 
 
-def _check_brain(report, task_id):
+def _check_brain(report, task_id, task):
     _check_negative(report, task_id, (
         "platform_session_independently_authenticated",
         "independent_brain_read_permission_verified", "driver_started",
@@ -100,11 +112,33 @@ def _check_brain(report, task_id):
             or any(not isinstance(h, str) or _HEX64.fullmatch(h) is None
                    for h in frames)
             or len(set(frames)) != len(frames)
-            or (report["status"] == "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
-                and (report.get("read_only_frames_valid") is not True
-                     or report.get("authority_stop_state") != "ARMED"
-                     or report.get("local_offline_admission_passed") is not True))):
+            ):
         raise OrchestrationError("P7 BRAIN audit report drift")
+    valid = report.get("read_only_frames_valid")
+    admitted = report.get("local_offline_admission_passed")
+    stop = report.get("authority_stop_state")
+    if (type(valid) is not bool or type(admitted) is not bool
+            or stop not in {"ARMED", "STOPPED", "NOT_SUPPLIED"}):
+        raise OrchestrationError("P7 BRAIN evidence state invalid")
+    expected = ("P7_BRAIN_READ_SCOPE_DENIED" if not valid else
+                "P7_BRAIN_READ_STOP_LATCHED" if stop == "STOPPED" else
+                "P7_BRAIN_READ_MONITOR_UNAVAILABLE" if stop == "NOT_SUPPLIED" else
+                "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE")
+    if report["status"] != expected or admitted is not (valid and stop == "ARMED"):
+        raise OrchestrationError("P7 BRAIN admission verdict inconsistent")
+    scope = report.get("scope")
+    requested = task.get("request")
+    if (not isinstance(scope, dict) or set(scope) != _SCOPE_FIELDS
+            or not isinstance(requested, dict)
+            or scope.get("instrument_type") != "EQUITY"
+            or type(scope.get("delay")) is not int
+            or any(scope.get(key) != requested.get(key)
+                   for key in ("region", "delay", "universe"))
+            or (task["workflow"] == "super" and
+                report.get("source_alpha_id") is not None)
+            or (task["workflow"] == "optimization" and
+                report.get("source_alpha_id") != requested.get("alpha_id"))):
+        raise OrchestrationError("P7 BRAIN Task scope/source mismatch")
 
 
 def _check_canary(report, task_id):
@@ -136,6 +170,12 @@ def _check_canary(report, task_id):
             raise OrchestrationError("P7 Canary evidence digest invalid")
     if report.get("stop_state") not in {"ARMED", "STOPPED", "UNKNOWN"}:
         raise OrchestrationError("P7 Canary Stop state invalid")
+    if (("P7_GLOBAL_STOP_LATCHED" in reasons) !=
+            (report["stop_state"] == "STOPPED")):
+        raise OrchestrationError("P7 Canary Stop incident disclosure drift")
+    if (("P7_MONITOR_MISSING" in reasons) !=
+            (report["stop_state"] == "UNKNOWN")):
+        raise OrchestrationError("P7 Canary monitor incident disclosure drift")
     if report["stop_latched"] is not (report["stop_state"] == "STOPPED"):
         raise OrchestrationError("P7 Canary Stop latch state mismatch")
     if report["stop_state"] == "UNKNOWN":
@@ -144,7 +184,10 @@ def _check_canary(report, task_id):
     elif report.get("monitor_sha256") is None:
         raise OrchestrationError("P7 Canary monitor fingerprint missing")
     age = report.get("monitor_age_seconds")
-    if age is not None and (type(age) is not int or age < -5):
+    if report["stop_state"] == "UNKNOWN":
+        if age is not None:
+            raise OrchestrationError("P7 Canary missing monitor has heartbeat age")
+    elif type(age) is not int or age < -5:
         raise OrchestrationError("P7 Canary heartbeat age invalid")
     expected_status = (
         "P7_CANARY_STOP_ALREADY_LATCHED"
@@ -189,7 +232,7 @@ def inspect_p7_integrated_release(orchestrator, task_id, *, billing_report=None,
     else:
         blockers.add("P7_BILLING_EVIDENCE_MISSING")
     if brain_report is not None:
-        _check_brain(brain_report, task_id)
+        _check_brain(brain_report, task_id, task)
         milestones["p7_3_brain_read"] = brain_report["status"]
         if brain_report["status"] != "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE":
             blockers.add("P7_BRAIN_SCOPE_OR_STOP_DENIED")
@@ -208,6 +251,19 @@ def inspect_p7_integrated_release(orchestrator, task_id, *, billing_report=None,
             blockers.add("P7_CANARY_BILLING_SOURCE_UNAVAILABLE")
         if brain_report is None and canary_report.get("brain_report_sha256") is not None:
             blockers.add("P7_CANARY_BRAIN_SOURCE_UNAVAILABLE")
+        if (billing_report is not None
+                and billing_report["status"] == "P7_RECONCILIATION_REQUIRED"
+                and "P7_BILLING_RECONCILIATION_REQUIRED" not in canary_report["reasons"]):
+            raise OrchestrationError("P7 Canary suppressed billing discrepancy")
+        if (brain_report is not None
+                and brain_report["status"] != "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
+                and "P7_BRAIN_SESSION_NOT_ADMITTED" not in canary_report["reasons"]):
+            raise OrchestrationError("P7 Canary suppressed BRAIN admission failure")
+        if (brain_report is not None and canary_report["stop_state"] == "ARMED"
+                and brain_report["status"] == "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
+                and brain_report["authority_stop_state"] != "ARMED"
+                and "P7_BRAIN_MONITOR_STOP_DRIFT" not in canary_report["reasons"]):
+            raise OrchestrationError("P7 Canary suppressed BRAIN Stop drift")
         if canary_report["stop_required"]:
             blockers.add("P7_CANARY_OPERATOR_STOP_REQUIRED")
         if canary_report["stop_latched"]:

@@ -101,8 +101,14 @@ def inspect_p7_brain_readback_observation(session_report, *, frame_index,
             or session_report.get("status") != "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
             or session_report.get("permission_to_dispatch") is not False
             or session_report.get("platform_session_independently_authenticated") is not False
+            or session_report.get("read_only_frames_valid") is not True
+            or session_report.get("local_offline_admission_passed") is not True
+            or session_report.get("authority_stop_state") != "ARMED"
+            or not isinstance(session_report.get("frame_digests"), list)
+            or not 1 <= len(session_report["frame_digests"]) <= _MAX_FRAMES
+            or session_report.get("frame_count") != len(session_report["frame_digests"])
             or type(frame_index) is not int
-            or not 0 <= frame_index < len(session_report.get("frame_digests", ()))):
+            or not 0 <= frame_index < len(session_report["frame_digests"])):
         raise OrchestrationError("P7 BRAIN readback requires audited frame")
     required = {"task_id", "frame_sha256", "scope", "http_status",
                 "record_count", "payload_sha256"}

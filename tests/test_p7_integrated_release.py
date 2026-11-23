@@ -281,6 +281,86 @@ class P7IntegratedOfflineTests(unittest.TestCase):
             inspect_p7_integrated_release(
                 self.orch, self.task_id, canary_report=forged)
 
+    def test_brain_release_rejects_contradictory_state_and_scope(self):
+        good = self.session()
+        for mutation in (
+            {"status": "P7_BRAIN_READ_SCOPE_DENIED"},
+            {"status": "P7_BRAIN_READ_STOP_LATCHED"},
+            {"authority_stop_state": "STOPPED"},
+            {"local_offline_admission_passed": False},
+            {"read_only_frames_valid": False},
+            {"scope": {**_SCOPE, "region": "CHN"}},
+            {"source_alpha_id": "other-alpha"},
+        ):
+            with self.subTest(mutation=mutation):
+                bad = {**good, **mutation}
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_integrated_release(
+                        self.orch, self.task_id, brain_report=bad)
+
+    def test_billing_release_rejects_forged_invoice_metadata(self):
+        for mutation in (
+            {"provider_hostname": "api.evil.example"},
+            {"currency": "CNY"},
+            {"invoice_id": ""},
+            {"invoice_rows_sha256": "wrong"},
+            {"reservation_rows_sha256": None},
+            {"independent_invoice_source_authenticated": True},
+        ):
+            with self.subTest(mutation=mutation):
+                forged = {**self.billing, **mutation}
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_integrated_release(
+                        self.orch, self.task_id, billing_report=forged)
+
+    def test_canary_release_rejects_suppressed_incidents(self):
+        brain = self.session()
+        clean = self.canary(brain=brain, billing=self.billing)
+        stopped = self.canary(monitor=_monitor(stop=True))
+        for forged in (
+            {**stopped, "reasons": []},
+            {**clean, "monitor_age_seconds": None},
+            {**clean, "reasons": ["P7_MONITOR_MISSING"],
+             "status": "P7_CANARY_STOP_REQUIRED", "stop_required": True,
+             "operator_admin_stop_required": True},
+        ):
+            with self.subTest(forged=forged):
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_integrated_release(
+                        self.orch, self.task_id, canary_report=forged)
+        mismatched = copy.deepcopy(self.billing)
+        mismatched["findings"][0]["billed_usd_micros"] += 10
+        mismatched["findings"][0]["variance_usd_micros"] += 10
+        mismatched["variance_total_usd_micros"] += 10
+        mismatched["billed_total_usd_micros"] += 10
+        mismatched["status"] = "P7_RECONCILIATION_REQUIRED"
+        forged = {**clean,
+                  "billing_report_sha256": fingerprint_json(mismatched)}
+        with self.assertRaises(OrchestrationError):
+            inspect_p7_integrated_release(
+                self.orch, self.task_id, billing_report=mismatched,
+                brain_report=brain, canary_report=forged)
+
+    def test_readback_rejects_report_with_forged_admission(self):
+        clean = self.session()
+        response = {
+            "task_id": self.task_id, "frame_sha256": clean["frame_digests"][0],
+            "scope": dict(_SCOPE), "http_status": 200, "record_count": 1,
+            "payload_sha256": "c" * 64,
+        }
+        for mutation in (
+            {"local_offline_admission_passed": False},
+            {"read_only_frames_valid": False},
+            {"authority_stop_state": "STOPPED"},
+            {"frame_digests": None},
+            {"frame_count": 0},
+        ):
+            with self.subTest(mutation=mutation):
+                with self.assertRaises(OrchestrationError):
+                    inspect_p7_brain_readback_observation(
+                        {**clean, **mutation}, frame_index=0,
+                        observed_response=response)
+
     def test_top_level_release_includes_p7_and_stays_blocked(self):
         result = inspect_production_release_gate(
             self.orch, self.task_id, {},
