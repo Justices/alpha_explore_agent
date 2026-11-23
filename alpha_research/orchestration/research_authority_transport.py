@@ -24,6 +24,9 @@ from alpha_research.orchestration.research_grant_service_reference import (
 from alpha_research.orchestration.research_spend_service_reference import (
     ReferenceExternalSpendLedger,
 )
+from alpha_research.orchestration.research_model_recovery_reference import (
+    RECOVERY_SCHEMA, ReferenceExternalModelRecovery,
+)
 from alpha_research.state.fingerprint import canonical_json_bytes, fingerprint_json
 
 _MAX_BODY = 65_536
@@ -55,7 +58,8 @@ class ResearchAuthorityApplication:
 
     def __init__(self, database_path, *, consumer_signer, ledger_signer,
                  operator_trust, consumer_id, consumer_key_id, ledger_id,
-                 ledger_issuer_id, ledger_key_id, global_max_usd_micros):
+                 ledger_issuer_id, ledger_key_id, global_max_usd_micros,
+                 recovery_trust=None):
         if (not isinstance(consumer_signer, Ed25519PrivateKey)
                 or not isinstance(ledger_signer, Ed25519PrivateKey)
                 or consumer_signer.public_key().public_bytes_raw()
@@ -73,6 +77,27 @@ class ResearchAuthorityApplication:
         self.ledger_issuer_id = ledger_issuer_id
         self.ledger_key_id = ledger_key_id
         self.global_max = global_max_usd_micros
+        # Recovery trust is provisioned on the authority server, never in an
+        # HTTP request. It must not share the consumer or ledger signing key.
+        if recovery_trust is not None:
+            if (not isinstance(recovery_trust, dict)
+                    or not isinstance(recovery_trust.get("issuers"), dict)):
+                raise OrchestrationError("remote recovery trust configuration invalid")
+            own_keys = {
+                consumer_signer.public_key().public_bytes_raw(),
+                ledger_signer.public_key().public_bytes_raw(),
+            }
+            for entry in recovery_trust["issuers"].values():
+                try:
+                    public = base64.b64decode(
+                        entry["public_key_b64"], validate=True)
+                except (KeyError, TypeError, ValueError) as exc:
+                    raise OrchestrationError(
+                        "remote recovery trust key invalid") from exc
+                if len(public) != 32 or public in own_keys:
+                    raise OrchestrationError(
+                        "remote recovery signer must be separate from Grant/ledger")
+        self.recovery_trust = recovery_trust
         self.grants = ReferenceExternalGrantLedger(
             self.path, signer=consumer_signer, operator_trust=operator_trust,
             consumer_id=consumer_id, key_id=consumer_key_id,
@@ -81,6 +106,11 @@ class ResearchAuthorityApplication:
     def initialize_schema(self):
         """Explicit migration. No network, provider or BRAIN initialization."""
         self.grants.initialize_schema()
+        with closing(self.grants._connect()) as db:
+            db.executescript(RECOVERY_SCHEMA)
+
+    def _recovery(self, grant_id):
+        return ReferenceExternalModelRecovery(self.path, grant_id=grant_id)
 
     def _spend(self, grant_id, claims):
         return ReferenceExternalSpendLedger(
@@ -89,7 +119,7 @@ class ResearchAuthorityApplication:
             max_total_cost_usd_micros=claims["max_total_cost_usd_micros"],
             global_max_total_cost_usd_micros=self.global_max)
 
-    def _consumed(self, grant_id):
+    def _consumed(self, grant_id, *, allow_revoked=False):
         grant_id = _grant_id(grant_id)
         with closing(self.grants._connect()) as db:
             row = db.execute(
@@ -99,7 +129,7 @@ class ResearchAuthorityApplication:
             revoked = db.execute(
                 "SELECT 1 FROM research_grant_revocations WHERE grant_id=?",
                 (grant_id,)).fetchone()
-        if not row or not row[2] or revoked:
+        if not row or not row[2] or (revoked and not allow_revoked):
             raise OrchestrationError("external service Grant absent or revoked")
         receipt = json.loads(row[1])
         ack = json.loads(row[2])
@@ -224,6 +254,57 @@ class ResearchAuthorityApplication:
         return self._spend(grant_id, claims).mark_unknown(
             data["attempt_id"], task_id=data["task_id"])
 
+    def bind_provider_operation(self, data):
+        """Persist a returned SDK operation ID even after Grant revocation."""
+        if (not isinstance(data, dict)
+                or set(data) != {"grant_id", "task_id", "attempt_id",
+                                 "ack_sha256", "provider_operation_id"}):
+            raise OrchestrationError("model provider binding schema invalid")
+        grant_id = _grant_id(data["grant_id"])
+        receipt, ack = self._consumed(grant_id, allow_revoked=True)
+        if (data["task_id"] != receipt["claims"]["task_id"]
+                or data["ack_sha256"] != fingerprint_json(ack)):
+            raise OrchestrationError("model provider binding Task/ACK drift")
+        return self._recovery(grant_id).bind_operation(
+            task_id=data["task_id"], attempt_id=data["attempt_id"],
+            provider_operation_id=data["provider_operation_id"])
+
+    def attempt_readback(self, data):
+        """Read the authoritative *local* journal after crash or timeout.
+
+        A NOT_FOUND result is never proof that no provider request happened.
+        """
+        if (not isinstance(data, dict)
+                or set(data) != {"grant_id", "task_id", "attempt_id",
+                                 "ack_sha256"}):
+            raise OrchestrationError("model recovery snapshot payload invalid")
+        grant_id = _grant_id(data["grant_id"])
+        receipt, ack = self._consumed(grant_id, allow_revoked=True)
+        if (data["task_id"] != receipt["claims"]["task_id"]
+                or data["ack_sha256"] != fingerprint_json(ack)):
+            raise OrchestrationError("model recovery snapshot Task/ACK drift")
+        return self._recovery(grant_id).snapshot(
+            task_id=data["task_id"], attempt_id=data["attempt_id"])
+
+    def reconcile_remote_observation(self, data):
+        """Admin-only signed report ingestion; never settle or retry a call."""
+        if (not isinstance(data, dict)
+                or set(data) != {"grant_id", "task_id", "attempt_id",
+                                 "ack_sha256", "evidence"}):
+            raise OrchestrationError("remote reconciliation payload invalid")
+        if self.recovery_trust is None:
+            raise OrchestrationError(
+                "remote provider readback trust independently unconfigured")
+        grant_id = _grant_id(data["grant_id"])
+        receipt, ack = self._consumed(grant_id, allow_revoked=True)
+        if (data["task_id"] != receipt["claims"]["task_id"]
+                or data["ack_sha256"] != fingerprint_json(ack)):
+            raise OrchestrationError("remote reconciliation Task/ACK drift")
+        return self._recovery(grant_id).record_signed_readback(
+            task_id=data["task_id"], attempt_id=data["attempt_id"],
+            receipt=receipt, ack=ack, evidence=data["evidence"],
+            trust=self.recovery_trust)
+
     def spend_snapshot(self, data):
         if not isinstance(data, dict) or set(data) != {"grant_id"}:
             raise OrchestrationError("research spend snapshot payload invalid")
@@ -260,6 +341,9 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
         "/v1/grant/readback": application.readback,
         "/v1/spend/reserve": application.reserve,
         "/v1/spend/quarantine": application.quarantine,
+        "/v1/spend/operation": application.bind_provider_operation,
+        "/v1/spend/attempt": application.attempt_readback,
+        "/v1/spend/reconcile": application.reconcile_remote_observation,
         "/v1/spend/snapshot": application.spend_snapshot,
         "/v1/grant/revoke": application.revoke,
     }
@@ -292,8 +376,9 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
             if operation is None:
                 self._reply(404, {"error": "not found"})
                 return
-            token = (admin_bytes if self.path == "/v1/grant/revoke"
-                     else api_bytes)
+            token = (admin_bytes if self.path in {
+                "/v1/grant/revoke", "/v1/spend/reconcile"
+            } else api_bytes)
             supplied = self.headers.get("Authorization", "")
             if not hmac.compare_digest(supplied.encode("utf-8"),
                                        b"Bearer " + token):
