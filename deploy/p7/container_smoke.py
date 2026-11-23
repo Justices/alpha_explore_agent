@@ -4,7 +4,6 @@ Linux Docker host network is required. No Provider/BRAIN credentials or API
 calls, no production deployment, no paid operations. Run only in CI/operator
 sandbox with a local image built from deploy/p7/Dockerfile.
 """
-import base64
 import http.client
 import ipaddress
 import json
@@ -260,6 +259,14 @@ def main():
                 ["docker", "rm", "-f", name],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 check=False)
+            # Private fixture files were deliberately owned by container UID
+            # 65532; restore CI runner ownership before TemporaryDirectory
+            # performs its automatic secure cleanup.
+            subprocess.run([
+                "sudo", "chown", "-R",
+                f"{os.getuid()}:{os.getgid()}",
+                str(private), str(state),
+            ], check=True, stdout=subprocess.DEVNULL)
 
 
 if __name__ == "__main__":
