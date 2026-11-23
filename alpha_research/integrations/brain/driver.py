@@ -10,7 +10,8 @@ if str(IMPORT_ROOT) not in sys.path:
 
 from alpha_research.integrations.brain.runtime import PlatformRuntime, WorldQuantClient  # noqa: E402
 from alpha_research.integrations.brain.guarded_protocol import (
-    GUARDED_ORCHESTRATION_READS, READONLY_PROBE_COMMANDS,
+    GUARDED_ORCHESTRATION_READS, GUARDED_FORBIDDEN_CLAIMS,
+    READONLY_PROBE_COMMANDS,
     guarded_request_allowed,
 )  # noqa: E402
 from alpha_research.orchestration.research_catalog_protocol import (
