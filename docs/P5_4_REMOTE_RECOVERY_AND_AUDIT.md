@@ -42,7 +42,9 @@ budget, or authorize BRAIN Simulation / Alpha submission.
    freshness, trusted issuer, Task/receipt/ACK/attempt bindings, token count,
    cost envelope and previously recorded provider operation ID. It stores
    the entire signed observation and verdict in an append-only journal.
-6. If the remote report says NOT_FOUND, IN_FLIGHT, UNKNOWN or FAILED,
+6. A NOT_FOUND report must carry zero reported tokens and zero charge;
+   contradictory evidence is rejected before journal ingestion.
+   If the remote report says NOT_FOUND, IN_FLIGHT, UNKNOWN or FAILED,
    the result remains an audit/incident; a later signed SETTLED observation
    may be appended, but neither changes UNKNOWN to an executable state.
    If a claimed charge exceeds the original USD reservation, the audit
@@ -89,7 +91,7 @@ a separately provisioned JSON policy:
 }
 ```
 
-The signer public key must differ from both the Grant-consumer and ledger
+The signer public key must differ from the operator, Grant-consumer and ledger
 readback keys. The service refuses reconciliation when the policy is absent,
 malformed, revoked or does not validate the exact signed readback. This
 optional trust policy never allows live provider dispatch; merely uploading
