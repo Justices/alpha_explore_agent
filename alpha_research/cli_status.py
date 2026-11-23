@@ -1,0 +1,165 @@
+"""Local status projection without model, BRAIN, or provider transport.
+
+State reads remain observational and preserve the CLI's existing JSON shape.
+"""
+import json
+import re
+
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT
+from alpha_research.state.records import ResearchRecordStore
+from alpha_research.qualification.pool import CandidatePool, policy_hash
+from alpha_research.workflows.regular.campaign import campaign_can_resume
+
+
+def run_status_command(args, root, stop_flag):
+    config_path = args.config or root / "config" / "nastu_quant.json"
+    config_status = "loaded"
+    try:
+        pool_config = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(pool_config, dict):
+            raise ValueError("configuration must be an object")
+        current_policy = policy_hash(pool_config)
+    except FileNotFoundError:
+        config_status = "missing"
+        current_policy = policy_hash(DEFAULT_CONFIG)
+    except (OSError, ValueError, TypeError):
+        config_status = "unreadable"
+        current_policy = None
+    runs = root / "runs"
+    unfinished = []
+    if runs.exists():
+        for context in runs.rglob("batch_context.json"):
+            batch_dir = context.parent
+            if (batch_dir / "void.json").exists():
+                continue
+            intent_path = batch_dir / "simulation_intent.json"
+            results_path = batch_dir / "results.json"
+            try:
+                closed = (results_path.exists() and intent_path.exists() and
+                          json.loads(intent_path.read_text(encoding="utf-8")).get(
+                              "status") == "READ_BACK")
+            except (OSError, ValueError):
+                closed = False
+            if not closed:
+                unfinished.append(str(batch_dir))
+                continue
+            prereg_path = batch_dir / "prereg.json"
+            if prereg_path.exists():
+                try:
+                    prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
+                    if prereg.get("remedy_reference"):
+                        diagnosis = json.loads((batch_dir / "diagnosis.json").read_text(
+                            encoding="utf-8"))
+                        if (diagnosis.get("remedy_outcome") or {}).get("status") != "recorded":
+                            unfinished.append(str(batch_dir))
+                except (OSError, ValueError):
+                    unfinished.append(str(batch_dir))
+        for batch_dir in runs.glob("*/*/*/*/*"):
+            if (batch_dir.is_dir() and
+                    re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", batch_dir.name) and
+                    not (batch_dir / "batch_context.json").exists() and
+                    not (batch_dir / "void.json").exists() and
+                    str(batch_dir) not in unfinished):
+                unfinished.append(str(batch_dir))
+    campaign_root = root / "state" / "campaigns"
+    campaigns = []
+    if campaign_root.exists():
+        for path in sorted(campaign_root.glob("*.json")):
+            try:
+                campaigns.append(json.loads(path.read_text(encoding="utf-8")))
+            except (OSError, ValueError):
+                campaigns.append({"path": str(path), "status": "unreadable"})
+    v11_campaigns = []
+    v11_root = root / "state" / "research_v1_1" / "campaign_runs"
+    if v11_root.exists():
+        for path in sorted(v11_root.glob("*.json")):
+            if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
+                continue
+            try:
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                if saved.get("deleted_at"):
+                    continue
+                v11_campaigns.append({
+                    "campaign_id": saved.get("campaign_id"),
+                    "status": saved.get("status"),
+                    "batches_completed": len(saved.get("completed", [])),
+                    "batches_attempted": saved.get("budget", {}).get("used", {}).get("batches"),
+                    "subtasks": saved.get("subtasks", []),
+                    "active_item": saved.get("active_item"),
+                    "resumable": campaign_can_resume(saved),
+                    "has_summary": path.with_name(f"{path.stem}_summary.json").is_file(),
+                    "path": str(path)})
+            except (OSError, ValueError):
+                v11_campaigns.append({"path": str(path), "status": "unreadable"})
+    def _record_summaries(kind):
+        storage_kind = {"candidate_evaluations": "candidate",
+                        "preferred_evaluations": "preferred"}.get(kind, kind)
+        folder = root / "state" / "research_v1_1" / storage_kind
+        output = []
+        if folder.exists():
+            for record_path in sorted(folder.glob("*.json")):
+                try:
+                    item = json.loads(record_path.read_text(encoding="utf-8"))
+                    if storage_kind == "candidate" and item.get("status") != "CANDIDATE":
+                        continue
+                    if storage_kind == "preferred" and item.get("status") != "PREFERRED":
+                        continue
+                    policy_current = (current_policy is not None and
+                                      item.get("policy_sha256") == current_policy)
+                    candidate_status = item.get("candidate_status") or (
+                        item.get("status") if storage_kind == "candidate" else None)
+                    preferred_status = item.get("preferred_status") or (
+                        item.get("status") if storage_kind == "preferred" else None)
+                    if storage_kind == "candidate" and item.get("status") == "CANDIDATE" and not policy_current:
+                        candidate_status = "POLICY_STALE"
+                        preferred_status = "NOT_CANDIDATE"
+                    if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
+                        preferred_status = "NOT_CANDIDATE"
+                    output.append({
+                        "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
+                              item.get("source_id"),
+                        "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
+                        "workflow": item.get("workflow"),
+                        "candidate_status": candidate_status,
+                        "preferred_status": preferred_status,
+                        "policy_current": policy_current,
+                        "candidate_alpha_id": item.get("candidate_alpha_id"),
+                        "status": item.get("status"),
+                        "simulation_intent_ref": item.get("simulation_intent_ref"),
+                        "response_ref": item.get("response_ref"),
+                        "receipt_ref": item.get("receipt_ref") or item.get("readback_ref"),
+                        "audit_ref": item.get("audit_ref"),
+                        "report_ref": item.get("report_ref"),
+                        "path": str(record_path)})
+                except (OSError, ValueError):
+                    output.append({"path": str(record_path), "status": "unreadable"})
+        return output
+    try:
+        if current_policy is None:
+            raise ValueError("current admission policy is unavailable")
+        global_pool = CandidatePool(ResearchRecordStore(root)).build_index(
+            current_policy_sha256=current_policy)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        global_pool = {"status": "unavailable", "reason": type(exc).__name__}
+    print(json.dumps({"global_alpha_pool": global_pool,
+                      "research_config": {"status": config_status, "path": str(config_path)},
+                      "catalog_snapshot_root": str(CATALOG_SNAPSHOT_ROOT),
+                      "stopped": stop_flag.exists(),
+                      "unfinished_batches": unfinished,
+                      "campaigns": campaigns,
+                      "v11_campaigns": v11_campaigns,
+                      "v11_super_runs": _record_summaries("super_run"),
+                      "v11_optimization_sources": _record_summaries("optimization_source"),
+                      "v11_candidate_branches": _record_summaries("candidate_branch"),
+                      "v11_candidates": [
+                          row for row in global_pool.get("entries", [])
+                          if row["candidate_status"] == "CANDIDATE"],
+                      "v11_preferred": [
+                          row for row in global_pool.get("entries", [])
+                          if row["candidate_status"] == "CANDIDATE" and
+                             row["preferred_status"] == "PREFERRED"],
+                      "v11_candidate_evaluations": _record_summaries("candidate_evaluations"),
+                      "v11_preferred_evaluations": _record_summaries("preferred_evaluations")},
+                     ensure_ascii=False))
+    return 0

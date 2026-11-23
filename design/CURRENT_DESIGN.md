@@ -119,9 +119,14 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 详细的运维与证据矩阵参见 [运行手册](../docs/OPERATIONS.md) 和 [验收与发布](../docs/RELEASE_ACCEPTANCE.md)。
 
-## 6. 持久化、重入和恢复语义
+## 6. CLI 与领域编排的模块边界
 
-- CLI 为同一条编排命令复用单一 `MainOrchestrator` 实例，避免多个独立装配入口；统一研究状态使用一个负向发布投影校验器核对 P6/P7 报告，任何伪造的正向授权字段都会触发 `RECONCILIATION_REQUIRED`。\n\n- `MainOrchestrator` 的 Task 状态与 `validate → execute → qualify → collect` 检查点必须在持久化层确认；Task 完成不等于 Candidate 合格。
+`cli.py` 只负责统一入口、命令前置拦截和领域命令装配；`cli_parser.py` 单独定义命令与参数语法，不实例化 Gateway/Model；`cli_orchestration.py` 接管 30 多个审计、准备和 Mock 命令，在单次调用中共享同一个 `MainOrchestrator`；`cli_status.py` 负责完全只读的本地状态与候选索引汇总。CLI 向编排适配层显式注入 Consent Verify/Reserve 操作，以便审计和测试可以保持独立且不旁路鉴权。保留所有既有命令名称、JSON 结果、失败退出码及独立 Live 命令安全约束。
+
+## 7. 持久化、重入和恢复语义
+
+- CLI 为同一条编排命令复用单一 `MainOrchestrator` 实例，避免多个独立装配入口；统一研究状态使用一个负向发布投影校验器核对 P6/P7 报告，任何伪造的正向授权字段都会触发 `RECONCILIATION_REQUIRED`。
+- `MainOrchestrator` 的 Task 状态与 `validate → execute → qualify → collect` 检查点必须在持久化层确认；Task 完成不等于 Candidate 合格。
 - Regular Campaign 的 Dataset/组合/批次，Super/Optimization 的模拟 Intent，模型 Attempt、授权消费和独立费用账本为**不同状态机**；不能为了复用接口合并为单一可重试状态。
 - 非幂等请求前持久化 Intent，返回未知时留在 UNKNOWN/blocked。恢复凭原请求和已验证的独立读回/收据进入，不能替换收到过但不可核实的结果。
 - `state/fingerprint.py` 的普通 SHA-256 只用于检测普通修改；攻击者可改写本地文件时不能视为远程真实性证明。
@@ -129,7 +134,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 详见 [State 模型](RESEARCH_STATE_V1_1.md)、[重构/并发边界](RESEARCH_REFACTOR_BOUNDARIES.md) 和 [统一调度](MAIN_ORCHESTRATOR.md)。
 
-## 7. 真实实施状态与验收证据
+## 8. 真实实施状态与验收证据
 
 | 维度 | 代码/离线状态 | 尚未证明 |
 | --- | --- | --- |
@@ -141,7 +146,7 @@ BRAIN Gateway 与 Driver 对任务、批准研究范围、Catalog 命令白名�
 
 截至 `e0f76f9` 提交，GitHub Actions [主流程离线验收](https://github.com/Justices/alpha_explore_agent/actions/runs/45188802861) 五个 Job 和 [隔离 Authority 验收](https://github.com/Justices/alpha_explore_agent/actions/runs/45188802903) 三个 Job 全部成功；Ubuntu 全量回归为 **959 tests, OK**。这是**与该提交绑定的离线证据**，不证明真实 BRAIN/Provider 部署。之后的修复应在对应提交的 CI 结束后再补入验收结论。
 
-## 8. 统一文档结构
+## 9. 统一文档结构
 
 | 文档 | 用途 |
 | --- | --- |

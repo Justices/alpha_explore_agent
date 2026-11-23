@@ -76,3 +76,7 @@ docker compose -f deploy/p7/compose.yaml ps
 | 本地 CI 全绿 | 只说明离线契约通过；继续取得独立部署、账单、真实 BRAIN Session、真实 Canary 和 Simulation 分别授权 |
 
 发布前验收责任、代码和外部边界详见 [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md)，系统功能与模块 ownership 详见 [CURRENT_DESIGN.md](../design/CURRENT_DESIGN.md)。
+
+## 本地 CLI 的职责和安全边界
+
+`cli_parser.py` 只定义参数；`cli_orchestration.py` 负责研究准备/授权审计/模拟演练命令，沿用离线封闭和鉴权拒绝语义；`cli_status.py` 只聚合 state-root 内已有记录。`cli.py` 保留实时 BRAIN/模型命令的各自显式安全条件；CLI 拆分不意味着这些入口获得新的生产执行许可。
