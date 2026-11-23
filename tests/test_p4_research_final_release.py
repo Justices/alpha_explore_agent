@@ -613,7 +613,7 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertEqual(ledger(3_000, 5_000).snapshot()["reserved_attempts"], 0)
 
 
-    def _p5_service(self, *, global_cap=9_000):
+    def _p5_service(self, *, global_cap=9_000, recovery_trust=None):
         from threading import Thread
         from alpha_research.orchestration.research_authority_transport import (
             ResearchAuthorityApplication, make_loopback_authority_server,
@@ -630,7 +630,8 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
             ledger_id="remote-ledger",
             ledger_issuer_id="separate-ledger",
             ledger_key_id="ledger-key",
-            global_max_usd_micros=global_cap)
+            global_max_usd_micros=global_cap,
+            recovery_trust=recovery_trust)
         app.initialize_schema()
         api_token = "api-" + "1" * 48
         admin_token = "admin-" + "2" * 48
@@ -1030,6 +1031,262 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 grant_id="a" * 32, task_id=self.task_id,
                 attempt_id="a" * 32, ack_sha256=fingerprint_json(inputs["ack"]))
         self.assertEqual(client.snapshot("a" * 32)["by_status"], {"UNKNOWN": 1})
+
+
+    def _p5_recovery_fixture(self, *, consume=True):
+        from alpha_research.orchestration.research_global_consumer import (
+            build_global_consumption_request,
+        )
+        from alpha_research.state.fingerprint import fingerprint_json
+        private = Ed25519PrivateKey.generate()
+        trust = {
+            "schema_version": 1, "revoked_evidence": [],
+            "issuers": {"remote-provider": {
+                "key_id": "provider-readback-key",
+                "public_key_b64": _pub(private),
+                "enabled": True, "operations": ["observe_research_model_outcome"],
+            }},
+        }
+        app, server, client, _, api, admin = self._p5_service(
+            global_cap=20_000, recovery_trust=trust)
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        ack = client.consume(handoff, self.receipt)["ack"] if consume else None
+        operation_id = "chatcmpl-offline-" + "5" * 32
+
+        def readback(*, attempt_id="5" * 32, provider_operation_id=None,
+                     remote_status="SETTLED", prompt_tokens=700,
+                     completion_tokens=500, charged_usd_micros=3400,
+                     evidence_id=None):
+            clock = datetime.now(timezone.utc)
+            signed = {
+                "schema_version": 1,
+                "operation": "observe_research_model_outcome",
+                "evidence_id": evidence_id or "f" * 32,
+                "task_id": self.task_id,
+                "research_receipt_sha256": fingerprint_json(self.receipt),
+                "issuer_id": "remote-provider",
+                "key_id": "provider-readback-key",
+                "issued_at": (clock - timedelta(seconds=1)).isoformat(),
+                "expires_at": (clock + timedelta(seconds=90)).isoformat(),
+                "grant_ack_sha256": fingerprint_json(ack),
+                "model_attempt_id": attempt_id,
+                "provider_operation_id": (provider_operation_id
+                                          if provider_operation_id is not None
+                                          else operation_id),
+                "remote_status": remote_status,
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": prompt_tokens + completion_tokens,
+                "charged_usd_micros": charged_usd_micros,
+                "readback_source": "REMOTE_PROVIDER_READBACK",
+            }
+            return {
+                "claims": signed,
+                "signature": base64.b64encode(private.sign(
+                    b"alpha_research/research-model-readback/v1:"
+                    + canonical_json_bytes(signed))).decode(),
+            }
+
+        def reserve(attempt="5" * 32):
+            return client.reserve(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id=attempt, input_tokens=700,
+                max_output_tokens=900,
+                ack_sha256=fingerprint_json(ack))
+
+        def inspect(attempt="5" * 32):
+            return client.attempt_readback(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id=attempt, ack_sha256=fingerprint_json(ack))
+
+        def reconcile(evidence, attempt="5" * 32):
+            return client.reconcile_remote_observation(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id=attempt, ack_sha256=fingerprint_json(ack),
+                evidence=evidence)
+
+        return app, client, trust, ack, readback, reserve, inspect, reconcile
+
+    def test_p5_4_sdk_operation_persists_without_billing_settlement(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        from alpha_research.state.fingerprint import fingerprint_json
+        _app, client, _trust, _ack, _signed, _reserve, _inspect, _reconcile = (
+            self._p5_recovery_fixture())
+        # Use an existing P5.3 helper to build signed tariff/SDK claims,
+        # but its own authority and Grant are independent. Do not merge them.
+        # Instead, persist a matching mock operation on the same recovery DB.
+        reserve = client.reserve(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="5" * 32, input_tokens=700, max_output_tokens=900,
+            ack_sha256=fingerprint_json(_ack))
+        self.assertEqual(reserve["reserved_usd_micros"], 5000)
+        bound = client.bind_provider_operation(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="5" * 32, ack_sha256=fingerprint_json(_ack),
+            provider_operation_id="chatcmpl-offline-" + "5" * 32)
+        self.assertFalse(bound["permission_to_dispatch"])
+        state = _inspect()
+        self.assertEqual(state["provider_operation_id"],
+                         "chatcmpl-offline-" + "5" * 32)
+        self.assertEqual(state["provider_operation_source"], "SDK_REPORTED")
+        self.assertEqual(state["spend_state"], "RESERVED")
+        self.assertFalse(state["billing_independently_settled"])
+        with self.assertRaises(OrchestrationError):
+            client.bind_provider_operation(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="5" * 32, ack_sha256=fingerprint_json(_ack),
+                provider_operation_id="chatcmpl-offline-" + "5" * 32)
+        self.assertEqual(_inspect()["signed_observation_count"], 0)
+
+    def test_p5_4_signed_observation_never_frees_budget_or_retries(self):
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        from alpha_research.state.fingerprint import fingerprint_json
+        reserve()
+        first = reconcile(signed())
+        self.assertEqual(first["status"],
+                         "REMOTE_OBSERVATION_COMMITTED_AUDIT_ONLY")
+        self.assertEqual(first["reconciliation_verdict"],
+                         "REMOTE_SETTLED_SIGNATURE_VERIFIED_AUDIT_ONLY")
+        self.assertFalse(first["spend_settled"])
+        self.assertFalse(first["provider_invoice_independently_verified"])
+        snap = inspect()
+        self.assertEqual(snap["spend_state"], "RESERVED")
+        self.assertEqual(snap["signed_observation_count"], 1)
+        self.assertEqual(snap["provider_operation_source"], "SIGNED_READBACK")
+        self.assertFalse(snap["safe_to_retry"])
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"RESERVED": 1})
+        with self.assertRaises(OrchestrationError):
+            reconcile(signed())
+        with self.assertRaises(OrchestrationError):
+            reserve()
+        self.assertEqual(inspect()["signed_observation_count"], 1)
+        # A new standalone application process observes the same durable state.
+        from alpha_research.orchestration.research_authority_transport import (
+            ResearchAuthorityApplication,
+        )
+        restarted = ResearchAuthorityApplication(
+            app.path, consumer_signer=app.grants.signer,
+            ledger_signer=app.signer, operator_trust=self.operator_trust,
+            consumer_id="consumer", consumer_key_id="consumer-key",
+            ledger_id="remote-ledger",
+            ledger_issuer_id="separate-ledger",
+            ledger_key_id="ledger-key",
+            global_max_usd_micros=20_000, recovery_trust=trust)
+        restarted.initialize_schema()
+        stored = restarted.attempt_readback({
+            "grant_id": "a" * 32, "task_id": self.task_id,
+            "attempt_id": "5" * 32, "ack_sha256": fingerprint_json(ack),
+        })
+        self.assertEqual(stored["signed_observation_count"], 1)
+        self.assertFalse(stored["safe_to_retry"])
+
+    def test_p5_4_unknown_missing_operation_and_later_readback(self):
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        from alpha_research.state.fingerprint import fingerprint_json
+        reserve()
+        client.quarantine(
+            grant_id="a" * 32, task_id=self.task_id, attempt_id="5" * 32,
+            ack_sha256=fingerprint_json(ack))
+        self.assertIsNone(inspect()["provider_operation_id"])
+        # NOT_FOUND never proves that it is safe to retry or that a remote
+        # provider operation exists. Later signed SETTLED stays audit-only.
+        first = reconcile(signed(
+            remote_status="NOT_FOUND", evidence_id="1" * 32))
+        self.assertIn("UNCERTAIN", first["reconciliation_verdict"])
+        self.assertIsNone(inspect()["provider_operation_id"])
+        second = reconcile(signed(
+            remote_status="SETTLED", evidence_id="2" * 32))
+        self.assertEqual(second["status"],
+                         "REMOTE_OBSERVATION_COMMITTED_AUDIT_ONLY")
+        status = inspect()
+        self.assertEqual(status["signed_observation_count"], 2)
+        self.assertEqual(status["spend_state"], "UNKNOWN")
+        self.assertEqual(status["provider_operation_source"], "SIGNED_READBACK")
+        self.assertFalse(status["safe_to_retry"])
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"UNKNOWN": 1})
+
+    def test_p5_4_rejects_forged_readback_cross_task_and_operation_drift(self):
+        from alpha_research.state.fingerprint import fingerprint_json
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        reserve()
+        client.bind_provider_operation(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="5" * 32, ack_sha256=fingerprint_json(ack),
+            provider_operation_id="chatcmpl-offline-" + "5" * 32)
+        for mutate in (
+            lambda x: x["claims"].update({"task_id": "e" * 32}),
+            lambda x: x["claims"].update({"charged_usd_micros": 1}),
+            lambda x: x["claims"].update({"model_attempt_id": "e" * 32}),
+            lambda x: x["claims"].update({"provider_operation_id": "unrelated"}),
+        ):
+            evidence = signed()
+            mutate(evidence)
+            with self.subTest(mutate=mutate):
+                with self.assertRaises(OrchestrationError):
+                    reconcile(evidence)
+        with self.assertRaises(OrchestrationError):
+            client.reconcile_remote_observation(
+                grant_id="a" * 32, task_id="e" * 32,
+                attempt_id="5" * 32, ack_sha256=fingerprint_json(ack),
+                evidence=signed())
+        self.assertEqual(inspect()["signed_observation_count"], 0)
+
+    def test_p5_4_requires_distinct_recovery_trust_and_admin_role(self):
+        import base64 as b64
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        from alpha_research.orchestration.research_authority_transport import (
+            ResearchAuthorityApplication,
+        )
+        from alpha_research.state.fingerprint import fingerprint_json
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        reserve()
+        plain_client = LoopbackAuthorityClient(
+            "127.0.0.1", client.port, api_token=client.api_token)
+        with self.assertRaises(OrchestrationError):
+            plain_client.reconcile_remote_observation(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="5" * 32, ack_sha256=fingerprint_json(ack),
+                evidence=signed())
+        bad = copy.deepcopy(trust)
+        bad["issuers"]["remote-provider"]["public_key_b64"] = (
+            _pub(app.grants.signer))
+        with self.assertRaises(OrchestrationError):
+            ResearchAuthorityApplication(
+                app.path, consumer_signer=app.grants.signer,
+                ledger_signer=app.signer, operator_trust=self.operator_trust,
+                consumer_id="consumer", consumer_key_id="consumer-key",
+                ledger_id="remote-ledger",
+                ledger_issuer_id="separate-ledger",
+                ledger_key_id="ledger-key",
+                global_max_usd_micros=20_000, recovery_trust=bad)
+        client.revoke("a" * 32)
+        result = reconcile(signed())
+        self.assertFalse(result["spend_settled"])
+        self.assertFalse(inspect()["safe_to_retry"])
+
+    def test_p5_4_overlimit_incident_remains_held(self):
+        app, client, trust, ack, signed, reserve, inspect, reconcile = (
+            self._p5_recovery_fixture())
+        reserve()
+        report = reconcile(signed(
+            charged_usd_micros=6000, evidence_id="3" * 32))
+        self.assertEqual(report["reconciliation_verdict"],
+                         "RECONCILIATION_REQUIRED_RESERVATION_EXCEEDED")
+        self.assertEqual(inspect()["spend_state"], "RESERVED")
+        self.assertFalse(report["reservation_released"])
+        self.assertFalse(report["safe_to_retry"])
 
 
 if __name__ == "__main__":
