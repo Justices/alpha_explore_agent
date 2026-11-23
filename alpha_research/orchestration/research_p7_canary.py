@@ -8,17 +8,13 @@ from datetime import datetime, timezone
 
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_p5_release import _check_monitor
+from alpha_research.orchestration.research_p7_contracts import (
+    BILLING_STATUSES, BRAIN_STATUSES, canary_status,
+)
 from alpha_research.state.fingerprint import fingerprint_json
 
 _MONOTONIC = ("consumed_grants", "revoked_grants", "total_attempts",
               "total_committed_usd_micros", "signed_recovery_observations")
-_BILLING = {"P7_INVOICE_MATCHED_UNTRUSTED_INPUT", "P7_RECONCILIATION_REQUIRED"}
-_BRAIN = {
-    "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE",
-    "P7_BRAIN_READ_SCOPE_DENIED",
-    "P7_BRAIN_READ_STOP_LATCHED",
-    "P7_BRAIN_READ_MONITOR_UNAVAILABLE",
-}
 
 
 def _timestamp(value):
@@ -110,7 +106,7 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         if (not isinstance(billing_report, dict)
                 or billing_report.get("task_id") != task_id
                 or not isinstance(billing_report.get("status"), str)
-                or billing_report["status"] not in _BILLING
+                or billing_report["status"] not in BILLING_STATUSES
                 or billing_report.get("permission_to_dispatch") is not False
                 or billing_report.get("provider_invoice_independently_verified") is not False):
             raise OrchestrationError("P7 Canary billing evidence invalid")
@@ -120,7 +116,7 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
         if (not isinstance(brain_report, dict)
                 or brain_report.get("task_id") != task_id
                 or not isinstance(brain_report.get("status"), str)
-                or brain_report["status"] not in _BRAIN
+                or brain_report["status"] not in BRAIN_STATUSES
                 or brain_report.get("permission_to_dispatch") is not False
                 or brain_report.get("brain_read_invoked") is not False
                 or brain_report.get("platform_session_independently_authenticated") is not False):
@@ -132,9 +128,7 @@ def inspect_p7_canary_supervision(*, task_id, monitor=None, observed_at=None,
     # Every incident is a stop/veto recommendation, never an autonomous
     # irreversible administrative action or a live-dispatch capability.
     stop_required = bool(reasons)
-    status = ("P7_CANARY_STOP_ALREADY_LATCHED" if stop_latched
-              else "P7_CANARY_STOP_REQUIRED" if stop_required
-              else "P7_CANARY_OFFLINE_OBSERVATION_ONLY")
+    status = canary_status(stop_latched, stop_required)
     return {
         "schema_version": 1, "task_id": task_id, "status": status,
         "monitor_sha256": digest,

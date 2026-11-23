@@ -5,6 +5,7 @@ No SDK, credentials, network, retries, ledger mutation, or release permission.
 """
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_model_cost_boundary import ceil_cost_usd_micros
+from alpha_research.orchestration.research_p7_contracts import PROVIDER_HOSTNAMES
 from alpha_research.state.fingerprint import fingerprint_json
 
 
@@ -26,8 +27,7 @@ def inspect_p7_provider_invoice_batch(*, task_id, provider_hostname,
     """
     if not isinstance(task_id, str) or not task_id.strip():
         raise OrchestrationError("P7 billing task identity missing")
-    if provider_hostname not in (
-            "api.deepseek.com", "open.bigmodel.cn", "api.moonshot.cn"):
+    if not isinstance(provider_hostname, str) or provider_hostname not in PROVIDER_HOSTNAMES:
         raise OrchestrationError("P7 billing provider identity invalid")
     if currency != "USD" or not isinstance(invoice_id, str) or not invoice_id.strip():
         raise OrchestrationError("P7 billing invoice identity invalid")

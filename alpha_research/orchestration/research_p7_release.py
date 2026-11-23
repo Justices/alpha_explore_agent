@@ -11,21 +11,13 @@ from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.research_p6_readiness import (
     inspect_p6_integrated_release,
 )
+from alpha_research.orchestration.research_p7_contracts import (
+    BILLING_STATUSES, BRAIN_STATUSES, CANARY_STATUSES, PROVIDER_HOSTNAMES,
+    brain_read_status, canary_status,
+)
 from alpha_research.state.fingerprint import fingerprint_json
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
-_BILLING = {"P7_INVOICE_MATCHED_UNTRUSTED_INPUT", "P7_RECONCILIATION_REQUIRED"}
-_BRAIN = {
-    "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE",
-    "P7_BRAIN_READ_SCOPE_DENIED",
-    "P7_BRAIN_READ_STOP_LATCHED",
-    "P7_BRAIN_READ_MONITOR_UNAVAILABLE",
-}
-_CANARY = {
-    "P7_CANARY_STOP_ALREADY_LATCHED", "P7_CANARY_STOP_REQUIRED",
-    "P7_CANARY_OFFLINE_OBSERVATION_ONLY",
-}
-_PROVIDER_HOSTS = {"api.deepseek.com", "open.bigmodel.cn", "api.moonshot.cn"}
 _SCOPE_FIELDS = {"region", "delay", "universe", "instrument_type"}
 
 
@@ -46,13 +38,13 @@ def _check_billing(report, task_id):
         "automatic_retry_allowed"))
     rows = report.get("findings")
     if (not isinstance(report.get("status"), str)
-            or report["status"] not in _BILLING or not isinstance(rows, list)
+            or report["status"] not in BILLING_STATUSES or not isinstance(rows, list)
             or not rows or len(rows) != report.get("operation_count")
             or type(report.get("operation_count")) is not int
             or len(rows) > 10000):
         raise OrchestrationError("P7 billing report shape invalid")
     if (not isinstance(report.get("provider_hostname"), str)
-            or report["provider_hostname"] not in _PROVIDER_HOSTS
+            or report["provider_hostname"] not in PROVIDER_HOSTNAMES
             or not isinstance(report.get("invoice_id"), str)
             or not report["invoice_id"].strip()
             or report.get("currency") != "USD"
@@ -108,7 +100,7 @@ def _check_brain(report, task_id, task):
         "automatic_retry_allowed"))
     frames = report.get("frame_digests")
     if (not isinstance(report.get("status"), str)
-            or report["status"] not in _BRAIN
+            or report["status"] not in BRAIN_STATUSES
             or not isinstance(frames, list)
             or not 1 <= len(frames) <= 64
             or type(report.get("frame_count")) is not int
@@ -129,10 +121,7 @@ def _check_brain(report, task_id, task):
             or not isinstance(stop, str)
             or stop not in {"ARMED", "STOPPED", "NOT_SUPPLIED"}):
         raise OrchestrationError("P7 BRAIN evidence state invalid")
-    expected = ("P7_BRAIN_READ_SCOPE_DENIED" if not valid else
-                "P7_BRAIN_READ_STOP_LATCHED" if stop == "STOPPED" else
-                "P7_BRAIN_READ_MONITOR_UNAVAILABLE" if stop == "NOT_SUPPLIED" else
-                "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE")
+    expected = brain_read_status(valid, stop)
     if report["status"] != expected or admitted is not (valid and stop == "ARMED"):
         raise OrchestrationError("P7 BRAIN admission verdict inconsistent")
     scope = report.get("scope")
@@ -159,7 +148,7 @@ def _check_canary(report, task_id):
         "automatic_retry_allowed"))
     reasons = report.get("reasons")
     if (not isinstance(report.get("status"), str)
-            or report["status"] not in _CANARY
+            or report["status"] not in CANARY_STATUSES
             or not isinstance(reasons, list)
             or len(reasons) > 256
             or any(not isinstance(value, str) or not value
@@ -201,11 +190,7 @@ def _check_canary(report, task_id):
             raise OrchestrationError("P7 Canary missing monitor has heartbeat age")
     elif type(age) is not int or age < -5:
         raise OrchestrationError("P7 Canary heartbeat age invalid")
-    expected_status = (
-        "P7_CANARY_STOP_ALREADY_LATCHED"
-        if report["stop_latched"] else
-        "P7_CANARY_STOP_REQUIRED" if reasons else
-        "P7_CANARY_OFFLINE_OBSERVATION_ONLY")
+    expected_status = canary_status(report["stop_latched"], bool(reasons))
     if report["status"] != expected_status:
         raise OrchestrationError("P7 Canary status does not match incident state")
 

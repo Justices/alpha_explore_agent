@@ -10,6 +10,7 @@ from alpha_research.orchestration.research_driver_session import (
     inspect_driver_session_evidence, driver_read_frame_allowed,
 )
 from alpha_research.orchestration.research_p5_release import _check_monitor
+from alpha_research.orchestration.research_p7_contracts import brain_read_status
 from alpha_research.state.fingerprint import fingerprint_json, canonical_json_bytes
 
 _HEX64 = re.compile(r"[0-9a-f]{64}\Z")
@@ -59,14 +60,7 @@ def inspect_p7_brain_read_session(orchestrator, task_id, receipt, ack,
         monitor_state = authority_monitor["stop_state"]
     stopped = monitor_state == "STOPPED"
     allowed = valid and monitor_state == "ARMED" and not stopped
-    if not valid:
-        status = "P7_BRAIN_READ_SCOPE_DENIED"
-    elif stopped:
-        status = "P7_BRAIN_READ_STOP_LATCHED"
-    elif monitor_state == "NOT_SUPPLIED":
-        status = "P7_BRAIN_READ_MONITOR_UNAVAILABLE"
-    else:
-        status = "P7_BRAIN_READ_FRAME_AUDITED_NO_LIVE"
+    status = brain_read_status(valid, monitor_state)
     return {
         "schema_version": 1, "task_id": task_id, "status": status,
         "session_evidence_sha256": fingerprint_json(signed_session),
@@ -104,9 +98,20 @@ def inspect_p7_brain_readback_observation(session_report, *, frame_index,
             or session_report.get("read_only_frames_valid") is not True
             or session_report.get("local_offline_admission_passed") is not True
             or session_report.get("authority_stop_state") != "ARMED"
+            or not isinstance(session_report.get("task_id"), str)
+            or not isinstance(session_report.get("scope"), dict)
+            or set(session_report["scope"]) != {"region", "delay", "universe",
+                                                "instrument_type"}
+            or type(session_report["scope"]["delay"]) is not int
+            or session_report["scope"]["instrument_type"] != "EQUITY"
+            or not isinstance(session_report["scope"]["region"], str)
+            or not isinstance(session_report["scope"]["universe"], str)
             or not isinstance(session_report.get("frame_digests"), list)
             or not 1 <= len(session_report["frame_digests"]) <= _MAX_FRAMES
             or session_report.get("frame_count") != len(session_report["frame_digests"])
+            or any(not isinstance(digest, str)
+                   or _HEX64.fullmatch(digest) is None
+                   for digest in session_report["frame_digests"])
             or type(frame_index) is not int
             or not 0 <= frame_index < len(session_report["frame_digests"])):
         raise OrchestrationError("P7 BRAIN readback requires audited frame")
