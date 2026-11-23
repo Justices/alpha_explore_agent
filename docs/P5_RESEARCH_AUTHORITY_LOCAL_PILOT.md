@@ -99,6 +99,9 @@ and the appropriate Bearer token:
 | /v1/spend/reserve | API | Task/ACK-bound atomic budget reservation, no SDK invocation |
 | /v1/spend/snapshot | API | Read a consumed Grant's committed usage |
 | /v1/spend/quarantine | API | Mark an ambiguous attempt UNKNOWN permanently; keep budget committed |
+| /v1/spend/operation | API | Persist unique SDK-reported operation ID after reservation |
+| /v1/spend/attempt | API | Read Task-bound attempt status after restart/revocation |
+| /v1/spend/reconcile | Admin | Append independently signed observation without settling spend |
 | /v1/grant/revoke | Admin | Revoke Grant; no new reservations or readback |
 | /healthz | Anonymous localhost | Liveness only; no authority |
 
@@ -106,6 +109,11 @@ Responses deliberately contain **permission_to_dispatch=false**.
 A remote transport should use TLS/mTLS and independently authenticated
 service identity; **do not forward the pilot port over an untrusted
 network, and do not add live SDK or BRAIN calls to this server**.
+
+For P5.4 only, the authority config may include an optional
+`recovery_trust_file` with an absolute path to independently configured
+Ed25519 public-key trust. It never enables real provider access. See
+[P5.4 recovery contract](P5_4_REMOTE_RECOVERY_AND_AUDIT.md).
 
 ## P5.2 Driver boundary
 
