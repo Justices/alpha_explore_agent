@@ -920,7 +920,9 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 "completion_tokens": 500,
                 "finish_reason": "stop",
             },
-            "now": self.now,
+            # ACK is issued by the real loopback service *after* setUp().
+            # Audit at the current clock, never backdate before consumption.
+            "now": datetime.now(timezone.utc),
         }
 
     def test_p5_3_real_sdk_mock_transport_uses_budget_and_reports_usage(self):
