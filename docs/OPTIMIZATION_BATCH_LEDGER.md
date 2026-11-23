@@ -133,3 +133,21 @@ commits and must not be used to claim this batch has passed.
 This queued acceptance phase should only begin **after** all desired code
 optimization changes are complete; passing CI cannot substitute for live
 provider/BRAIN authorization.
+
+## P7.3–P7.5 — Complete module implementation handoff
+
+- **P7.3 BRAIN read-only protocol:** P4.26 signed Task/ACK session observation, strict P4.17 frame allowlist, P5 independent Stop gate, bounded batch uniqueness and caller-supplied response lineage. No BRAIN credential/session is opened, and no live read permission is granted.
+- **P7.4 Canary supervision:** P5 monitor schema, fresh heartbeat, STOPPED latch, UNKNOWN attempts, budget alarms, monotonicity and cross-report drift feed deterministic stop decisions; admin Stop is not invoked automatically.
+- **P7.5 integrated acceptance:** P7.2 integer billing arithmetic, P7.3 signed-session frame evidence, P7.4 Stop telemetry and P6 negative blockers are correlated; top-level release gate and research control-plane status include P7.5. Production is always blocked.
+
+Implementation files: `research_p7_brain_read.py`, `research_p7_canary.py`, `research_p7_release.py`, `research_p7_billing.py`; regression modules: `test_p7_billing.py` and `test_p7_integrated_release.py`.
+
+### Acceptance debt (do not mark as validated without actual run)
+
+- Compile/import/static checks for the changed files and package layout.
+- P7.2–7.5 focused offline tests and P4/P5/P6 compatibility.
+- Complete Regular/Super/Optimization research, recovery and PPA suites.
+- Linux/Windows/macOS CI, dependency versions, no-live-no-retry assertions.
+- Independent real Provider invoices, authenticated BRAIN read sessions and supervised Canary are **external deployment prerequisites**, not code-optimization tasks.
+
+The implementation batch is handed off for unified offline acceptance. No live Provider request, BRAIN Simulation, Alpha submission, PR merge or authorization change has been performed.
