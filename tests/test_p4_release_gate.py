@@ -52,6 +52,8 @@ class ReleaseGateOfflineTests(unittest.TestCase):
         self.assertFalse(report["production_authorized"])
         self.assertFalse(report["brain_simulation_authorized"])
         self.assertFalse(report["model_call_authorized"])
+        self.assertIs(report["brain_read_authorized"], False)
+        self.assertIs(report["permission_to_dispatch"], False)
         self.assertFalse(report["alpha_submission_authorized"])
         self.assertFalse(report["automatic_retry_allowed"])
         self.assertFalse(report["provider_invoked"])
@@ -112,6 +114,8 @@ class ReleaseGateOfflineTests(unittest.TestCase):
                       report["blockers"])
         self.assertNotIn("simulation_dispatch", report["components"])
         self.assertFalse(report["alpha_submission_authorized"])
+        self.assertIs(report["brain_read_authorized"], False)
+        self.assertIs(report["permission_to_dispatch"], False)
 
     def _local_probe(self, *, region="USA", universe="TOP3000"):
         return {

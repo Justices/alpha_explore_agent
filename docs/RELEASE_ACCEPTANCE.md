@@ -47,3 +47,7 @@ python3 -m unittest discover -s tests -v
 ## 五、变更管理
 
 每次改造按**模块/故障模式**组织：修改代码与对应负例 → 验证静态契约 → 全量离线回归及跨平台 CI → 对比 Git diff → 审核真实外部缺口。记录 Head SHA、CI run、测试数及异常分类，不以历史开发阶段的完成状态代替当前能力。相关日常操作见 [OPERATIONS.md](OPERATIONS.md)。
+
+## 对外只读发布报告的负向权限契约
+
+顶层 `inspect_production_release_gate` 和各研究子模块都显式输出 `permission_to_dispatch=false`、`brain_read_authorized=false`、`model_call_authorized=false`、`brain_simulation_authorized=false`、`alpha_submission_authorized=false`、`automatic_retry_allowed=false`；不能依赖“字段缺失代表 false”的消费方默认值。CLI/状态报告继续使用同一负向约定。Canary 心跳保留 `monitor_age_microseconds` 与 `heartbeat_limit_seconds`，从而可验证阈值边缘的状态声明。此契约只验证审计报告一致性，不是独立第三方签名。
