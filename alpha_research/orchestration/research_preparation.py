@@ -17,7 +17,7 @@ from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.orchestration.domain_mock import (
     DomainMockGateway, DomainMockModel, mock_domain_boundary,
 )
-from alpha_research.orchestration.engine import MainOrchestrator, OrchestrationError
+from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.orchestration.manifest_builder import (
     inspect_generated_manifest, make_agent_preparation_handoff,
     read_generated_manifest,
