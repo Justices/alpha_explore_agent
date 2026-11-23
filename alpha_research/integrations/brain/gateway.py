@@ -110,12 +110,38 @@ class Gateway:
             self.proc.stdin.write(json.dumps(self._credentials) + "\n")
             self.proc.stdin.flush()
             self._credentials = None
-        self.auth_info = self._read_response()
-        if not self.auth_info.get("ok"):
-            # Driver startup responses may contain provider details. Do not
-            # echo raw authentication payloads into CLI errors or audit logs.
-            raise GatewayError("platform runtime unavailable; authentication or session initialization failed")
-        return self.auth_info
+        try:
+            self.auth_info = self._read_response()
+            if not isinstance(self.auth_info, dict) or not self.auth_info.get("ok"):
+                raise GatewayError("platform runtime did not become ready")
+            return self.auth_info
+        except Exception as exc:
+            # Never retain a failed child process holding a credential/session
+            # and never relay raw driver responses into agent logs.
+            self._stop_driver()
+            raise GatewayError(
+                "platform runtime unavailable; authentication or session initialization failed"
+            ) from exc
+
+    def _stop_driver(self):
+        proc = self.proc
+        self.proc = None
+        self.auth_info = None
+        if proc is None:
+            return
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait(timeout=5)
+        finally:
+            for stream in (getattr(proc, "stdin", None),
+                           getattr(proc, "stdout", None)):
+                if stream is not None:
+                    stream.close()
 
     def _read_response(self) -> dict:
         line = self.proc.stdout.readline()
@@ -189,5 +215,7 @@ class Gateway:
         if self.proc and self.proc.poll() is None:
             try:
                 self._send({"cmd": "shutdown"})
-            finally:
-                self.proc.wait(timeout=10)
+            except (OSError, ValueError, GatewayError):
+                # A closed pipe or broken child must not prevent cleanup.
+                pass
+        self._stop_driver()
