@@ -1320,5 +1320,173 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.assertEqual(inspect()["spend_state"], "RESERVED")
 
 
+    def test_p5_5_stop_before_consumption_latches_across_restart(self):
+        from alpha_research.orchestration.research_canary_control_reference import (
+            ReferenceResearchCanaryControl,
+        )
+        app, _server, client, _, _api, _admin = self._p5_service()
+        empty = client.canary_monitor()
+        self.assertEqual(empty["stop_state"], "ARMED")
+        self.assertIn("GLOBAL_SPEND_POLICY_NOT_INITIALIZED", empty["alerts"])
+        stopped = client.canary_stop()
+        self.assertEqual(stopped["status"], "CANARY_GLOBAL_STOP_LATCHED")
+        self.assertFalse(stopped["permission_to_dispatch"])
+        with self.assertRaises(OrchestrationError):
+            client.canary_stop()
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        with self.assertRaises(OrchestrationError):
+            client.consume(handoff, self.receipt)
+        restored = ReferenceResearchCanaryControl(app.path)
+        restored.initialize_schema()
+        self.assertEqual(restored.snapshot()["stop_state"], "STOPPED")
+        with self.assertRaises(OrchestrationError):
+            restored.assert_armed()
+
+    def test_p5_5_stop_blocks_new_spend_preserves_recovery(self):
+        from alpha_research.state.fingerprint import fingerprint_json
+        _app, client, inputs = self._p5_sdk_inputs()
+        ack_hash = fingerprint_json(inputs["ack"])
+        client.reserve(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, input_tokens=700,
+            max_output_tokens=900, ack_sha256=ack_hash)
+        client.canary_stop()
+        with self.assertRaises(OrchestrationError):
+            client.reserve(
+                grant_id="a" * 32, task_id=self.task_id,
+                attempt_id="2" * 32, input_tokens=700,
+                max_output_tokens=900, ack_sha256=ack_hash)
+        state = client.attempt_readback(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, ack_sha256=ack_hash)
+        self.assertEqual(state["spend_state"], "RESERVED")
+        client.quarantine(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, ack_sha256=ack_hash)
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"UNKNOWN": 1})
+        self.assertEqual(client.canary_monitor()["stop_state"], "STOPPED")
+        with self.assertRaises(OrchestrationError):
+            client.canary_preflight(
+                grant_id="a" * 32, task_id=self.task_id,
+                ack_sha256=ack_hash)
+
+    def test_p5_5_stop_requires_independent_admin_token(self):
+        from alpha_research.orchestration.research_authority_client import (
+            LoopbackAuthorityClient,
+        )
+        app, server, client, _, api, admin = self._p5_service()
+        no_admin = LoopbackAuthorityClient(
+            "127.0.0.1", server.server_address[1], api_token=api)
+        self.assertEqual(no_admin.canary_monitor()["stop_state"], "ARMED")
+        with self.assertRaises(OrchestrationError):
+            no_admin.canary_stop()
+        wrong_admin = LoopbackAuthorityClient(
+            "127.0.0.1", server.server_address[1],
+            api_token=api, admin_token="wrong-" + "5" * 48)
+        with self.assertRaises(OrchestrationError):
+            wrong_admin.canary_stop()
+        self.assertEqual(client.canary_monitor()["stop_state"], "ARMED")
+        self.assertEqual(client.canary_stop()["stop_state"], "STOPPED")
+        with self.assertRaises(OrchestrationError):
+            no_admin._post("canary_reset", {})
+        self.assertFalse(app.canary.snapshot()["permission_to_dispatch"])
+
+    def test_p5_5_telemetry_unknown_budget_and_no_private_data(self):
+        from alpha_research.state.fingerprint import fingerprint_json
+        import json
+        app, server, client, ledger, api, admin = self._p5_service(
+            global_cap=6_000)
+        handoff = build_global_consumption_request(
+            self.runner, self.task_id, self.model, self.policy,
+            self.receipt, self.operator_trust, now=self.now)
+        ack = client.consume(handoff, self.receipt)["ack"]
+        ack_hash = fingerprint_json(ack)
+        client.reserve(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, input_tokens=700,
+            max_output_tokens=900, ack_sha256=ack_hash)
+        client.quarantine(
+            grant_id="a" * 32, task_id=self.task_id,
+            attempt_id="1" * 32, ack_sha256=ack_hash)
+        telemetry = client.canary_monitor()
+        self.assertEqual(telemetry["total_attempts"], 1)
+        self.assertEqual(telemetry["total_committed_usd_micros"], 5000)
+        self.assertEqual(telemetry["attempts_by_status"], {"UNKNOWN": 1})
+        self.assertIn("UNRESOLVED_PROVIDER_ATTEMPTS", telemetry["alerts"])
+        self.assertIn("GLOBAL_RESERVED_BUDGET_AT_LEAST_80_PERCENT",
+                      telemetry["alerts"])
+        serialized = json.dumps(telemetry)
+        for value in (api, admin, self.receipt["signature"],
+                      "Build offline alpha only"):
+            self.assertNotIn(value, serialized)
+        self.assertFalse(telemetry["independent_service_identity_attested"])
+
+    def test_p5_5_sdk_rechecks_stop_after_reserve_before_mock(self):
+        from alpha_research.orchestration.research_sdk_mock_pilot import (
+            run_research_sdk_offline_pilot,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+
+        class StoppingClient:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def canary_preflight(self, **kwargs):
+                self.wrapped.canary_stop()
+                return self.wrapped.canary_preflight(**kwargs)
+
+        with self.assertRaisesRegex(OrchestrationError,
+                                    "canary preflight failed"):
+            run_research_sdk_offline_pilot(
+                **{**inputs, "attempt_id": "a" * 32,
+                   "authority_client": StoppingClient(client)})
+        self.assertEqual(client.snapshot("a" * 32)["by_status"],
+                         {"UNKNOWN": 1})
+        self.assertEqual(client.canary_monitor()["stop_state"], "STOPPED")
+
+    def test_p5_5_production_gate_rejects_forged_monitor_and_stays_blocked(self):
+        from alpha_research.orchestration.research_p5_release import (
+            inspect_research_p5_canary_gate,
+        )
+        from alpha_research.orchestration.release_gate import (
+            inspect_production_release_gate,
+        )
+        _app, _server, client, _, _api, _admin = self._p5_service()
+        monitor = client.canary_monitor()
+        ready = inspect_research_p5_canary_gate(
+            self.runner, self.task_id, authority_monitor=monitor)
+        self.assertFalse(ready["production_authorized"])
+        self.assertFalse(ready["permission_to_dispatch"])
+        self.assertIn("REMOTE_SERVICE_IDENTITY_AND_MTLS_NOT_ATTESTED",
+                      ready["blockers"])
+        self.assertIn("GLOBAL_SPEND_POLICY_NOT_INITIALIZED",
+                      ready["blockers"])
+        self.assertEqual(ready["authority_monitor"],
+                         "UNTRUSTED_LOCAL_AUDIT_ONLY")
+        forged = copy.deepcopy(monitor)
+        forged["real_canary_authorized"] = True
+        with self.assertRaises(OrchestrationError):
+            inspect_research_p5_canary_gate(
+                self.runner, self.task_id, authority_monitor=forged)
+        client.canary_stop()
+        stopped = inspect_research_p5_canary_gate(
+            self.runner, self.task_id,
+            authority_monitor=client.canary_monitor())
+        self.assertIn("INDEPENDENT_CANARY_STOP_LATCHED", stopped["blockers"])
+        global_release = inspect_production_release_gate(
+            self.runner, self.task_id, {}, self.policy,
+            config_source="user_config")
+        self.assertEqual(
+            global_release["components"]["research_p5_canary"]["status"],
+            "RESEARCH_P5_CANARY_PRODUCTION_BLOCKED")
+        self.assertFalse(global_release["production_authorized"])
+
+
 if __name__ == "__main__":
     unittest.main()
