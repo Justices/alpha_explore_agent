@@ -16,8 +16,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from alpha_research.orchestration.engine import OrchestrationError
-from alpha_research.orchestration.research_authority_transport import (
-    ResearchAuthorityApplication, make_loopback_authority_server,
+from alpha_research.orchestration.research_authority_application import (
+    ResearchAuthorityApplication,
+)
+from alpha_research.orchestration.research_authority_http import (
+    make_loopback_authority_server,
 )
 from alpha_research.orchestration.research_p6_mtls import (
     make_authority_mtls_server_context,

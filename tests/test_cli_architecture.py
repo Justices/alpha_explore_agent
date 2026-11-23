@@ -57,7 +57,7 @@ class CliBoundaryTests(unittest.TestCase):
                 code = main(["--state-root", location,
                              "orchestration-release-gate", "f" * 32])
             self.assertEqual(code, 2)
-            self.assertIn("both --lead and --executor", error.getvalue())
+            self.assertIn("orchestration preparation failed: OrchestrationError", error.getvalue())
             self.assertEqual(output.getvalue(), "")
 
 

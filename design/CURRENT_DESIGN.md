@@ -95,7 +95,7 @@ Knowledge:  Dataset / field / operator snapshots and research references
 
 ### 控制平面与独立 Authority
 
-`research_grant_service_reference.py`、`research_spend_service_reference.py` 和 `research_authority_*.py` 实现单次 Grant 消费、签名 ACK、SQLite 事务化费用保留、审计读回、恢复和持久的 Global Stop。独立运行的**本地参考服务**可以演练 mTLS、身份与崩溃恢复，但不是已完成的生产部署。
+`research_grant_service_reference.py`、`research_spend_service_reference.py` 和 `research_authority_*.py` 实现单次 Grant 消费、签名 ACK、SQLite 事务化费用保留、审计读回、恢复和持久的 Global Stop。独立运行的**本地参考服务**可以演练 mTLS、身份与崩溃恢复，但不是已完成的生产部署。应用与 HTTP 边界分别由 `research_authority_application.py`（事务域服务）和 `research_authority_http.py`（loopback、认证、请求大小与响应脱敏）实现；原 `research_authority_transport.py` 仅保留兼容导出，避免 HTTP 进程结构反向污染账本逻辑。
 
 `deploy/p7/` 提供**仅 Linux host-network/loopback** 的隔离容器配置，默认非 root、只读根文件系统、mTLS、独立的 API/admin token 文件和可持久化 SQLite。真正的 CA/签名私钥、证书轮换、机主身份、备份恢复、告警及 on-call 责任都需要外部独立配置。
 
