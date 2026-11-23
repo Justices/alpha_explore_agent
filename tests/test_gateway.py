@@ -115,5 +115,40 @@ class TestGateway(unittest.TestCase):
                          ["check_local_self_correlation", "check_correlation"])
 
 
+    def test_shutdown_does_not_block_on_driver_stdout(self):
+        from unittest.mock import Mock
+        driver = Mock()
+        driver.poll.return_value = None
+        driver.stdout.readline.side_effect = AssertionError(
+            "shutdown attempted unbounded stdout readline")
+        gateway = Gateway()
+        gateway.proc = driver
+        gateway.shutdown()
+        driver.stdin.write.assert_called_once_with('{"cmd":"shutdown"}\n')
+        driver.stdin.flush.assert_called_once()
+        driver.stdout.readline.assert_not_called()
+        driver.stdin.close.assert_called_once()
+        driver.stdout.close.assert_called_once()
+        self.assertIsNone(gateway.proc)
+
+    def test_shutdown_forces_cleanup_after_driver_timeout(self):
+        import subprocess
+        from unittest.mock import Mock
+        driver = Mock()
+        driver.poll.return_value = None
+        # Graceful shutdown hangs. The bounded stop helper must then force
+        # termination, rather than blocking indefinitely on provider I/O.
+        driver.wait.side_effect = [
+            subprocess.TimeoutExpired("driver", 10), 0,
+        ]
+        gateway = Gateway()
+        gateway.proc = driver
+        gateway.shutdown()
+        driver.terminate.assert_called_once()
+        self.assertEqual(driver.wait.call_count, 2)
+        driver.stdout.readline.assert_not_called()
+        self.assertIsNone(gateway.proc)
+
+
 if __name__ == "__main__":
     unittest.main()
