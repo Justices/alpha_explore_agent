@@ -225,7 +225,8 @@ def inspect_p6_brain_catalog_frame(orchestrator, task_id, frame):
 def inspect_p6_integrated_release(orchestrator, task_id, *,
                                   authority_monitor=None,
                                   provider_report=None, metering_report=None,
-                                  brain_report=None, signed_readback=None):
+                                  brain_report=None, signed_readback=None,
+                                  p7_billing_report=None):
     """P6.5/6.6 dry-run readiness matrix remains strictly non-executable."""
     baseline = inspect_research_p5_canary_gate(
         orchestrator, task_id, authority_monitor=authority_monitor)
@@ -291,6 +292,22 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
         # token, reservation or invoice discrepancy.
         if statuses["p6_3_billing"] != "RECONCILIATION_REQUIRED":
             statuses["p6_3_billing"] = "SIGNED_OBSERVATION_ONLY_INVOICE_UNVERIFIED"
+    if p7_billing_report is not None:
+        if (not isinstance(p7_billing_report, dict)
+                or p7_billing_report.get("task_id") != task_id
+                or p7_billing_report.get("status") not in (
+                    "P7_RECONCILIATION_REQUIRED",
+                    "P7_INVOICE_MATCHED_UNTRUSTED_INPUT")
+                or p7_billing_report.get("provider_invoice_independently_verified") is not False
+                or p7_billing_report.get("settlement_authorized") is not False
+                or p7_billing_report.get("budget_refund_authorized") is not False
+                or p7_billing_report.get("real_provider_invoked") is not False
+                or p7_billing_report.get("permission_to_dispatch") is not False):
+            raise OrchestrationError("P7 billing reconciliation report invalid")
+        if p7_billing_report["status"] == "P7_RECONCILIATION_REQUIRED":
+            statuses["p6_3_billing"] = "RECONCILIATION_REQUIRED"
+        elif statuses["p6_3_billing"] != "RECONCILIATION_REQUIRED":
+            statuses["p6_3_billing"] = "OFFLINE_INVOICE_MATCH_UNTRUSTED"
     blockers = set(baseline["blockers"]) | {
         "P6_REAL_MTLS_DEPLOYMENT_NOT_PROVEN",
         "P6_LIVE_PROVIDER_DISPATCH_DISABLED",
@@ -301,6 +318,8 @@ def inspect_p6_integrated_release(orchestrator, task_id, *,
     }
     if statuses["p6_3_billing"] == "RECONCILIATION_REQUIRED":
         blockers.add("P6_METERING_RECONCILIATION_REQUIRED")
+        if p7_billing_report is not None and p7_billing_report["status"] == "P7_RECONCILIATION_REQUIRED":
+            blockers.add("P7_PROVIDER_INVOICE_VARIANCE_OR_RESERVATION_BREACH")
     if statuses["p6_4_brain_read"] == "READ_ONLY_FRAME_DENIED":
         blockers.add("P6_BRAIN_READ_FRAME_DENIED")
     return {
