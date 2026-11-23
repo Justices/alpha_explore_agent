@@ -89,7 +89,7 @@ Knowledge:  Dataset / field / operator snapshots and research references
 
 预算至少在 Task / Research / Model Attempt 和全局 Provider 层保持一致的身份、调用次数与保留费用；费用采用整数 micro-USD 上取整估算，不把本地 token 估计当成真实账单。模型调用/网络 ACK 不明时保持预算保留及 `UNKNOWN`，不得通过自动切换 Backend、自动退款或重试规避限制。
 
-`research_p7_billing.py` 仅对**调用方提供**的发票行和保留记录做完整集合匹配、费用差额及超限审计；没有 Provider 独立认证就不能宣布结算。统一状态词表由 `release_contracts.py` 管理，证据校验集中于 `release_evidence.py`，跨模块集成由 `release_matrix.py` 负责。
+`research_p7_billing.py` 仅对**调用方提供**的发票行和保留记录做完整集合匹配、费用差额及超限审计；没有 Provider 独立认证就不能宣布结算。Provider 接口、计费与签名 readback 的纯审计集中在 `research_provider_audit.py`，BRAIN Catalog 只读 Frame 在 `research_brain_read_audit.py`，P6 负向发布矩阵在 `research_readiness_matrix.py`，Mock Canary 全流程在 `research_canary_rehearsal.py`；旧 `research_p6_readiness.py` 仅兼容导入。统一状态词表由 `release_contracts.py` 管理，证据校验集中于 `release_evidence.py`，跨模块集成由 `release_matrix.py` 负责。
 
 ## 5. 权限、密钥、BRAIN 只读与生产发布边界
 

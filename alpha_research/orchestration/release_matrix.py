@@ -4,7 +4,7 @@ This is the canonical integration entrypoint organized by architectural
 responsibility, not historical delivery phase.
 """
 from alpha_research.orchestration.engine import OrchestrationError
-from alpha_research.orchestration.research_p6_readiness import (
+from alpha_research.orchestration.research_readiness_matrix import (
     inspect_p6_integrated_release,
 )
 from alpha_research.orchestration.release_evidence import (

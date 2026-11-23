@@ -23,7 +23,7 @@ from alpha_research.orchestration.research_catalog_protocol import (
 from alpha_research.orchestration.research_runtime_plan import (
     inspect_research_runtime_plan,
 )
-from alpha_research.orchestration.research_p6_readiness import (
+from alpha_research.orchestration.research_readiness_matrix import (
     inspect_p6_integrated_release,
 )
 from alpha_research.orchestration.release_matrix import (

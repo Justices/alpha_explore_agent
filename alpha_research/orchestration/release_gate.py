@@ -19,7 +19,7 @@ from alpha_research.orchestration.research_p4_release import (
 from alpha_research.orchestration.research_p5_release import (
     inspect_research_p5_canary_gate,
 )
-from alpha_research.orchestration.research_p6_readiness import (
+from alpha_research.orchestration.research_readiness_matrix import (
     inspect_p6_integrated_release,
 )
 from alpha_research.orchestration.release_matrix import (

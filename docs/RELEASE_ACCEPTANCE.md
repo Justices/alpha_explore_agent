@@ -51,3 +51,5 @@ python3 -m unittest discover -s tests -v
 ## 对外只读发布报告的负向权限契约
 
 顶层 `inspect_production_release_gate` 和各研究子模块都显式输出 `permission_to_dispatch=false`、`brain_read_authorized=false`、`model_call_authorized=false`、`brain_simulation_authorized=false`、`alpha_submission_authorized=false`、`automatic_retry_allowed=false`；不能依赖“字段缺失代表 false”的消费方默认值。CLI/状态报告继续使用同一负向约定。Canary 心跳保留 `monitor_age_microseconds` 与 `heartbeat_limit_seconds`，从而可验证阈值边缘的状态声明。此契约只验证审计报告一致性，不是独立第三方签名。
+
+统一离线验收也覆盖领域适配器之间的导入契约：Provider 审计、BRAIN Frame 策略、发布阻断矩阵、SDK Mock 演练均为独立模块；旧的历史名称只是兼容导出，不产生第二套状态或授予任何新权限。
