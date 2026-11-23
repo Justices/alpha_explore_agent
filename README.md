@@ -77,6 +77,20 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P7.1 deployment hardening — isolated local authority
+
+P7 adds a second, stricter deployment target for the **independent
+audit/recovery authority only**: an operator-provisioned non-root Linux
+container with mandatory mutual TLS, owner-only file-based API/admin
+tokens, persistent recovery SQLite, a read-only readiness CLI and
+host-loopback-only networking (no published ports). Neither the Docker
+configuration nor a green readiness check authorizes real Provider/BRAIN
+execution. External host deployment and independent service identity are
+not attested by this code.
+
+See [P7 authority deployment and recovery runbook](docs/P7_AUTHORITY_DEPLOYMENT.md).
+Production status remains `PRODUCTION_BLOCKED`.
+
 ## P6.1–P6.6 offline-to-production readiness work
 
 P6 adds an optional **mutual TLS** loopback transport (real client/server
