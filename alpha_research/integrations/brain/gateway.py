@@ -89,6 +89,9 @@ class Gateway:
         self.auth_info = None
 
     def start(self) -> dict:
+        # A second start must never abandon a running BRAIN session/child.
+        if self.proc is not None:
+            raise GatewayError("BRAIN driver already started; shut it down first")
         if self.research_catalog_scope is not None:
             # No independent remote consumption/session attestation exists.
             # A local key file or claim cannot permit subprocess startup.
@@ -110,9 +113,11 @@ class Gateway:
             if self._credentials is not None:
                 # Credentials never appear in the CLI or process environment.
                 # Discard the original object after handing it to the child.
-                self.proc.stdin.write(json.dumps(self._credentials) + "\n")
-                self.proc.stdin.flush()
+                credential_line = json.dumps(self._credentials)
                 self._credentials = None
+                self.proc.stdin.write(credential_line + "\n")
+                self.proc.stdin.flush()
+                del credential_line
             self.auth_info = self._read_response()
             if not isinstance(self.auth_info, dict) or not self.auth_info.get("ok"):
                 raise GatewayError("platform runtime did not become ready")
