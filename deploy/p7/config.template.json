@@ -1,0 +1,16 @@
+{
+  "schema_version": 1,
+  "database_file": "/var/lib/alpha-research/authority.sqlite3",
+  "operator_trust_file": "/run/alpha-research/operator-trust.json",
+  "consumer_private_key_file": "/run/alpha-research/consumer.pem",
+  "ledger_private_key_file": "/run/alpha-research/ledger.pem",
+  "consumer_id": "consumer",
+  "consumer_key_id": "consumer-key",
+  "ledger_id": "ledger",
+  "ledger_issuer_id": "ledger-issuer",
+  "ledger_key_id": "ledger-key",
+  "global_max_usd_micros": 10000,
+  "server_certificate_file": "/run/alpha-research/server.crt",
+  "server_private_key_file": "/run/alpha-research/server.key",
+  "client_ca_file": "/run/alpha-research/client-ca.crt"
+}
