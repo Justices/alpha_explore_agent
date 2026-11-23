@@ -197,6 +197,33 @@ class ResearchAuthorityApplication:
                 "global_model_hard_cap_enforced_at_provider": False,
                 "permission_to_dispatch": False}
 
+    def quarantine(self, data):
+        """Record ambiguous SDK outcome durably; no budget capacity is freed.
+
+        Revocation must not prevent quarantining an already reserved call.
+        This endpoint never retries, dispatches or settles the provider call.
+        """
+        if (not isinstance(data, dict)
+                or set(data) != {"grant_id", "task_id", "attempt_id",
+                                 "ack_sha256"}):
+            raise OrchestrationError("research quarantine payload invalid")
+        grant_id = _grant_id(data["grant_id"])
+        with closing(self.grants._connect()) as db:
+            row = db.execute(
+                "SELECT receipt_json,ack_json"
+                " FROM research_grant_consumptions WHERE grant_id=?",
+                (grant_id,)).fetchone()
+        if not row or not row[0] or not row[1]:
+            raise OrchestrationError("research quarantine Grant unknown")
+        receipt = json.loads(row[0])
+        ack = json.loads(row[1])
+        claims = receipt["claims"]
+        if (data["task_id"] != claims["task_id"]
+                or data["ack_sha256"] != fingerprint_json(ack)):
+            raise OrchestrationError("research quarantine ACK or Task mismatch")
+        return self._spend(grant_id, claims).mark_unknown(
+            data["attempt_id"], task_id=data["task_id"])
+
     def spend_snapshot(self, data):
         if not isinstance(data, dict) or set(data) != {"grant_id"}:
             raise OrchestrationError("research spend snapshot payload invalid")
@@ -232,6 +259,7 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
         "/v1/grant/consume": application.consume,
         "/v1/grant/readback": application.readback,
         "/v1/spend/reserve": application.reserve,
+        "/v1/spend/quarantine": application.quarantine,
         "/v1/spend/snapshot": application.spend_snapshot,
         "/v1/grant/revoke": application.revoke,
     }
