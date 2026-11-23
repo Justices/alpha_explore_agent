@@ -10,6 +10,7 @@ import copy
 import hmac
 import json
 import secrets
+import ssl
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -384,7 +385,7 @@ class ResearchAuthorityApplication:
 
 
 def make_loopback_authority_server(application, *, api_token, admin_token,
-                                   host="127.0.0.1", port=0):
+                                   host="127.0.0.1", port=0, tls_context=None):
     """Create a loopback-only HTTP server; caller controls its process lifetime.
 
     These are *transport* credentials. They do not attest independent key
@@ -395,7 +396,11 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
             or type(port) is not int or not 0 <= port <= 65535
             or not isinstance(api_token, str) or len(api_token) < 32
             or not isinstance(admin_token, str) or len(admin_token) < 32
-            or hmac.compare_digest(api_token, admin_token)):
+            or hmac.compare_digest(api_token, admin_token)
+            or (tls_context is not None
+                and (not isinstance(tls_context, ssl.SSLContext)
+                     or tls_context.verify_mode != ssl.CERT_REQUIRED
+                     or tls_context.minimum_version < ssl.TLSVersion.TLSv1_2))):
         raise OrchestrationError("loopback authority requires isolated credentials")
     api_bytes = api_token.encode("utf-8")
     admin_bytes = admin_token.encode("utf-8")
@@ -479,4 +484,14 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
                 return
             self._reply(200, result)
 
-    return ThreadingHTTPServer((host, port), Handler)
+    server = ThreadingHTTPServer((host, port), Handler)
+    try:
+        if tls_context is not None:
+            # Transport still binds loopback only and all API responses deny
+            # real dispatch. Peer certificates are verified by SSLContext.
+            server.socket = tls_context.wrap_socket(
+                server.socket, server_side=True)
+        return server
+    except Exception:
+        server.server_close()
+        raise
