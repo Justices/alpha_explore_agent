@@ -98,6 +98,7 @@ and the appropriate Bearer token:
 | /v1/grant/readback | API | Sign Task-bound immutable ledger observation; rejected after revocation |
 | /v1/spend/reserve | API | Task/ACK-bound atomic budget reservation, no SDK invocation |
 | /v1/spend/snapshot | API | Read a consumed Grant's committed usage |
+| /v1/spend/quarantine | API | Mark an ambiguous attempt UNKNOWN permanently; keep budget committed |
 | /v1/grant/revoke | Admin | Revoke Grant; no new reservations or readback |
 | /healthz | Anonymous localhost | Liveness only; no authority |
 
