@@ -19,6 +19,9 @@ _ROUTES = {
     "operation": "/v1/spend/operation",
     "attempt": "/v1/spend/attempt",
     "reconcile": "/v1/spend/reconcile",
+    "monitor": "/v1/canary/monitor",
+    "canary_preflight": "/v1/canary/preflight",
+    "stop": "/v1/canary/stop",
     "snapshot": "/v1/spend/snapshot",
     "revoke": "/v1/grant/revoke",
 }
@@ -47,7 +50,7 @@ class LoopbackAuthorityClient:
     def _post(self, operation, body):
         if operation not in _ROUTES or not isinstance(body, dict):
             raise OrchestrationError("research authority operation invalid")
-        token = (self.admin_token if operation in {"revoke", "reconcile"}
+        token = (self.admin_token if operation in {"revoke", "reconcile", "stop"}
                  else self.api_token)
         if token is None:
             raise OrchestrationError("research authority admin token unavailable")
@@ -124,6 +127,18 @@ class LoopbackAuthorityClient:
             "attempt_id": attempt_id, "ack_sha256": ack_sha256,
             "evidence": evidence,
         })
+
+    def canary_monitor(self):
+        return self._post("monitor", {})
+
+    def canary_preflight(self, *, grant_id, task_id, ack_sha256):
+        return self._post("canary_preflight", {
+            "grant_id": grant_id, "task_id": task_id,
+            "ack_sha256": ack_sha256,
+        })
+
+    def canary_stop(self):
+        return self._post("stop", {})
 
     def snapshot(self, grant_id):
         return self._post("snapshot", {"grant_id": grant_id})
