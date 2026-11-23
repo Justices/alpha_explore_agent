@@ -19,6 +19,9 @@ from alpha_research.orchestration.research_p4_release import (
 from alpha_research.orchestration.research_p5_release import (
     inspect_research_p5_canary_gate,
 )
+from alpha_research.orchestration.research_p6_readiness import (
+    inspect_p6_integrated_release,
+)
 from alpha_research.orchestration.platform_read_scope_binding import (
     inspect_platform_read_scope_binding,
 )
@@ -65,7 +68,9 @@ def inspect_production_release_gate(orchestrator, task_id, model_config,
             orchestrator, task_id)
         reports["research_p5_canary"] = inspect_research_p5_canary_gate(
             orchestrator, task_id)
-        blockers.extend(reports["research_p5_canary"]["blockers"])
+        reports["research_p6_readiness"] = inspect_p6_integrated_release(
+            orchestrator, task_id)
+        blockers.extend(reports["research_p6_readiness"]["blockers"])
         reports["simulation_dispatch"] = dispatch
         reports["simulation_recovery"] = recovery
         blockers.extend(dispatch["blockers"])
