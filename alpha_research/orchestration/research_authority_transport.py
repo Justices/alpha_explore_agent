@@ -28,6 +28,9 @@ from alpha_research.orchestration.research_spend_service_reference import (
 from alpha_research.orchestration.research_model_recovery_reference import (
     RECOVERY_SCHEMA, ReferenceExternalModelRecovery,
 )
+from alpha_research.orchestration.research_canary_control_reference import (
+    ReferenceResearchCanaryControl,
+)
 from alpha_research.state.fingerprint import canonical_json_bytes, fingerprint_json
 
 _MAX_BODY = 65_536
@@ -74,6 +77,7 @@ class ResearchAuthorityApplication:
                            for ch in value)):
                 raise OrchestrationError("research ledger identity invalid")
         self.path = Path(database_path)
+        self.canary = ReferenceResearchCanaryControl(self.path)
         self.signer = ledger_signer
         self.ledger_issuer_id = ledger_issuer_id
         self.ledger_key_id = ledger_key_id
@@ -126,6 +130,7 @@ class ResearchAuthorityApplication:
         self.grants.initialize_schema()
         with closing(self.grants._connect()) as db:
             db.executescript(RECOVERY_SCHEMA)
+        self.canary.initialize_schema()
 
     def _recovery(self, grant_id):
         return ReferenceExternalModelRecovery(self.path, grant_id=grant_id)
@@ -135,7 +140,8 @@ class ResearchAuthorityApplication:
             self.path, grant_id=grant_id,
             max_model_calls=claims["max_model_calls"],
             max_total_cost_usd_micros=claims["max_total_cost_usd_micros"],
-            global_max_total_cost_usd_micros=self.global_max)
+            global_max_total_cost_usd_micros=self.global_max,
+            require_canary_arm=True)
 
     def _consumed(self, grant_id, *, allow_revoked=False):
         grant_id = _grant_id(grant_id)
@@ -166,6 +172,9 @@ class ResearchAuthorityApplication:
             raise OrchestrationError("research signed Grant missing")
         claims = receipt["claims"]
         grant_id = _grant_id(claims.get("grant_id"))
+        # The local service emergency-stop is a veto, never permission.
+        if self.canary.snapshot()["stop_state"] != "ARMED":
+            raise OrchestrationError("research emergency stop latched")
         # Validate issuer signature and fixed handoff *before* budgeting.
         self.grants._grant(
             handoff, receipt, datetime.now(timezone.utc))
@@ -323,6 +332,43 @@ class ResearchAuthorityApplication:
             receipt=receipt, ack=ack, evidence=data["evidence"],
             trust=self.recovery_trust)
 
+    def canary_monitor(self, data):
+        if not isinstance(data, dict) or data:
+            raise OrchestrationError("canary monitor accepts no caller inputs")
+        return self.canary.snapshot()
+
+    def canary_stop(self, data):
+        if not isinstance(data, dict) or data:
+            raise OrchestrationError("canary stop accepts no caller inputs")
+        return self.canary.trigger_stop()
+
+    def canary_preflight(self, data):
+        """Offline mock barrier only; no live execution enablement."""
+        if (not isinstance(data, dict)
+                or set(data) != {"grant_id", "task_id", "ack_sha256"}):
+            raise OrchestrationError("canary mock preflight payload invalid")
+        from alpha_research.orchestration.research_only_admission import _utc
+        grant_id = _grant_id(data["grant_id"])
+        receipt, ack = self._consumed(grant_id)
+        if (data["task_id"] != receipt["claims"]["task_id"]
+                or data["ack_sha256"] != fingerprint_json(ack)
+                or _utc(ack["claims"]["expires_at"])
+                   <= datetime.now(timezone.utc)):
+            raise OrchestrationError("canary mock preflight Task/ACK expired")
+        state = self.canary.snapshot()
+        if state["stop_state"] != "ARMED":
+            raise OrchestrationError("canary emergency stop latched")
+        return {
+            "status": "OFFLINE_MOCK_CANARY_PREFLIGHT_ONLY",
+            "task_id": data["task_id"], "grant_id": grant_id,
+            "stop_state": "ARMED",
+            "offline_mock_permitted": True,
+            "real_model_dispatch_authorized": False,
+            "brain_read_authorized": False,
+            "permission_to_dispatch": False,
+            "automatic_retry_allowed": False,
+        }
+
     def spend_snapshot(self, data):
         if not isinstance(data, dict) or set(data) != {"grant_id"}:
             raise OrchestrationError("research spend snapshot payload invalid")
@@ -362,6 +408,9 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
         "/v1/spend/operation": application.bind_provider_operation,
         "/v1/spend/attempt": application.attempt_readback,
         "/v1/spend/reconcile": application.reconcile_remote_observation,
+        "/v1/canary/monitor": application.canary_monitor,
+        "/v1/canary/preflight": application.canary_preflight,
+        "/v1/canary/stop": application.canary_stop,
         "/v1/spend/snapshot": application.spend_snapshot,
         "/v1/grant/revoke": application.revoke,
     }
@@ -395,7 +444,8 @@ def make_loopback_authority_server(application, *, api_token, admin_token,
                 self._reply(404, {"error": "not found"})
                 return
             token = (admin_bytes if self.path in {
-                "/v1/grant/revoke", "/v1/spend/reconcile"
+                "/v1/grant/revoke", "/v1/spend/reconcile",
+                "/v1/canary/stop"
             } else api_bytes)
             supplied = self.headers.get("Authorization", "")
             if not hmac.compare_digest(supplied.encode("utf-8"),
