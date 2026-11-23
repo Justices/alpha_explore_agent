@@ -71,6 +71,19 @@ class ReferenceResearchCanaryControl:
                 raise OrchestrationError(
                     "research stop initial state unavailable") from exc
 
+    def assert_armed(self):
+        """Read-only veto; the spend service checks again atomically."""
+        with closing(self._connect()) as db:
+            try:
+                db.execute("BEGIN")
+                assert_research_canary_not_stopped(db)
+                db.execute("COMMIT")
+            except (sqlite3.Error, OrchestrationError) as exc:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise OrchestrationError("research emergency stop not armed") from exc
+        return True
+
     def trigger_stop(self):
         """Irreversibly latch stop, globally serialized with budget writes."""
         event_id = secrets.token_hex(16)
@@ -119,10 +132,14 @@ class ReferenceResearchCanaryControl:
                         or (control[0] == "STOPPED"
                             and (not control[1] or not control[2]))):
                     raise OrchestrationError("research canary control invalid")
-                spend = db.execute(
+                initialized = db.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table'"
+                    " AND name='research_model_spend'"
+                ).fetchone() is not None
+                spend = (db.execute(
                     "SELECT status, COUNT(*), COALESCE(SUM(reserved_usd_micros),0)"
                     " FROM research_model_spend GROUP BY status"
-                ).fetchall()
+                ).fetchall() if initialized else [])
                 grants = db.execute(
                     "SELECT COUNT(*) FROM research_grant_consumptions"
                 ).fetchone()[0]
@@ -132,12 +149,10 @@ class ReferenceResearchCanaryControl:
                 observations = db.execute(
                     "SELECT COUNT(*) FROM research_model_recovery_observations"
                 ).fetchone()[0]
-                limit = db.execute(
+                limit = (db.execute(
                     "SELECT max_usd_micros FROM research_model_spend_limits"
                     " WHERE scope_id='GLOBAL'"
-                ).fetchone()
-                if limit is None:
-                    raise OrchestrationError("research global spend policy missing")
+                ).fetchone() if initialized else None)
                 db.execute("COMMIT")
             except (sqlite3.Error, OrchestrationError) as exc:
                 if db.in_transaction:
@@ -146,13 +161,15 @@ class ReferenceResearchCanaryControl:
                     "research canary telemetry unavailable") from exc
         by_state = {state: count for state, count, _ in spend}
         committed = sum(amount for _, _, amount in spend)
-        cap = limit[0]
+        cap = limit[0] if limit else None
         issues = []
+        if cap is None:
+            issues.append("GLOBAL_SPEND_POLICY_NOT_INITIALIZED")
         if control[0] == "STOPPED":
             issues.append("GLOBAL_STOP_LATCHED")
         if by_state.get("UNKNOWN", 0):
             issues.append("UNRESOLVED_PROVIDER_ATTEMPTS")
-        if committed * 5 >= cap * 4:
+        if cap is not None and committed * 5 >= cap * 4:
             issues.append("GLOBAL_RESERVED_BUDGET_AT_LEAST_80_PERCENT")
         return {
             "schema_version": 1,
