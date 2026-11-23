@@ -67,6 +67,20 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P5.5 local Canary emergency-stop and release barrier
+
+The separately launched local research authority now persists a **one-way
+GLOBAL emergency stop** in the same SQLite journal as grants and spending.
+The stop is checked under the spend reservation transaction; an offline
+SDK MockTransport run also rechecks after reserving. The API-only monitor
+returns redacted aggregate counters and budget/UNKNOWN alerts, while only
+the admin token can irreversibly trigger stop. A negative-only P5 Canary
+release report is integrated into the production gate. **ARMED only means
+the offline pilot is not stopped; it is never live authority.**
+
+See [P5.5 Canary stop and release contract](docs/P5_5_CANARY_STOP_RELEASE.md).
+Production remains PRODUCTION_BLOCKED.
+
 ## P5.4 durable provider operation and signed recovery audit
 
 The P5.3 SDK MockTransport now records the returned operation ID in the
