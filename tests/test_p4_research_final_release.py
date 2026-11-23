@@ -1815,5 +1815,45 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
                 self.runner, self.task_id, provider_report=forged)
 
 
+    def test_p6_5_end_to_end_offline_canary_real_sdk_mock_stays_blocked(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            run_p6_offline_canary,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        frame = {"cmd": "get_datasets", "region": "USA", "delay": 1,
+                 "universe": "TOP3000", "instrument_type": "EQUITY"}
+        result = run_p6_offline_canary(
+            sdk_inputs=inputs, attempt_id="a" * 32,
+            brain_read_frame=frame)
+        self.assertEqual(result["status"],
+                         "P6_OFFLINE_CANARY_REHEARSAL_COMPLETED")
+        self.assertEqual(result["sdk_http_requests"], 1)
+        self.assertEqual(result["sdk_max_retries"], 0)
+        self.assertEqual(result["declared_reserved_usd_micros"], 5000)
+        self.assertEqual(result["estimated_cost_usd_micros"], 3300)
+        self.assertTrue(result["brain_frame_policy_valid"])
+        self.assertFalse(result["brain_api_invoked"])
+        self.assertFalse(result["provider_api_invoked"])
+        self.assertFalse(result["invoice_independently_verified"])
+        self.assertEqual(result["release_status"], "P6_PRODUCTION_BLOCKED")
+        self.assertEqual(client.snapshot("a"*32)["by_status"], {"RESERVED": 1})
+        with self.assertRaises(OrchestrationError):
+            run_p6_offline_canary(
+                sdk_inputs=inputs, attempt_id="a" * 32,
+                brain_read_frame=frame)
+        self.assertEqual(client.snapshot("a"*32)["reserved_attempts"], 1)
+
+    def test_p6_5_readonly_canary_rejects_mutation_before_budget_reserve(self):
+        from alpha_research.orchestration.research_p6_readiness import (
+            run_p6_offline_canary,
+        )
+        _app, client, inputs = self._p5_sdk_inputs()
+        with self.assertRaises(OrchestrationError):
+            run_p6_offline_canary(
+                sdk_inputs=inputs, attempt_id="b" * 32,
+                brain_read_frame={"cmd": "simulate_super"})
+        self.assertEqual(client.snapshot("a"*32)["reserved_attempts"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()
