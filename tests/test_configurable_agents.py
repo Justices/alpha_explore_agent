@@ -72,7 +72,7 @@ class OfflineSDK:
         return SimpleNamespace(
             model=kwargs["model"], usage=SimpleNamespace(
                 prompt_tokens=6, completion_tokens=2),
-            choices=[SimpleNamespace(message=SimpleNamespace(content=result))])
+            choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(content=result))])
 
 
 
