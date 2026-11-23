@@ -103,9 +103,10 @@ The service adds one API endpoint:
   authorization and trusted service identity are required before dispatch.
 - Real tokenizer usage and provider-specific hard output ceilings must be
   independently validated before computing enforceable USD upper bounds.
-- Durable provider operation IDs and server-to-provider readback must drive
-  settlement; a returned SDK usage object or signed *self-supplied* observation
-  is not proof of the actual invoice.
+- P5.4 now persists SDK-returned operation IDs and independently signed
+  remote observations in the authority ledger (audit-only). **Real**
+  server-to-provider readback and independent invoice reconciliation still
+  have to be implemented; a signed test observation is not billing proof.
 - Timeouts, unknown outcomes, 429/5xx and malformed responses must not trigger
   SDK automatic retries or a new research attempt.
 - Authorization revocation and operator stop checks must be in the actual
