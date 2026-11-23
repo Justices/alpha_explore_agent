@@ -167,18 +167,42 @@ class ReferenceExternalSpendLedger:
                 raise OrchestrationError(
                     "external model spend reservation rejected or unavailable") from exc
 
-    def mark_unknown(self, attempt_id):
-        """Quarantine reservation on lost response; NEVER return capacity."""
+    def mark_unknown(self, attempt_id, *, task_id=None):
+        """Quarantine exact reserved attempt; revoked Grants can still quarantine.
+
+        The operation is transition-once, and never returns reserved capacity.
+        Pilot transport must supply a Task ID to prevent cross-Task edits.
+        """
+        if (not isinstance(attempt_id, str) or len(attempt_id) != 32
+                or any(c not in "0123456789abcdef" for c in attempt_id)
+                or (task_id is not None and (
+                    not isinstance(task_id, str) or len(task_id) != 32
+                    or any(c not in "0123456789abcdef" for c in task_id))):
+            raise OrchestrationError("external spend quarantine identity invalid")
         with closing(self._connect()) as db:
-            db.execute("BEGIN IMMEDIATE")
-            self._verify_limits(db)
-            row = db.execute(
-                "UPDATE research_model_spend SET status='UNKNOWN'"
-                " WHERE grant_id=? AND attempt_id=? AND status='RESERVED'",
-                (self.grant_id, attempt_id))
-            db.execute("COMMIT")
-            if row.rowcount != 1:
-                raise OrchestrationError("external spend attempt not reservable as unknown")
+            try:
+                db.execute("BEGIN IMMEDIATE")
+                self._verify_limits(db)
+                if task_id is None:
+                    row = db.execute(
+                        "UPDATE research_model_spend SET status='UNKNOWN'"
+                        " WHERE grant_id=? AND attempt_id=? AND status='RESERVED'",
+                        (self.grant_id, attempt_id))
+                else:
+                    row = db.execute(
+                        "UPDATE research_model_spend SET status='UNKNOWN'"
+                        " WHERE grant_id=? AND task_id=? AND attempt_id=?"
+                        " AND status='RESERVED'",
+                        (self.grant_id, task_id, attempt_id))
+                if row.rowcount != 1:
+                    raise OrchestrationError(
+                        "external spend attempt not reservable as unknown")
+                db.execute("COMMIT")
+            except (sqlite3.Error, OrchestrationError) as exc:
+                if db.in_transaction:
+                    db.execute("ROLLBACK")
+                raise OrchestrationError(
+                    "external spend quarantine failed closed") from exc
         return {"status": "UNKNOWN_REQUIRES_MANUAL_RECONCILIATION",
                 "automatic_retry_allowed": False, "permission_to_dispatch": False}
 
