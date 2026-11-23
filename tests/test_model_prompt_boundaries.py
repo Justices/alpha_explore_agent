@@ -60,7 +60,7 @@ class PromptBoundaryTests(unittest.TestCase):
                 requests.append(kwargs)
                 return SimpleNamespace(
                     model="offline-model", usage=None,
-                    choices=[SimpleNamespace(message=SimpleNamespace(
+                    choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
                         content='{"ok":true}'))])
 
         client = ConfiguredModelClient(
