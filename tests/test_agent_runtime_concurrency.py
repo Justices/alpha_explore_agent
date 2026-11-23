@@ -228,11 +228,11 @@ class AgentRuntimeConcurrencyTests(unittest.TestCase):
                 marker = json.loads(
                     request["messages"][0]["content"])["context"]["marker"]
                 return SimpleNamespace(
-                    model="sdk-" + str(marker),
+                    model=request["model"],
                     usage=SimpleNamespace(
                         prompt_tokens=marker,
                         completion_tokens=marker + 1),
-                    choices=[SimpleNamespace(message=SimpleNamespace(
+                    choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
                         content=json.dumps({"marker": marker})))])
 
         client = ConfiguredModelClient(
