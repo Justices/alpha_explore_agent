@@ -61,40 +61,59 @@ def _load_private_key(raw):
     return key
 
 
+def _strict_json_pairs(pairs):
+    output = {}
+    for key, value in pairs:
+        if key in output:
+            raise ValueError("duplicate JSON key in authority provisioning")
+        output[key] = value
+    return output
+
+
+def _read_bounded_json(raw, maximum):
+    path = _safe_path(raw)
+    if not path.is_file() or not 0 < path.stat().st_size <= maximum:
+        raise OrchestrationError("authority provisioning document unavailable")
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=_strict_json_pairs,
+            parse_constant=lambda _value: (_ for _ in ()).throw(
+                ValueError("nonfinite provisioning number")),
+        )
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise OrchestrationError("authority provisioning JSON invalid") from exc
+    if not isinstance(value, dict):
+        raise OrchestrationError("authority provisioning must be an object")
+    return value
+
+
 def load_pilot_config(config_path):
-    """Read non-secret config for TLS only; no automatic production enable."""
-    path = _safe_path(config_path)
-    if path.stat().st_size > 32_768:
-        raise OrchestrationError("pilot authority config too large")
-    data = json.loads(path.read_text(encoding="utf-8"))
-    return data
+    """Parse and validate the one immutable startup configuration snapshot.
 
-
-def load_pilot_application(config_path):
-    """Strict opt-in configuration; never reads a credential via CLI args."""
-    config_file = _safe_path(config_path)
-    if config_file.stat().st_size > 32_768:
-        raise OrchestrationError("pilot authority config too large")
-    cfg = json.loads(config_file.read_text(encoding="utf-8"))
-    if (not isinstance(cfg, dict)
-            or set(cfg) not in (
-                _CONFIG_FIELDS,
-                _CONFIG_FIELDS | {"recovery_trust_file"},
-                _CONFIG_FIELDS | _TLS_CONFIG_FIELDS,
-                _CONFIG_FIELDS | _TLS_CONFIG_FIELDS | {"recovery_trust_file"})
+    TLS options must be provided as a complete set; partial TLS config never
+    silently downgrades this local service to clear-text loopback HTTP.
+    """
+    cfg = _read_bounded_json(config_path, 32_768)
+    optional = set(cfg) - _CONFIG_FIELDS
+    if (not _CONFIG_FIELDS.issubset(cfg)
+            or optional not in (
+                set(), {"recovery_trust_file"}, _TLS_CONFIG_FIELDS,
+                _TLS_CONFIG_FIELDS | {"recovery_trust_file"})
             or type(cfg["schema_version"]) is not int
             or cfg["schema_version"] != 1):
         raise OrchestrationError("pilot authority config schema invalid")
-    trust_path = _safe_path(cfg["operator_trust_file"])
-    if trust_path.stat().st_size > 65_536:
-        raise OrchestrationError("pilot operator trust file too large")
-    trust = json.loads(trust_path.read_text(encoding="utf-8"))
-    recovery_trust = None
-    if "recovery_trust_file" in cfg:
-        recovery_path = _safe_path(cfg["recovery_trust_file"])
-        if recovery_path.stat().st_size > 65_536:
-            raise OrchestrationError("pilot recovery trust file too large")
-        recovery_trust = json.loads(recovery_path.read_text(encoding="utf-8"))
+    # Return an independent copy. All file/CA/key paths come from this
+    # validated snapshot, not a second read of a mutable JSON config.
+    return cfg
+
+
+def _application_from_config(cfg):
+    """Private constructor from a previously validated configuration."""
+    trust = _read_bounded_json(cfg["operator_trust_file"], 65_536)
+    recovery_trust = (
+        _read_bounded_json(cfg["recovery_trust_file"], 65_536)
+        if "recovery_trust_file" in cfg else None)
     database = _safe_path(cfg["database_file"])
     if database.exists() and not database.is_file():
         raise OrchestrationError("pilot authority database path invalid")
@@ -113,6 +132,11 @@ def load_pilot_application(config_path):
     )
 
 
+def load_pilot_application(config_path):
+    """Backward-compatible entrypoint; never loads live model/BRAIN secrets."""
+    return _application_from_config(load_pilot_config(config_path))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="Isolated read-only research authority LOCAL PILOT; optional mTLS; no live dispatch")
@@ -129,8 +153,8 @@ def main(argv=None):
     try:
         api = os.environ.get("ALPHA_RESEARCH_AUTHORITY_API_TOKEN", "")
         admin = os.environ.get("ALPHA_RESEARCH_AUTHORITY_ADMIN_TOKEN", "")
-        application = load_pilot_application(opts.config)
         config = load_pilot_config(opts.config)
+        application = _application_from_config(config)
         tls = (make_authority_mtls_server_context(
             certificate_file=config["server_certificate_file"],
             private_key_file=config["server_private_key_file"],
