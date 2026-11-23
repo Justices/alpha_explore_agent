@@ -117,9 +117,9 @@ class ModelSmokePairTests(unittest.TestCase):
             def create(self, **payload):
                 envelopes.append(payload)
                 return SimpleNamespace(
-                    model="offline-sdk", usage=SimpleNamespace(
+                    model=payload["model"], usage=SimpleNamespace(
                         prompt_tokens=20, completion_tokens=11),
-                    choices=[SimpleNamespace(message=SimpleNamespace(
+                    choices=[SimpleNamespace(finish_reason="stop", message=SimpleNamespace(
                         content='{"ready":true,"contract":"model_probe_v1"}'))])
 
         def factory(**kwargs):
