@@ -67,6 +67,18 @@ credentials. No paid-model dispatch, research Catalog driver startup, BRAIN
 Simulation or Alpha submission is enabled. A local signature, canary review or
 offline CI run does not unlock these operations.
 
+## P5.4 durable provider operation and signed recovery audit
+
+The P5.3 SDK MockTransport now records the returned operation ID in the
+independent authority's durable journal before reporting completion. After
+crash/restart, a read-only Task/attempt lookup recovers the operation ID and
+previously signed remote observations. A separately provisioned Ed25519
+recovery signer and **admin** API can append exact Task/ACK/attempt-bound
+remote readbacks, with replay, mismatch and charge-over-reservation checks.
+The spend ledger never interprets these reports as verified provider invoices:
+UNKNOWN/RESERVED capacity stays held and neither retry nor settlement is
+authorized. [P5.4 remote recovery contract](docs/P5_4_REMOTE_RECOVERY_AND_AUDIT.md).
+
 ## P5.3 offline OpenAI-compatible SDK integration
 
 The OpenAI Python SDK is now exercised against an **in-process HTTP
