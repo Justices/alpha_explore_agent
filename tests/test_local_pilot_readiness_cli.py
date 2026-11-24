@@ -90,6 +90,25 @@ class LocalPilotReadinessCliTests(unittest.TestCase):
         self.assertEqual(MainOrchestrator(self.root).load(task_id), before)
         self.assertNotIn("offline-only-fake", output)
 
+    def test_scope_drift_blocks_even_with_ready_local_credentials(self):
+        task_id = self.prepare()
+        config_path = self.root / "config" / "nastu_quant.json"
+        cfg = json.loads(config_path.read_text(encoding="utf-8"))
+        cfg["scope"]["universe"] = "TOP1000"
+        cfg["scope"]["dataset_id"] = "analyst99"
+        config_path.write_text(json.dumps(cfg), encoding="utf-8")
+        before = MainOrchestrator(self.root).load(task_id)
+        code, output, error = self.invoke([
+            "orchestration-local-pilot-readiness", task_id])
+        self.assertEqual(code, 2, error)
+        report = json.loads(output)
+        self.assertEqual(report["status"], "PILOT_LOCAL_BLOCKED")
+        self.assertIn("configured universe conflicts with Task", report["blockers"])
+        self.assertIn("configured dataset_id conflicts with Task", report["blockers"])
+        self.assertEqual(report["local_checks"]["brain_credentials"], "READY_LOCAL")
+        self.assertFalse(report["simulation_authorized"])
+        self.assertEqual(MainOrchestrator(self.root).load(task_id), before)
+
     def test_regular_task_without_one_dataset_fails_pilot_safety_guard(self):
         task_id = self.prepare(dataset=False)
         code, output, error = self.invoke([
