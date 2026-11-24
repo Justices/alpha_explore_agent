@@ -136,14 +136,15 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertIn("at most one", error)
         self.assertFalse(marker_path(self.root).exists())
 
-    def test_explicit_scope_config_conflicts_are_not_silently_bypassed(self):
+    def test_external_live_config_is_not_rewritten_by_offline_command(self):
         custom = self.base / "scope.json"
-        custom.write_text(json.dumps({
+        original = json.dumps({
             "scope": {"region": "CHN", "delay": 1,
                       "universe": "TOP3000", "dataset_id": "analyst10"},
             "model_governance": {"max_calls": -999},
-        }), encoding="utf-8")
-        # Externally supplied config is independent of the empty mock root.
+        })
+        custom.write_text(original, encoding="utf-8")
+        # Never migrate another root's config merely to run offline fixtures.
         args = [
             "--state-root", str(self.root), "--config", str(custom),
             "--lead", "deepseek", "--executor", "deepseek",
@@ -157,7 +158,8 @@ class OfflineEndToEndCliTests(unittest.TestCase):
               redirect_stdout(out), redirect_stderr(err)):
             rc = main(args)
         self.assertEqual(rc, 2)
-        self.assertIn("conflicts with configured scope", err.getvalue())
+        self.assertIn("only its State Root default config", err.getvalue())
+        self.assertEqual(custom.read_text(encoding="utf-8"), original)
         self.assertFalse(marker_path(self.root).exists())
 
 
