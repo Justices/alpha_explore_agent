@@ -231,6 +231,14 @@ def build_parser():
     recovery_check.add_argument("task_id")
     orchestration_status = sub.add_parser("orchestration-status", help="read a persisted orchestration task")
     orchestration_status.add_argument("task_id")
+    pilot = sub.add_parser(
+        "orchestration-local-pilot-regular",
+        help="explicitly approved single-batch real Regular pilot; NOT P7 production release")
+    pilot.add_argument("task_id", help="existing fresh prepared Regular Task ID")
+    pilot.add_argument("--allow-model-call", action="store_true",
+                       help="approve real metered Lead/Executor model calls within configured policy")
+    pilot.add_argument("--allow-brain-simulation", action="store_true",
+                       help="approve at most one real BRAIN simulate_batch POST (1-8 variants)")
     run = sub.add_parser("run-once", help="execute one admitted research batch")
     run.add_argument("--objective", required=True)
     run.add_argument("--dataset")
