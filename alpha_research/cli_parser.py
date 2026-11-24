@@ -183,6 +183,10 @@ def build_parser():
         "orchestration-research-issuer-request",
         help="read-only independent research-only approval request; no model/BRAIN")
     research_issuer.add_argument("task_id")
+    pilot_readiness = sub.add_parser(
+        "orchestration-local-pilot-readiness",
+        help="audit a fresh pinned Regular Task and local prerequisites; no provider/POST")
+    pilot_readiness.add_argument("task_id")
     research_gate = sub.add_parser(
         "orchestration-research-live-readiness",
         help="read-only model/price/issuer readiness audit; live dispatch disabled")
