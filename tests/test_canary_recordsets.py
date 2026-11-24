@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 from alpha_research.cli_canary import EXPRESSION, run_canary_command
 from alpha_research.cli_canary_recordsets import (
-    _get, observe_canary_recordsets,
+    _ID, _get, observe_canary_recordsets,
 )
 from alpha_research.cli_parser import build_parser
 from alpha_research.state.store import atomic_write_json
@@ -89,6 +89,15 @@ class CanaryRecordsetsTests(unittest.TestCase):
         return observe_canary_recordsets(
             self.root, self.plan_id, client=client,
             snapshot_root=self.f.snapshots)
+
+    def test_real_pinned_alpha_id_is_accepted_and_paths_remain_constrained(self):
+        # Regression for mistakenly writing a doubled backslash in the
+        # regex end anchor, which rejected every valid BRAIN Alpha ID.
+        for value in ("YPaepL9o", "TESTALPHA", "Alpha_123"):
+            self.assertIsNotNone(_ID.fullmatch(value))
+        for value in ("", "a/recordsets", "../simulations", "a b",
+                      "a\\n", "A" * 129):
+            self.assertIsNone(_ID.fullmatch(value))
 
     def test_get_only_capture_pins_alpha_and_retains_unaltered_schema(self):
         client = FakeGetOnlyClient()
