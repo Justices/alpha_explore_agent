@@ -58,9 +58,9 @@ TASK_INSTRUCTIONS = {
         "Use only operators in context.operators when supplied. If validation_feedback is present, "
         "correct the rejected probe in previous_probe_plan and return a complete revised plan. "
         "Return core_fields as a nonempty list of unique exact field IDs from context.fields. "
-        "Set required_dimensions to nominal_coverage only for each core field and explain the field "
-        "choice in requirement_reason as a nonempty string or a map with one nonempty string for "
-        "each exact core field ID. Use the platform's coverage as evidence. Return no probes "
+        "The mandatory field-evidence dimensions are owned by deterministic system policy; "
+        "do not output required_dimensions or requirement_reason. The system derives the "
+        "required dimensions for every selected core field. Use the platform's coverage as evidence. Return no probes "
         "for routine field screening. If screening_only is true, always return probes: []. "
         "Otherwise propose a probe only when the research objective calls for a "
         "specific diagnostic question that the supplied catalog cannot answer. Each probe "
@@ -69,7 +69,7 @@ TASK_INSTRUCTIONS = {
         "and a research object with nonempty idea, data_rationale, operator_rationale, "
         "field_relationship, settings_rationale, expected_behavior, failure_criterion. "
         "Diagnostic Sharpe is never Alpha performance. "
-        "Return {core_fields, required_dimensions, requirement_reason, probes, reason}; "
+        "Return {core_fields, probes, reason}; "
         "use an empty probes list when no diagnostic simulation is needed."
     ),
     "construct_batch": (
