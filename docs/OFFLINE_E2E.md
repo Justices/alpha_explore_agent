@@ -45,7 +45,18 @@ Super 使用新的空目录并指定 `--workflow super`。Optimization 使用新
 
 1. 在**真实、未标记 mock 的** State Root 执行 `preflight`，检查模型配置、本地凭证和固定政策。
 2. 使用已有 `orchestration-prepare --workflow regular --region USA --delay 1 --universe TOP3000 --dataset analyst10` 生成一个全新 Task，确认 Task/Scope 与单批次预算。
-3. 原有 `orchestration-local-pilot-regular` 仅在用户明确授权一次模型调用与一次 BRAIN Simulation、并提供 `--allow-model-call --allow-brain-simulation` 两项标志后才能启动。这可能产生模型费用和真实平台写入；**不能把离线验收成功当作授权**。
-4. 实际完成后再审查 Alpha 指标及 RA 失败数；只有 RA fail count = 0 时，才进入 PC/SC 相关性判断，严格要求各项相关性 < 0.7。任何 BRAIN 超时或未知结果均需人工核对原始 Intent，不自动重试。
+3. 执行以下 **Task 绑定的只读就绪检查**。它会复用真实 Pilot 的 Dataset、Scope、Task Identity、Campaign 冲突校验，并核对本地模型及 BRAIN 凭证文件，但**不会读取 BRAIN 远端数据或发送任何模型请求**：
+
+   ```powershell
+   & $Python -m alpha_research `
+     --state-root "D:\quant\alpha_explore_agent\.alpha-runtime" `
+     --lead deepseek --executor deepseek `
+     orchestration-local-pilot-readiness <TASK_ID>
+   ```
+
+   看到 `PILOT_LOCAL_READY_NOT_AUTHORIZED` 只说明**本地前提满足**，绝不代表已授权真实 Simulation。看到 `PILOT_LOCAL_BLOCKED`，先修复输出的 `blockers`，不能尝试绕过。
+
+4. 原有 `orchestration-local-pilot-regular` 仅在用户明确授权一次模型调用与一次 BRAIN Simulation、并提供 `--allow-model-call --allow-brain-simulation` 两项标志后才能启动。这可能产生模型费用和真实平台写入；**不能把离线验收成功当作授权**。
+5. 实际完成后再审查 Alpha 指标及 RA 失败数；只有 RA fail count = 0 时，才进入 PC/SC 相关性判断，严格要求各项相关性 < 0.7。任何 BRAIN 超时或未知结果均需人工核对原始 Intent，不自动重试。
 
 不要用 `orchestration-e2e-offline` 生成的 Task ID 进入真实 Pilot；两个 State Root 和运行模式严格隔离。
