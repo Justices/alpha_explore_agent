@@ -19,7 +19,7 @@ from alpha_research.state.store import atomic_write_json, file_sha256
 RECORDSETS = ("coverage", "coverage-by-sector", "turnover",
               "average-value-by-sector")
 MAX_BYTES = 8 * 1024 * 1024
-_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\\Z")
+_ID = re.compile(r"[A-Za-z0-9_-]{1,128}\Z")
 
 
 def _fingerprint(value):
