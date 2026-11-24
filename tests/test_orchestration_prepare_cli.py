@@ -567,6 +567,24 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
             self.assertEqual(status, 0, error)
             self.assertEqual(json.loads(output)["status"], expected)
 
+    def test_explicit_default_config_path_is_auto_initialized(self):
+        config = self.root / "config" / "nastu_quant.json"
+        args = [
+            "--state-root", str(self.root), "--config", str(config),
+            "--lead", "deepseek", "--executor", "deepseek",
+            "orchestration-prepare", "--workflow", "regular",
+            "--region", "CHN", "--objective", "explicit default config path",
+        ]
+        status, output, error = self._call(args)
+        self.assertEqual(status, 0, error)
+        result = json.loads(output)
+        self.assertEqual(result["config_source"], "system_defaults_initialized")
+        self.assertTrue(config.is_file())
+        persisted = json.loads(config.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["model_governance"], DEFAULT_CONFIG["model_governance"])
+        self.assertEqual(MainOrchestrator(self.root).load(
+            result["task_id"])["request"]["region"], "CHN")
+
     def test_missing_default_config_still_requires_explicit_region(self):
         args = [
             "--state-root", str(self.root),
