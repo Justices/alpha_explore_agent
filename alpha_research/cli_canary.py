@@ -18,7 +18,7 @@ from alpha_research.state.store import StopSignals, atomic_write_json, file_sha2
 from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.workflows.regular.settings_validation import _validate_test_period
 
-CANARY_COMMANDS = frozenset({"canary-prepare", "canary-execute", "canary-status", "canary-review", "canary-diagnose"})
+CANARY_COMMANDS = frozenset({"canary-prepare", "canary-execute", "canary-status", "canary-review", "canary-diagnose", "canary-design"})
 DATASET = "analyst10"
 FIELD = "analyst_revision_ratio_to_close_ebitda_q1"
 EXPRESSION = f"rank({FIELD})"
@@ -259,6 +259,12 @@ def _execute(root, plan_id, gateway):
 def run_canary_command(args, root: Path, *, gateway_factory):
     try:
         path = _canary_path(root, args.plan_id)
+        if args.command == "canary-design":
+            from alpha_research.cli_canary_design import design_canary
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                result = design_canary(root, args.plan_id)
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            return 0
         if args.command == "canary-diagnose":
             from alpha_research.cli_canary_diagnose import diagnose_canary
             with SingleWriterLock(root / "state" / "agent.lock"):
