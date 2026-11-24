@@ -122,12 +122,18 @@ def _canonical_config(raw: dict) -> dict:
     return effective
 
 
+def _persisted_config(effective: dict) -> dict:
+    """The on-disk business config excludes the separately owned role profile."""
+    return {key: copy.deepcopy(value) for key, value in effective.items()
+            if key != "model"}
+
+
 def save_config(cfg: dict, path=None) -> None:
-    """Persist Scope over canonical system defaults; fixed sections are ignored."""
+    """Persist Scope over canonical business defaults; fixed sections are ignored."""
     target = Path(path) if path is not None else config_path()
     if target.is_symlink() or target.parent.is_symlink():
         raise ConfigError("research configuration symlinks are forbidden")
-    atomic_write_json(target, _canonical_config(cfg))
+    atomic_write_json(target, _persisted_config(_canonical_config(cfg)))
 
 
 def load_config(path=None, *, initialize=True) -> dict:
@@ -152,9 +158,10 @@ def load_config(path=None, *, initialize=True) -> dict:
     except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise ConfigError(f"research configuration is unreadable: {target}") from exc
     effective = _canonical_config(raw)
-    if raw != effective:
-        # Deterministic migration: preserve Scope and restore application-owned
-        # sections. No user-authored fixed setting is used.
+    persisted = _persisted_config(effective)
+    if raw != persisted:
+        # Deterministic migration: preserve Scope, restore application-owned
+        # sections and remove the separately managed role-profile copy.
         save_config(effective, target)
     return effective
 
