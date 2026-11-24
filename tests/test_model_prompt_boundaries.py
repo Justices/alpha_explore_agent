@@ -35,6 +35,11 @@ class PromptBoundaryTests(unittest.TestCase):
         profile = json.loads(bundled_profile_path().read_text(encoding="utf-8"))
         self.assertFalse(set(profile["task_roles"]) - set(TASK_INSTRUCTIONS))
         self.assertIn("model_probe", TASK_INSTRUCTIONS)
+        probe_instruction = instruction_for("plan_probes")
+        self.assertIn("do not output required_dimensions or requirement_reason",
+                      probe_instruction)
+        self.assertNotIn("Return {core_fields, required_dimensions, requirement_reason",
+                         probe_instruction)
 
     def test_task_and_knowledge_rules_are_single_sourced(self):
         prompt = instruction_for("construct_batch")
