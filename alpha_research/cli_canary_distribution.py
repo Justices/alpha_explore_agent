@@ -159,8 +159,14 @@ def _measure(universe, signals, weights, completeness):
     else:
         weight_validity = "EXHAUSTIVE_AS_ATTESTED_NOT_INDEPENDENTLY_VERIFIED"
     universe_by_date = defaultdict(list)
+    weight_by_date = defaultdict(dict)
+    signal_by_date = defaultdict(dict)
     for (day, instrument), sector in universe.items():
         universe_by_date[day].append((instrument, sector))
+    for (day, instrument), value in weights.items():
+        weight_by_date[day][instrument] = value
+    for (day, instrument), value in signals.items():
+        signal_by_date[day][instrument] = value
     per_date = []
     group_totals = defaultdict(lambda: [0, 0])
     normalized_weights = {}
@@ -173,9 +179,7 @@ def _measure(universe, signals, weights, completeness):
             group_totals[sector][0] += 1
             if (day, instrument) in signals and signals[(day, instrument)] is not None:
                 group_totals[sector][1] += 1
-        day_weights = {
-            instrument: value for (d, instrument), value in weights.items()
-            if d == day}
+        day_weights = weight_by_date[day]
         gross = sum(abs(v) for v in day_weights.values())
         net = sum(day_weights.values())
         if gross <= 0:
@@ -209,13 +213,13 @@ def _measure(universe, signals, weights, completeness):
     # cadence and no assumption that missing values were unchanged.
     updates = []
     for prior, following in zip(dates, dates[1:]):
-        overlapping = {inst for d, inst in universe if d == prior} & {
-            inst for d, inst in universe if d == following}
-        eligible = [inst for inst in overlapping
-                    if (prior, inst) in signals and (following, inst) in signals
-                    and signals[(prior, inst)] is not None
-                    and signals[(following, inst)] is not None]
-        changes = sum(signals[(prior, inst)] != signals[(following, inst)]
+        previous_values = signal_by_date[prior]
+        next_values = signal_by_date[following]
+        eligible = [
+            inst for inst, value in previous_values.items()
+            if value is not None and inst in next_values
+            and next_values[inst] is not None]
+        changes = sum(previous_values[inst] != next_values[inst]
                       for inst in eligible)
         updates.append({
             "from_date": prior, "to_date": following,
