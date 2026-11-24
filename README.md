@@ -797,3 +797,15 @@ python -m alpha_research --state-root "D:\quant\alpha_explore_agent\alpha-resear
 Set `BRAIN_CREDENTIALS_FILE` in the environment before invoking this command. Without explicit `--allow-brain-read`, without credentials, or in an offline mock workspace, **no platform connection is made**. The observer uses this project's independent `WorldQuantClient` exclusively for the pinned `GET /alphas/<id>`, `GET /alphas/<id>/recordsets`, and, only when listed, four exact Recordsets: `coverage`, `coverage-by-sector`, `turnover`, `average-value-by-sector`. Authentication may require the client's ordinary `POST /authentication`; no Simulation POST, PATCH, submission, correlation or tag mutation is permitted. First it verifies the Alpha ID, `REGULAR` type, exact original expression, and `EQUITY/USA/Delay 1/TOP3000` settings against the immutable research case. Other recordsets are not fetched. Unsupported, incomplete, invalid or unavailable endpoints remain explicitly unresolved; they do not imply zero coverage or turnover.
 
 Captured, size-bounded JSON responses and their exact SHA-256 fingerprints are stored immutably at `state/canary/<plan-id>_recordsets_<digest>.json`. The CLI emits the report's paths, read status and schema hints, **not** the complete raw data in stdout. The first pass deliberately leaves `ALPHA_RECORDSETS_CAPTURED_SCHEMA_REVIEW_REQUIRED`: parsing requires review of the actual returned schema. Native Recordset coverage describes the Alpha portfolio and **cannot be treated as raw analyst10 DataField availability or per-instrument weight distribution**. It supplements but does not satisfy the three-CSV distribution evidence contract. The command never grants a new Simulation or Candidate admission.
+
+#### Offline typed review of captured Recordsets
+
+Once `canary-recordsets-observe` returns a `recordset_evidence_path`, run:
+
+```powershell
+python -m alpha_research --state-root "D:\quant\alpha_explore_agent\alpha-research-live" canary-recordsets-review `
+  --plan-id c619095d74394a0bb3d89d24910963c6 `
+  --evidence-path "<recordset_evidence_path from previous output>"
+```
+
+This second command has **no network or credential requirements**. It revalidates the frozen field decision, Alpha identity/scope, recordset fingerprints and immutable evidence location. It recognizes only typed, dated `coverage.instruments` and `turnover.turnover` columns when BRAIN returns a consistent tabular schema. For these series it reports raw-unit minimum/mean/maximum and missing observations, **without guessing whether percent values require scaling** or mistaking instrument counts for coverage fractions. Industry/sector recordsets remain schema-visible and economically unresolved until reviewed. Invalid, incomplete or unsupported schemas return explicit unresolved reasons; no zero metrics or invented values. Every result is immutable and retains `candidate_eligible=false`, `simulation_authorized=false`. This is a diagnostic alternative, not a replacement for raw `signal.csv` / `weights.csv`.
