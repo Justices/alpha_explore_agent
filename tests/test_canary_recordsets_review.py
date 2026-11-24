@@ -76,6 +76,51 @@ class CanaryRecordsetsReviewTests(unittest.TestCase):
             result["recordset_review_path"],
             self._review(evidence)["recordset_review_path"])
 
+    def test_unavailable_recordset_index_yields_negative_review_not_generic_block(self):
+        from tests.test_canary_recordsets import FakeResponse
+
+        class IndexForbidden(FakeGetOnlyClient):
+            def request(self, method, path):
+                if path.endswith("/recordsets"):
+                    self.paths.append(path)
+                    return FakeResponse(403)
+                return super().request(method, path)
+
+        readback = self.f._observe(IndexForbidden())
+        self.assertEqual(readback["status"], "ALPHA_RECORDSETS_UNAVAILABLE")
+        reviewed = self._review(Path(readback["recordset_evidence_path"]))
+        self.assertEqual(reviewed["status"], "ALPHA_RECORDSETS_UNAVAILABLE_OFFLINE")
+        self.assertEqual(reviewed["recordset_catalog"]["http_status"], 403)
+        self.assertFalse(reviewed["recordset_provenance_verified"])
+        self.assertFalse(reviewed["simulation_authorized"])
+        self.assertFalse(reviewed["candidate_eligible"])
+        self.assertEqual(reviewed["metrics"], {})
+        self.assertEqual(
+            reviewed["recordset_review_path"],
+            self._review(Path(readback["recordset_evidence_path"]))[
+                "recordset_review_path"])
+
+    def test_empty_listed_catalog_yields_negative_review(self):
+        readback = self.f._observe(FakeGetOnlyClient(recordsets={}))
+        self.assertEqual(readback["status"], "ALPHA_RECORDSETS_UNAVAILABLE")
+        reviewed = self._review(Path(readback["recordset_evidence_path"]))
+        self.assertEqual(reviewed["status"], "ALPHA_RECORDSETS_UNAVAILABLE_OFFLINE")
+        self.assertEqual(reviewed["recordset_catalog"]["status"], "AVAILABLE")
+        self.assertTrue(all(
+            value == "NOT_LISTED" for value in
+            reviewed["recordset_read_statuses"].values()))
+
+    def test_scope_and_revision_conflicts_are_explicitly_distinguished(self):
+        from alpha_research.cli_canary_recordsets import _fingerprint
+        evidence = self._evidence()
+        envelope = json.loads(evidence.read_text(encoding="utf-8"))
+        envelope["report"]["source_field_decision_sha256"] = "0" * 64
+        updated = self.root / "state" / "canary" / (
+            self.plan_id + "_recordsets_" + _fingerprint(envelope)[:16] + ".json")
+        atomic_write_json(updated, envelope)
+        with self.assertRaisesRegex(Exception, "different field decision revision"):
+            self._review(updated)
+
     def test_missing_date_and_nonfinite_metric_cannot_be_interpreted(self):
         missing_date = {
             "schema": {"name": "coverage", "properties": [
