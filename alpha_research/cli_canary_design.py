@@ -104,14 +104,19 @@ def _load_snapshot(root, relative, snapshot_root, required_meta, rows_key):
 
 
 def _catalogs(root, plan_id, *, snapshot_root):
-    case = root / "state" / "platform" / "cases" / ("canary_" + plan_id)
+    # PlatformRuntime.set_case stores catalog *.ref.json under run_root,
+    # not case_root: cases/<case_key>/sessions/<run_id>/.
+    # Pin both components to the previously verified Canary identity; never
+    # search sibling sessions or fall back to an unaudited reference file.
+    session = (root / "state" / "platform" / "cases" / ("canary_" + plan_id) /
+               "sessions" / ("single_" + plan_id))
     fields = _load_snapshot(
-        case, Path("fields/USA/1/TOP3000/analyst10.json"), snapshot_root,
+        session, Path("fields/USA/1/TOP3000/analyst10.json"), snapshot_root,
         {"region": "USA", "delay": 1, "universe": "TOP3000",
          "instrument_type": "EQUITY", "dataset": DATASET,
          "source": "https://api.worldquantbrain.com/data-fields"}, "fields")
     operators = _load_snapshot(
-        case, Path("catalogs/operators.json"), snapshot_root,
+        session, Path("catalogs/operators.json"), snapshot_root,
         {"source": "https://api.worldquantbrain.com/operators"}, "operators")
     if fields["metadata"]["account_namespace"] != operators["metadata"]["account_namespace"]:
         raise CanaryError("field and operator snapshot account identities differ")

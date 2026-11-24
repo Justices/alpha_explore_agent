@@ -58,8 +58,11 @@ class CanaryRoundTwoDesignTests(unittest.TestCase):
         atomic_write_json(canary_path, record)
 
     def _save_catalogs(self, *, namespace="offline-namespace"):
-        case = (self.root / "state" / "platform" / "cases" /
-                ("canary_" + self.plan_id))
+        # Mirror PlatformRuntime._require_case() reference-write location:
+        # run_root = cases/<case_key>/sessions/<run_id>.
+        session = (self.root / "state" / "platform" / "cases" /
+                   ("canary_" + self.plan_id) / "sessions" /
+                   ("single_" + self.plan_id))
         stamp = datetime.now(timezone.utc).isoformat()
         field_rel = Path("data_fields/USA/1/TOP3000/analyst10.json")
         ops_rel = Path("operator/operators.json")
@@ -79,7 +82,7 @@ class CanaryRoundTwoDesignTests(unittest.TestCase):
                              "account_namespace": namespace, "fetched_at": stamp},
                 key: rows,
             })
-            atomic_write_json(case / ref, {"snapshot_ref": str(path),
+            atomic_write_json(session / ref, {"snapshot_ref": str(path),
                                             "sha256": file_sha256(path),
                                             "fetched_at": stamp})
 
@@ -127,6 +130,21 @@ class CanaryRoundTwoDesignTests(unittest.TestCase):
         codes = [x["code"] for x in out["proposals"][2]["static_validation"]["errors"]]
         self.assertIn("E_UNKNOWN_OPERATOR", codes)
 
+    def test_cannot_fall_back_to_legacy_case_level_catalog_reference(self):
+        # Reproduce the old bug: references at case_root are not from the
+        # actual, evidence-pinned session and must never be trusted.
+        session = (self.root / "state" / "platform" / "cases" /
+                   ("canary_" + self.plan_id) / "sessions" /
+                   ("single_" + self.plan_id))
+        ref = session / "fields/USA/1/TOP3000/analyst10.ref.json"
+        old_case_ref = (self.root / "state" / "platform" / "cases" /
+                        ("canary_" + self.plan_id) /
+                        "fields/USA/1/TOP3000/analyst10.ref.json")
+        atomic_write_json(old_case_ref, json.loads(ref.read_text(encoding="utf-8")))
+        ref.unlink()
+        with self.assertRaisesRegex(Exception, "reference is unavailable"):
+            design_canary(self.root, self.plan_id, snapshot_root=self.snapshots)
+
     def test_changed_snapshot_without_reference_update_blocks(self):
         self.fields[0]["coverage"] = 0.4
         path = self.snapshots / "data_fields/USA/1/TOP3000/analyst10.json"
@@ -142,7 +160,8 @@ class CanaryRoundTwoDesignTests(unittest.TestCase):
         data["metadata"]["account_namespace"] = "another-account"
         atomic_write_json(path, data)
         ref = self.root / "state" / "platform" / "cases" / (
-            "canary_" + self.plan_id) / "catalogs/operators.ref.json"
+            "canary_" + self.plan_id) / "sessions" / (
+            "single_" + self.plan_id) / "catalogs/operators.ref.json"
         r = json.loads(ref.read_text(encoding="utf-8"))
         r["sha256"] = file_sha256(path)
         atomic_write_json(ref, r)
