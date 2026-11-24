@@ -63,7 +63,7 @@ class SystemConfigTests(unittest.TestCase):
         for section in ("gate", "preferred", "auth", "model", "knowledge",
                         "model_governance", "probe", "exec"):
             self.assertEqual(config[section], DEFAULT_CONFIG[section])
-        self.assertNotIn("model", config)
+        self.assertEqual(config["model"], DEFAULT_CONFIG["model"])
         self.assertNotIn("user_defined_section", config)
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
                          config)
