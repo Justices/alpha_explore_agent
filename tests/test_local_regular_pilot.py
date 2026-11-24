@@ -123,6 +123,7 @@ class TestLocalRegularPilot(unittest.TestCase):
         self.assertEqual(len(called), 1)
         self.assertEqual(called[0][2]["max_batches"], 1)
         self.assertEqual(called[0][2]["dataset_ids"], ["analyst10"])
+        self.assertIs(called[0][2]["execution_context"]["allow_diagnostic_simulations"], False)
         self.assertEqual([x[0] for x in self.gateway.calls], ["simulate_batch"])
         self.assertIs(self.agent.gateway, self.gateway)
         self.assertEqual(self.runner.resume(self.task["task_id"]), done)
