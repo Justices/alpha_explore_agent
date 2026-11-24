@@ -599,6 +599,11 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             }
             if execution_context is not None:
                 run_kwargs["execution_context"] = execution_context
+                allow_diagnostic_simulations = execution_context.get(
+                    "allow_diagnostic_simulations", True)
+                if type(allow_diagnostic_simulations) is not bool:
+                    raise ValueError("diagnostic Simulation policy must be boolean")
+                run_kwargs["allow_diagnostic_simulations"] = allow_diagnostic_simulations
             if state["plan"].get("field_research"):
                 run_kwargs["field_research"] = True
             if resume_batch is None:
