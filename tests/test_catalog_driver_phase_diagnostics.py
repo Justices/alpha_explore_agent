@@ -77,11 +77,11 @@ class DriverBoundaryDiagnostics(unittest.TestCase):
                                 errors="strict", write_through=True)
         with patch.object(driver.sys, "stdout", pipe):
             driver.write({"ok": True, "result": [
-                {"id": "analyst10", "description": "中文" + "\\ud800"}]})
+                {"id": "analyst10", "description": "中文" + chr(0xD800)}]})
         payload = destination.getvalue()
         self.assertTrue(payload.isascii())
         parsed = json.loads(payload)
-        self.assertEqual(parsed["result"][0]["description"], "中文" + "\\ud800")
+        self.assertEqual(parsed["result"][0]["description"], "中文" + chr(0xD800))
 
     def test_gateway_rejects_untrusted_error_source_values(self):
         gateway = Gateway()
