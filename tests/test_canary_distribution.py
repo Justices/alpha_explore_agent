@@ -97,6 +97,14 @@ class CanaryDistributionTests(unittest.TestCase):
         self.assertEqual(daily[0]["portfolio"]["max_sector_gross_weight_share"], 0.7)
         self.assertEqual(daily[1]["portfolio"]["max_sector_gross_weight_share"], 0.6)
         self.assertEqual(daily[1]["portfolio"]["top5_gross_weight_share"], 1.0)
+        self.assertEqual(
+            daily[0]["portfolio"]["gross_weight_share_on_nonnull_source_field"], 0.8)
+        self.assertEqual(
+            daily[0]["portfolio"]["gross_weight_share_on_missing_source_field"], 0.2)
+        self.assertEqual(result["computed_metrics"]["observed_equal_value_runs"], [
+            {"consecutive_exported_observations": 1, "run_count": 2},
+            {"consecutive_exported_observations": 2, "run_count": 1},
+        ])
         updates = result["computed_metrics"]["signal_changes_between_exported_dates"]
         self.assertEqual(updates[0]["nonnull_pairs"], 2)
         self.assertEqual(updates[0]["changed_pairs"], 1)
@@ -130,6 +138,48 @@ class CanaryDistributionTests(unittest.TestCase):
                          "SAMPLE_ONLY_NO_PORTFOLIO_CONCENTRATION_INFERENCE")
         self.assertTrue(all(r["portfolio"] is None for r in measured["dates"]))
         self.assertFalse(result["simulation_authorized"])
+
+    def test_partial_signal_export_suppresses_weight_overlap_inference(self):
+        self._export(
+            claims={"universe_complete": True, "signal_exhaustive": False,
+                    "weights_exhaustive": True},
+            signal=[
+                ["2026-11-20", "A", "1"], ["2026-11-20", "C", "4"],
+                ["2026-11-23", "A", "2"], ["2026-11-23", "C", "4"],
+            ])
+        measured = self._audit()["computed_metrics"]
+        self.assertEqual(
+            measured["source_field_weight_overlap_interpretation"],
+            "INCOMPLETE_EXPORT_NO_WEIGHT_SIGNAL_OVERLAP_INFERENCE")
+        self.assertIsNone(
+            measured["dates"][0]["portfolio"][
+                "gross_weight_share_on_nonnull_source_field"])
+        self.assertIsNone(
+            measured["dates"][0]["portfolio"][
+                "gross_weight_share_on_missing_source_field"])
+
+    def test_missing_observation_breaks_unchanged_value_runs(self):
+        self._export(
+            universe=[
+                ["2026-11-20", "A", "Tech"],
+                ["2026-11-21", "A", "Tech"],
+                ["2026-11-23", "A", "Tech"],
+            ],
+            signal=[
+                ["2026-11-20", "A", "1"],
+                ["2026-11-21", "A", ""],
+                ["2026-11-23", "A", "1"],
+            ],
+            weights=[
+                ["2026-11-20", "A", "1"],
+                ["2026-11-21", "A", "1"],
+                ["2026-11-23", "A", "1"],
+            ])
+        measured = self._audit()["computed_metrics"]
+        self.assertEqual(measured["observed_equal_value_runs"], [
+            {"consecutive_exported_observations": 1, "run_count": 2},
+        ])
+        self.assertFalse(measured["daily_cadence_verified"])
 
     def test_hash_tampering_and_nonfinite_values_are_rejected(self):
         self._export()
