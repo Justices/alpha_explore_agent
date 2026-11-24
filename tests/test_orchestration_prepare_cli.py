@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from alpha_research.cli import main
 from alpha_research.orchestration.engine import MainOrchestrator
+from alpha_research.config import DEFAULT_CONFIG
 
 
 class OfflineProductionPreparationCliTests(unittest.TestCase):
@@ -86,7 +87,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
                 self.assertEqual(code, 0, error)
                 report = json.loads(output)
                 self.assertEqual(report["status"], "PREPARED_NOT_AUTHORIZED")
-                self.assertEqual(report["config_source"], "builtin_offline_defaults")
+                self.assertIn(report["config_source"], {"system_defaults_initialized", "state_config"})
                 task = MainOrchestrator(self.root).load(report["task_id"])
                 self.assertEqual(task["status"], "CREATED")
                 self.assertEqual(task["budget"], {
@@ -539,7 +540,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertEqual(task["status"], "CREATED")
         self.assertEqual(task["budget"]["reserved"], 0)
 
-    def test_missing_default_config_uses_safe_builtin_only_for_offline_preparation(self):
+    def test_missing_default_config_is_initialized_from_system_defaults(self):
         args = [
             "--state-root", str(self.root),
             "--lead", "deepseek", "--executor", "deepseek",
@@ -549,13 +550,14 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         status, output, error = self._call(args)
         self.assertEqual(status, 0, error)
         result = json.loads(output)
-        self.assertEqual(result["config_source"], "builtin_offline_defaults")
+        self.assertEqual(result["config_source"], "system_defaults_initialized")
         self.assertFalse(result["model_call_authorized"])
         task_id = result["task_id"]
         task = MainOrchestrator(self.root).load(task_id)
         self.assertEqual(task["request"]["region"], "CHN")
         self.assertEqual(task["request"]["delay"], 1)
-        self.assertFalse((self.root / "config" / "nastu_quant.json").exists())
+        persisted = json.loads((self.root / "config" / "nastu_quant.json").read_text(encoding="utf-8"))
+        self.assertEqual(persisted["model_governance"], DEFAULT_CONFIG["model_governance"])
         for action, expected in (
             ("orchestration-handoff", "AWAITING_DOMAIN_RESEARCH_ID"),
             ("orchestration-recovery-check", "NOT_BLOCKED_EXECUTE"),
@@ -593,14 +595,17 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse((self.root / "state" / "research_v1_1" /
                           "orchestration").exists())
 
-    def test_present_explicit_config_without_governance_never_gets_fallback(self):
+    def test_present_explicit_config_gets_fixed_sections_from_system_defaults(self):
         self.config.write_text(json.dumps({"scope": {"region": "CHN"}}),
                                encoding="utf-8")
-        status, _, error = self._call(
+        status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
-                           "--objective", "no governance bypass"])
-        self.assertEqual(status, 2)
-        self.assertIn("missing model_governance", error)
+                           "--objective", "system defaults fill fixed sections"])
+        self.assertEqual(status, 0, error)
+        task_id = json.loads(output)["task_id"]
+        self.assertEqual(MainOrchestrator(self.root).load(task_id)["request"]["region"], "CHN")
+        persisted = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["model_governance"], DEFAULT_CONFIG["model_governance"])
 
     def test_prepare_requires_both_registered_roles_and_policy(self):
         missing_role = [
@@ -638,7 +643,7 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         self.assertFalse((self.root / "state" / "research_v1_1" /
                           "orchestration").exists())
 
-    def test_inspection_rejects_model_policy_drift(self):
+    def test_inspection_restores_fixed_model_policy_drift(self):
         status, output, error = self._call(
             self.prefix + ["orchestration-prepare", "--workflow", "regular",
                            "--objective", "offline"])
@@ -647,10 +652,12 @@ class OfflineProductionPreparationCliTests(unittest.TestCase):
         new_config = json.loads(self.config.read_text(encoding="utf-8"))
         new_config["model_governance"]["max_calls"] = 5
         self.config.write_text(json.dumps(new_config), encoding="utf-8")
-        status, _, error = self._call(
+        status, output, error = self._call(
             self.prefix + ["orchestration-handoff", task_id])
-        self.assertEqual(status, 2)
-        self.assertIn("OrchestrationError", error)
+        self.assertEqual(status, 0, error)
+        self.assertEqual(json.loads(output)["status"], "AWAITING_DOMAIN_RESEARCH_ID")
+        normalized = json.loads(self.config.read_text(encoding="utf-8"))
+        self.assertEqual(normalized["model_governance"], DEFAULT_CONFIG["model_governance"])
 
 
 if __name__ == "__main__":
