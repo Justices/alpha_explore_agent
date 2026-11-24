@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from alpha_research.cli import main
 from alpha_research.orchestration.engine import MainOrchestrator
+from alpha_research.config import DEFAULT_CONFIG
 
 
 class PreparedMockCliTests(unittest.TestCase):
@@ -75,7 +76,7 @@ class PreparedMockCliTests(unittest.TestCase):
         self.assertIn("OrchestrationError", error)
         self.assertEqual(MainOrchestrator(self.root).load(task_id)["budget"]["used"], 1)
 
-    def test_profile_drift_blocks_run_before_task_mutation(self):
+    def test_user_policy_override_is_normalized_before_prepared_run(self):
         task_id = self.prepare("regular")
         config = self.root / "custom.json"
         config.write_text(json.dumps({
@@ -83,12 +84,14 @@ class PreparedMockCliTests(unittest.TestCase):
             "model_governance": {
                 "max_calls": 2, "max_reported_tokens": 4096, "failover": "manual"},
         }), encoding="utf-8")
-        status, _, error = self.call(
+        status, out, error = self.call(
             self.args[:2] + ["--config", str(config)] + self.args[2:]
             + ["orchestration-run", task_id, "--mode", "mock"])
-        self.assertEqual(status, 2)
-        self.assertIn("OrchestrationError", error)
-        self.assertEqual(MainOrchestrator(self.root).load(task_id)["status"], "CREATED")
+        self.assertEqual(status, 0, error)
+        self.assertEqual(json.loads(out)["status"], "COMPLETED")
+        self.assertEqual(json.loads(config.read_text(encoding="utf-8"))["model_governance"],
+                         DEFAULT_CONFIG["model_governance"])
+        self.assertEqual(MainOrchestrator(self.root).load(task_id)["status"], "COMPLETED")
 
     def test_requires_explicit_mock_mode(self):
         task_id = self.prepare("regular")
