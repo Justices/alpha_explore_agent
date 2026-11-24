@@ -1233,20 +1233,31 @@ class TestResearchAgent(unittest.TestCase):
         result = agent.run_once("second research", dataset_id="risk60")
         self.assertEqual(result["alpha_ids"], ["A1", "A2"])
 
-    def test_unknown_probe_dimensions_are_logged_and_block_backtest(self):
+    def test_model_cannot_override_system_owned_required_field_dimensions(self):
         self.model.decisions["plan_probes"] = {
-            "core_fields": ["signal_a"], "probes": [],
-            "required_dimensions": {"signal_a": [
-                "nominal_coverage", "usable_observations", "units",
-                "publication_timing", "tradeability"]},
-            "requirement_reason": "check data quality"}
+            "core_fields": ["signal_a", "signal_b"], "probes": [],
+            # Legacy/invalid model echoes must not override the system-owned
+            # mandatory evidence policy or block an otherwise valid campaign.
+            "required_dimensions": {
+                "signal_a": ["nominal_coverage", "usable_observations", "units",
+                             "publication_timing", "tradeability"],
+                "signal_b": ["coverage"],
+            },
+            "requirement_reason": {"signal_a": "model rationale", "signal_b": "model rationale"},
+        }
         agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
-        with patch("alpha_research.workflows.regular.agent.write_progress") as progress:
-            with self.assertRaisesRegex(ResearchError, "required field diagnostics"):
-                agent.run_once("diagnostic contract", dataset_id="risk60")
-        self.assertTrue(any("不支持的诊断维度" in call.args[0]
-                            and "nominal_coverage" in call.args[0] for call in progress.call_args_list))
-        self.assertNotIn("simulate_batch", [name for name, _ in self.gateway.calls])
+        result = agent.run_once("diagnostic contract", dataset_id="risk60")
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        self.assertEqual(sum(name == "simulate_batch" for name, _ in self.gateway.calls), 1)
+        batch = Path(result["batch_dir"])
+        saved = json.loads((batch / "probe_plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["required_dimensions"], {
+            "signal_a": ["nominal_coverage"],
+            "signal_b": ["nominal_coverage"],
+        })
+        self.assertNotIn("requirement_reason", saved)
+        self.assertEqual([args["label"] for name, args in self.gateway.calls
+                          if name == "simulate_batch"], ["production"])
 
     def test_rejected_probe_expression_is_replanned_before_any_submission(self):
         self.gateway.single_ids = ["P1"]
