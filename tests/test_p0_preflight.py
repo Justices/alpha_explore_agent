@@ -303,8 +303,10 @@ class P0PreflightTests(unittest.TestCase):
         self.assertEqual(report["scope"], "READY_LOCAL")
         self.assertEqual(report["model_budget"], "READY_LOCAL")
         self.assertTrue(self.cfg.is_file())
-        self.assertEqual(json.loads(self.cfg.read_text(encoding="utf-8")),
-                         DEFAULT_CONFIG)
+        persisted = json.loads(self.cfg.read_text(encoding="utf-8"))
+        expected_persisted = {key: value for key, value in DEFAULT_CONFIG.items()
+                              if key != "model"}
+        self.assertEqual(persisted, expected_persisted)
 
     def test_model_research_without_role_selection_still_fails_closed(self):
         with patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
