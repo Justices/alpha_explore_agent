@@ -8,6 +8,7 @@ import os
 import sys
 
 from alpha_research.state.paths import expand_path
+from alpha_research.config import is_default_config_path
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.platform_read_evidence import (
     record_platform_read_evidence, inspect_platform_read_evidence,
@@ -82,6 +83,8 @@ def run_probe_command(args, root, registry_path, *, gateway_factory):
         config_path = args.config or root / "config" / "nastu_quant.json"
         report = local_preflight(
             config_path, registry_path, lead=args.lead, executor=args.executor,
-            region=args.region, initialize_missing=args.config is None)
+            region=args.region,
+            initialize_missing=(args.config is None
+                                or is_default_config_path(config_path, root)))
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["status"] == "READY_LOCAL" else 2
