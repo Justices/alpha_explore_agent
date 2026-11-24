@@ -95,6 +95,17 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "orchestration-e2e-offline":
+        # Offline-only command: never construct Gateway, Model SDK, or a
+        # ResearchAgent. Its dedicated State Root is permanently mock-only.
+        from alpha_research.orchestration.offline_e2e import run_offline_e2e
+        try:
+            report = run_offline_e2e(args, root, registry_assignments, registry_path)
+        except (OSError, ValueError, TypeError, WriterLockError) as exc:
+            print(f"offline E2E refused: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["status"] == "OFFLINE_E2E_PASSED" else 2
     if args.command in PROBE_COMMANDS:
         return run_probe_command(args, root, registry_path,
                                  gateway_factory=Gateway)
