@@ -27,8 +27,10 @@ class SystemConfigTests(unittest.TestCase):
         config = load_config(self.path)
         self.assertTrue(self.path.is_file())
         self.assertEqual(config, DEFAULT_CONFIG)
-        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
-                         DEFAULT_CONFIG)
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        expected_persisted = {key: value for key, value in DEFAULT_CONFIG.items()
+                              if key != "model"}
+        self.assertEqual(persisted, expected_persisted)
         self.assertIn("model_governance", config)
         self.assertEqual(config["model"], DEFAULT_CONFIG["model"])
 
@@ -65,8 +67,10 @@ class SystemConfigTests(unittest.TestCase):
             self.assertEqual(config[section], DEFAULT_CONFIG[section])
         self.assertEqual(config["model"], DEFAULT_CONFIG["model"])
         self.assertNotIn("user_defined_section", config)
-        self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
-                         config)
+        persisted = json.loads(self.path.read_text(encoding="utf-8"))
+        expected_persisted = {key: value for key, value in config.items()
+                              if key != "model"}
+        self.assertEqual(persisted, expected_persisted)
 
     def test_unknown_scope_keys_fail_closed_without_overwriting_file(self):
         self.path.parent.mkdir(parents=True)
@@ -92,6 +96,7 @@ class SystemConfigTests(unittest.TestCase):
         self.assertEqual(saved["scope"]["region"], "CHN")
         self.assertEqual(saved["gate"], DEFAULT_CONFIG["gate"])
         self.assertEqual(saved["model_governance"], DEFAULT_CONFIG["model_governance"])
+        self.assertNotIn("model", saved)
 
 
 if __name__ == "__main__":
