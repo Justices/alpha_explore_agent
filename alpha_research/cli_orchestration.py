@@ -59,7 +59,8 @@ from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, 
 from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
 
 
-ORCHESTRATION_COMMANDS = frozenset({"orchestration-prepare", "orchestration-handoff",
+ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
+                        "orchestration-prepare", "orchestration-handoff",
                         "orchestration-recovery-check", "orchestration-run",
                         "orchestration-domain-mock",
                         "orchestration-research-prepare",
@@ -120,6 +121,56 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
         policy = prepared["model_governance"]
         effective = prepared["model"]
         orchestrator = MainOrchestrator(root)
+        if args.command == "orchestration-local-pilot-readiness":
+            # Reuse the exact Pilot task/identity/campaign guards, but never
+            # construct Gateway/Model or reserve any simulation/model budget.
+            from alpha_research.orchestration.local_regular_pilot import (
+                validate_local_pilot_task,
+            )
+            from alpha_research.preflight import local_preflight
+            blockers = []
+            scope = None
+            try:
+                request = validate_local_pilot_task(
+                    orchestrator, args.task_id, effective, policy)
+                scope = {
+                    key: request.get(key) for key in (
+                        "region", "delay", "universe", "dataset_ids")
+                }
+            except (OSError, ValueError, TypeError) as exc:
+                blockers.append(str(exc))
+            local = local_preflight(
+                config_path, registry_path, lead=args.lead,
+                executor=args.executor,
+                region=scope["region"] if scope is not None else None)
+            for field in (
+                    "config", "scope", "models", "model_budget",
+                    "brain_credentials"):
+                if local[field] != "READY_LOCAL":
+                    blockers.append("local " + field + ": " + local[field])
+            report = {
+                "schema_version": 1,
+                "status": (
+                    "PILOT_LOCAL_READY_NOT_AUTHORIZED" if not blockers
+                    else "PILOT_LOCAL_BLOCKED"),
+                "task_id": args.task_id,
+                "workflow": "regular",
+                "scope": scope,
+                "config_source": config_source,
+                "blockers": blockers,
+                "local_checks": {key: local[key] for key in (
+                    "config", "scope", "models", "model_budget",
+                    "brain_credentials")},
+                "model_invoked": False,
+                "brain_invoked": False,
+                "brain_read_verified": False,
+                "simulation_authorized": False,
+                "alpha_submission_authorized": False,
+                "live_dispatch_invoked": False,
+                "explicit_user_authorization_required": True,
+            }
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0 if not blockers else 2
         if args.command == "orchestration-research-prepare-status":
             result = inspect_research_preparation(
                 orchestrator, args.task_id)
