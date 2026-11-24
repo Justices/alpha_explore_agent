@@ -82,6 +82,6 @@ def run_probe_command(args, root, registry_path, *, gateway_factory):
         config_path = args.config or root / "config" / "nastu_quant.json"
         report = local_preflight(
             config_path, registry_path, lead=args.lead, executor=args.executor,
-            region=args.region)
+            region=args.region, initialize_missing=args.config is None)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0 if report["status"] == "READY_LOCAL" else 2
