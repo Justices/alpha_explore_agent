@@ -29,6 +29,7 @@ from alpha_research.state.store import StopSignals, atomic_write_json, file_sha2
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.operation_lock import SubmissionGate
 from alpha_research.state.writer_lock import SingleWriterLock
+from alpha_research.integrations.brain.catalog_error_codes import catalog_stage
 from alpha_research.expressions.validator import regular_operator_names, validate
 
 
@@ -355,14 +356,16 @@ class PlatformRuntime:
         return snapshot, hashlib.sha256(payload).hexdigest(), None
 
     def _catalog(self, command, params):
-        root = self._require_case()
+        with catalog_stage("CATALOG_CASE"):
+            root = self._require_case()
         if command == "get_operators":
             label = "算子目录"
             endpoint, rows_key = "/operators", "operators"
             relative = Path("catalogs", "operators.json")
             expected = {"source": self.client.base_url + endpoint}
         else:
-            scope = self._scope(params)
+            with catalog_stage("CATALOG_SCOPE"):
+                scope = self._scope(params)
             scope_path = Path(scope["region"], str(scope["delay"]), scope["universe"])
             dataset = (_component(params.get("dataset_id"), "Dataset ID")
                        if command == "get_datafields" else None)
@@ -377,20 +380,24 @@ class PlatformRuntime:
                         "source": self.client.base_url + endpoint}
             if dataset:
                 expected["dataset"] = dataset
-        account = self._account_namespace(self._snapshot_root / ".catalog-snapshot-key")
-        if account is None:
-            raise PlatformError("BRAIN account identity is required for catalog snapshots")
+        with catalog_stage("CATALOG_ACCOUNT_IDENTITY"):
+            account = self._account_namespace(self._snapshot_root / ".catalog-snapshot-key")
+            if account is None:
+                raise PlatformError("BRAIN account identity is required for catalog snapshots")
         cache_path = self._catalog_snapshot_path(relative)
-        snapshot, digest, reason = ((None, None, "请求强制刷新") if params.get("refresh") is True
-                            else self._cached_catalog(cache_path, expected, rows_key))
+        with catalog_stage("CATALOG_SNAPSHOT_READ"):
+            snapshot, digest, reason = ((None, None, "请求强制刷新") if params.get("refresh") is True
+                                else self._cached_catalog(cache_path, expected, rows_key))
         if snapshot is None:
             write_progress(f"{label} · {reason}，正在向 BRAIN 拉取完整目录")
             try:
                 if rows_key == "operators":
-                    rows = self._operator_rows(self._json(self._request("GET", endpoint)))
+                    with catalog_stage("CATALOG_REMOTE_OPERATORS"):
+                        rows = self._operator_rows(self._json(self._request("GET", endpoint)))
                 else:
                     query = {**scope, "dataset.id": dataset} if dataset else scope
-                    rows = self._paginate(endpoint, query)
+                    with catalog_stage("CATALOG_REMOTE_PAGINATION"):
+                        rows = self._paginate(endpoint, query)
             except PlatformError:
                 write_progress(f"{label} · BRAIN 拉取失败")
                 raise
@@ -401,19 +408,22 @@ class PlatformRuntime:
             if rows_key == "rows":
                 snapshot["scope"] = scope
             try:
-                atomic_write_json(cache_path, snapshot)
+                with catalog_stage("CATALOG_SNAPSHOT_WRITE"):
+                    atomic_write_json(cache_path, snapshot)
             except OSError:
                 write_progress(f"{label} · 快照写入失败 · {cache_path}")
                 raise
-            digest = file_sha256(cache_path)
+            with catalog_stage("CATALOG_SNAPSHOT_CHECKSUM"):
+                digest = file_sha256(cache_path)
             event = "快照已写入"
         else:
             event = "命中缓存"
         write_progress(f"{label} · {event} · {snapshot['metadata']['count']} 条 · "
                        f"拉取时间 {snapshot['metadata']['fetched_at']} · {cache_path}")
-        atomic_write_json(root / relative.with_suffix(".ref.json"), {
-            "snapshot_ref": str(cache_path), "sha256": digest,
-            "fetched_at": snapshot["metadata"]["fetched_at"]})
+        with catalog_stage("CATALOG_REFERENCE_WRITE"):
+            atomic_write_json(root / relative.with_suffix(".ref.json"), {
+                "snapshot_ref": str(cache_path), "sha256": digest,
+                "fetched_at": snapshot["metadata"]["fetched_at"]})
         return snapshot[rows_key]
 
     @staticmethod
@@ -1480,8 +1490,9 @@ class PlatformRuntime:
         if command == "validate_simulation_settings":
             return self.validate_simulation_settings(params.get("settings"))
         if command in {"get_datasets", "get_datafields", "get_operators"}:
-            with SingleWriterLock(self._snapshot_root / ".catalog.lock"):
-                return self._catalog(command, params)
+            with catalog_stage("CATALOG_LOCK"):
+                with SingleWriterLock(self._snapshot_root / ".catalog.lock"):
+                    return self._catalog(command, params)
         if command == "get_platform_setting_options":
             return self._setting_options(include_schema=params.get("include_schema") is True)
         if command == "get_simulation_settings_schema":

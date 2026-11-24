@@ -18,7 +18,7 @@ from alpha_research.orchestration.research_catalog_protocol import (
     research_catalog_request_allowed,
 )  # noqa: E402
 from alpha_research.integrations.brain.catalog_error_codes import (
-    classify_catalog_failure,
+    classify_catalog_failure, catalog_failure_stage, catalog_exception_kind,
 )  # noqa: E402
 
 
@@ -147,7 +147,14 @@ def main():
                          else f"{type(exc).__name__}: {str(exc)[:4000]}")
                 failure = {"ok": False, "error": error}
                 if command == "get_datasets":
-                    failure["error_code"] = classify_catalog_failure(exc)
+                    failure = {
+                        "ok": False, "error": "dataset catalog operation failed",
+                        "error_code": classify_catalog_failure(exc),
+                        "error_kind": catalog_exception_kind(exc),
+                    }
+                    stage = catalog_failure_stage(exc)
+                    if stage is not None:
+                        failure["error_stage"] = stage
                 write(failure)
     finally:
         runtime.close()

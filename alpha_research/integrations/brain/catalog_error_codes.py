@@ -14,7 +14,7 @@ CATALOG_FAILURE_CODES = frozenset({
     "CATALOG_AUTHORIZATION_REJECTED", "CATALOG_RATE_LIMITED",
     "CATALOG_UPSTREAM_ERROR", "CATALOG_HTTP_ERROR",
     "CATALOG_NETWORK_ERROR", "CATALOG_LOCAL_IO_ERROR",
-    "CATALOG_UNKNOWN",
+    "CATALOG_UNKNOWN", "CATALOG_LOCK_UNAVAILABLE",
 })
 
 _MESSAGES = {
@@ -33,6 +33,9 @@ _MESSAGES = {
 def classify_catalog_failure(exc):
     """Map trusted exception *types* and expected messages to fixed codes."""
     from alpha_research.integrations.brain.runtime import PlatformError
+    from alpha_research.state.writer_lock import WriterLockError
+    if isinstance(exc, WriterLockError):
+        return "CATALOG_LOCK_UNAVAILABLE"
     if isinstance(exc, OSError):
         return "CATALOG_LOCAL_IO_ERROR"
     if not isinstance(exc, PlatformError):
@@ -57,3 +60,55 @@ def classify_catalog_failure(exc):
     if "snapshot identity key" in message:
         return "CATALOG_LOCAL_IO_ERROR"
     return "CATALOG_UNKNOWN"
+
+# Stage names are fixed program identifiers, never filesystem paths, URLs, or
+# untrusted exception strings. They may be safely copied to local plan records.
+CATALOG_FAILURE_STAGES = frozenset({
+    "CATALOG_CASE", "CATALOG_SCOPE", "CATALOG_LOCK",
+    "CATALOG_ACCOUNT_IDENTITY", "CATALOG_SNAPSHOT_READ",
+    "CATALOG_REMOTE_PAGINATION", "CATALOG_REMOTE_OPERATORS",
+    "CATALOG_SNAPSHOT_WRITE", "CATALOG_SNAPSHOT_CHECKSUM",
+    "CATALOG_REFERENCE_WRITE",
+})
+
+
+@contextmanager
+def catalog_stage(stage):
+    """Annotate original exception without changing its class or message.
+
+    Preserve the innermost stage when an outer lock boundary also catches it.
+    This retains the existing fail-closed / non-retry semantics.
+    """
+    if stage not in CATALOG_FAILURE_STAGES:
+        raise ValueError("invalid catalog diagnostic stage")
+    try:
+        yield
+    except Exception as exc:
+        if getattr(exc, "catalog_failure_stage", None) not in CATALOG_FAILURE_STAGES:
+            try:
+                exc.catalog_failure_stage = stage
+            except (AttributeError, TypeError):
+                pass
+        raise
+
+
+def catalog_failure_stage(exc):
+    stage = getattr(exc, "catalog_failure_stage", None)
+    return stage if stage in CATALOG_FAILURE_STAGES else None
+
+
+def catalog_exception_kind(exc):
+    """Optional fixed code for unknown failures, never raw exception text."""
+    from alpha_research.integrations.brain.runtime import PlatformError
+    from alpha_research.state.writer_lock import WriterLockError
+    if isinstance(exc, WriterLockError):
+        return "LOCK"
+    if isinstance(exc, PermissionError):
+        return "PERMISSION"
+    if isinstance(exc, OSError):
+        return "OS"
+    if isinstance(exc, PlatformError):
+        return "PLATFORM"
+    if isinstance(exc, (TypeError, ValueError, KeyError, IndexError)):
+        return "DATA_SHAPE"
+    return "UNEXPECTED"

@@ -7,7 +7,9 @@ Discovery is read-only and never chooses simulation defaults.
 from datetime import datetime, timezone
 
 from alpha_research.integrations.brain.gateway import GatewayError
-from alpha_research.integrations.brain.catalog_error_codes import CATALOG_FAILURE_CODES
+from alpha_research.integrations.brain.catalog_error_codes import (
+    CATALOG_FAILURE_CODES, CATALOG_FAILURE_STAGES,
+)
 
 
 class ScopeDiscoveryError(ValueError):
@@ -111,6 +113,11 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
             issue = {"scope": scope, "reason": "dataset_catalog_unavailable"}
             if getattr(exc, "code", None) in CATALOG_FAILURE_CODES:
                 issue["catalog_error_code"] = exc.code
+            if getattr(exc, "stage", None) in CATALOG_FAILURE_STAGES:
+                issue["catalog_error_stage"] = exc.stage
+            if getattr(exc, "kind", None) in {"LOCK", "PERMISSION", "OS", "PLATFORM",
+                                              "DATA_SHAPE", "UNEXPECTED"}:
+                issue["catalog_error_kind"] = exc.kind
             unresolved.append(issue)
             continue
         except ScopeDiscoveryError:
