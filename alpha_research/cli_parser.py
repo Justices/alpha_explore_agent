@@ -380,6 +380,11 @@ def build_parser():
         "canary-field-decision",
         help="offline determine whether verified field alternatives improve catalog coverage")
     decision.add_argument("--plan-id", required=True)
+    distribution = sub.add_parser(
+        "canary-distribution-audit",
+        help="offline audit signed field/portfolio evidence; no remote calls")
+    distribution.add_argument("--plan-id", required=True)
+    distribution.add_argument("--evidence-dir", type=_path_argument)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
