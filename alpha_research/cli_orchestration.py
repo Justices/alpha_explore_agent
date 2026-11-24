@@ -135,8 +135,21 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
                     orchestrator, args.task_id, effective, policy)
                 scope = {
                     key: request.get(key) for key in (
-                        "region", "delay", "universe", "dataset_ids")
+                        "region", "delay", "universe", "dataset_ids", "category")
                 }
+                # A ready preflight Region alone does not prove the persisted
+                # Scope still matches the immutable Task. Check all pinned
+                # dimensions before suggesting any future real Pilot.
+                configured = prepared.get("scope") or {}
+                for field in ("region", "delay", "universe", "category"):
+                    fixed = configured.get(field)
+                    if fixed is not None and (
+                            type(fixed) is not type(request.get(field))
+                            or fixed != request.get(field)):
+                        blockers.append("configured " + field + " conflicts with Task")
+                dataset = configured.get("dataset_id")
+                if dataset is not None and request.get("dataset_ids") != [dataset]:
+                    blockers.append("configured dataset_id conflicts with Task")
             except (OSError, ValueError, TypeError) as exc:
                 blockers.append(str(exc))
             local = local_preflight(
