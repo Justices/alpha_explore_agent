@@ -94,6 +94,8 @@ class CanaryDistributionTests(unittest.TestCase):
         self.assertEqual(daily[0]["nonnull_fraction_of_exported_universe"], 0.66666667)
         self.assertEqual(daily[0]["portfolio"]["gross_weight_hhi"], 0.38)
         self.assertEqual(daily[0]["portfolio"]["effective_gross_holdings"], 2.63157895)
+        self.assertEqual(daily[0]["portfolio"]["max_sector_gross_weight_share"], 0.7)
+        self.assertEqual(daily[1]["portfolio"]["max_sector_gross_weight_share"], 0.6)
         self.assertEqual(daily[1]["portfolio"]["top5_gross_weight_share"], 1.0)
         updates = result["computed_metrics"]["signal_changes_between_exported_dates"]
         self.assertEqual(updates[0]["nonnull_pairs"], 2)
@@ -102,6 +104,11 @@ class CanaryDistributionTests(unittest.TestCase):
         by_sector = {r["sector"]: r for r in result["computed_metrics"]["by_sector"]}
         self.assertEqual(by_sector["Tech"]["nonnull_fraction"], 0.5)
         self.assertEqual(by_sector["Health"]["nonnull_fraction"], 1.0)
+        sector_daily = result["computed_metrics"]["by_date_sector"]
+        self.assertEqual(len(sector_daily), 4)
+        self.assertEqual(next(row["nonnull_fraction"] for row in sector_daily
+                              if row["date"] == "2026-11-20" and
+                              row["sector"] == "Tech"), 0.5)
         self.assertFalse(result["computed_metrics"]["actual_BRAIN_distribution_equivalence_verified"])
         self.assertFalse(result["computed_metrics"]["concentrated_weight_RA_root_cause_established"])
         self.assertFalse(result["source_provenance_verified"])

@@ -110,7 +110,8 @@ def _read_csv(path, expected_columns):
 def _manifest(path, *, plan_id, alpha_id, files):
     _file(path, max_bytes=64 * 1024)
     manifest = _read(path)
-    if (manifest.get("schema_version") != 1
+    if (type(manifest.get("schema_version")) is not int
+            or manifest["schema_version"] != 1
             or manifest.get("plan_id") != plan_id
             or manifest.get("alpha_id") != alpha_id
             or manifest.get("field_id") != FIELD
@@ -168,6 +169,7 @@ def _measure(universe, signals, weights, completeness):
     for (day, instrument), value in signals.items():
         signal_by_date[day][instrument] = value
     per_date = []
+    per_date_sector = []
     group_totals = defaultdict(lambda: [0, 0])
     normalized_weights = {}
     for day in dates:
@@ -175,16 +177,33 @@ def _measure(universe, signals, weights, completeness):
         nonnull = sum(signals.get((day, instrument)) is not None
                       and (day, instrument) in signals
                       for instrument, _ in members)
+        sector_rows = defaultdict(lambda: [0, 0])
+        sector_by_instrument = {}
         for instrument, sector in members:
+            sector_by_instrument[instrument] = sector
             group_totals[sector][0] += 1
+            sector_rows[sector][0] += 1
             if (day, instrument) in signals and signals[(day, instrument)] is not None:
                 group_totals[sector][1] += 1
+                sector_rows[sector][1] += 1
+        for sector, (count, valid) in sorted(sector_rows.items()):
+            per_date_sector.append({
+                "date": day, "sector": sector,
+                "universe_rows": count, "nonnull_signal_rows": valid,
+                "nonnull_fraction": _round(valid / count),
+            })
         day_weights = weight_by_date[day]
         gross = sum(abs(v) for v in day_weights.values())
         net = sum(day_weights.values())
         if gross <= 0:
             raise CanaryError("daily portfolio gross weight is zero")
         shares = sorted((abs(v) / gross for v in day_weights.values()), reverse=True)
+        sector_gross = defaultdict(float)
+        for instrument, value in day_weights.items():
+            sector_gross[sector_by_instrument[instrument]] += abs(value) / gross
+        sector_gross_shares = [
+            {"sector": sector, "gross_weight_share": _round(share)}
+            for sector, share in sorted(sector_gross.items())]
         hhi = sum(x * x for x in shares)
         normalized_weights[day] = {
             "max_gross_weight_share": _round(shares[0]),
@@ -194,6 +213,8 @@ def _measure(universe, signals, weights, completeness):
             "gross_exposure_input_units": _round(gross),
             "net_exposure_input_units": _round(net),
             "portfolio_constituents_in_export": len(day_weights),
+            "sector_gross_weight_shares": sector_gross_shares,
+            "max_sector_gross_weight_share": _round(max(sector_gross.values())),
         }
         per_date.append({
             "date": day,
@@ -233,6 +254,7 @@ def _measure(universe, signals, weights, completeness):
     return {
         "dates": per_date,
         "by_sector": sector_coverage,
+        "by_date_sector": per_date_sector,
         "signal_changes_between_exported_dates": updates,
         "coverage_interpretation": (
             "FULL_EXPORTED_UNIVERSE_AS_SELF_ATTESTED"
