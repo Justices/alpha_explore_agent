@@ -642,9 +642,13 @@ class ResearchP4FinalModulesTests(unittest.TestCase):
         self.addCleanup(thread.join, timeout=5)
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
+        # CI Windows runners may take several seconds to flush a SQLite
+        # transaction while running the entire suite. This is a loopback
+        # test-only budget, not the production client's timeout or retry policy.
         client = LoopbackAuthorityClient(
             "127.0.0.1", server.server_address[1],
-            api_token=api_token, admin_token=admin_token)
+            api_token=api_token, admin_token=admin_token,
+            timeout_seconds=15)
         return app, server, client, ledger_signer, api_token, admin_token
 
     def test_p5_1_loopback_grant_ack_readback_budget_and_revoke(self):
