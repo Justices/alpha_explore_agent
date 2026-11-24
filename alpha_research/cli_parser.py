@@ -372,6 +372,10 @@ def build_parser():
     shortlist = sub.add_parser(
         "canary-shortlist", help="offline triage design by coverage and matching DataField alternatives")
     shortlist.add_argument("--plan-id", required=True)
+    field_review = sub.add_parser(
+        "canary-field-review",
+        help="offline verify field coverage, semantic risks and alternative expression contracts")
+    field_review.add_argument("--plan-id", required=True)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
