@@ -2,6 +2,7 @@
   "scope": {
     "region": null,
     "dataset_id": null,
+    "category": null,
     "universe": null,
     "delay": null,
     "decay": null,
@@ -11,7 +12,9 @@
     "unit_handling": "VERIFY",
     "nan_handling": "OFF",
     "test_period": "P0Y0M",
-    "max_trade": "OFF"
+    "max_trade": "OFF",
+    "is_start": null,
+    "is_end": null
   },
   "gate": {
     "sharpe_min": 1.58,
@@ -34,6 +37,15 @@
     "turnover_max": 0.7,
     "weight_max": 0.1,
     "require_sub_universe_pass": true
+  },
+  "probe": {
+    "windows": [
+      5,
+      66
+    ]
+  },
+  "exec": {
+    "multisim_wait_threshold_s": 1200
   },
   "auth": {
     "mode": "auto",
