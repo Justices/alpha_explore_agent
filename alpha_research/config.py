@@ -95,6 +95,11 @@ def change_log_path(state_root=None) -> Path:
     return root / "config" / "change_log.md"
 
 
+def is_default_config_path(path, state_root) -> bool:
+    """Return whether an explicit path names this State Root's default config."""
+    return Path(path).resolve() == config_path(state_root).resolve()
+
+
 def _canonical_config(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise ConfigError("research configuration must be a JSON object")
