@@ -388,6 +388,7 @@ def audit_distribution(root, plan_id, *, evidence_dir=None, snapshot_root=None):
     _file(manifest_path, max_bytes=64 * 1024)
     for path in files.values():
         _file(path)
+    initial_manifest_sha256 = file_sha256(manifest_path)
     completeness, digests = _manifest(
         manifest_path, plan_id=plan_id,
         alpha_id=decision["source_alpha_id"], files=files)
@@ -395,11 +396,17 @@ def audit_distribution(root, plan_id, *, evidence_dir=None, snapshot_root=None):
     signal = _read_csv(files["signal.csv"], REQUIRED["signal.csv"])
     weights = _read_csv(files["weights.csv"], REQUIRED["weights.csv"])
     measured = _measure(universe, signal, weights, completeness)
+    # Rehash after the last input read: a manifest or CSV changed mid-audit
+    # must not yield a report bound to bytes that were not actually inspected.
+    if (file_sha256(manifest_path) != initial_manifest_sha256
+            or any(file_sha256(files[name]) != digests[name]
+                   for name in REQUIRED)):
+        raise CanaryError("evidence files changed during offline audit")
     report = {
         **common,
         "status": "DISTRIBUTION_METRICS_COMPUTED_PROVENANCE_REVIEW_REQUIRED",
         "missing_inputs": [],
-        "input_manifest_sha256": file_sha256(manifest_path),
+        "input_manifest_sha256": initial_manifest_sha256,
         "input_file_sha256": digests,
         "manifest_completeness_self_attested": completeness,
         "computed_metrics": measured,
