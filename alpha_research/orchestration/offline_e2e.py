@@ -94,10 +94,14 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
         # Reject incomplete registrations before even creating config files.
         raise OrchestrationError("both registered Lead and Executor are required")
 
+    # An external --config may be a user's live research file. Canonical
+    # config loading can migrate it in place, which violates mock isolation.
+    # Only the new workspace's own default config may be initialized here.
     config_path = args.config or root / "config" / "nastu_quant.json"
-    explicit = args.config is not None and not is_default_config_path(
-        config_path, root)
-    config, source = load_preparation_config(config_path, explicit=explicit)
+    if not is_default_config_path(config_path, root):
+        raise OrchestrationError(
+            "offline E2E accepts only its State Root default config path")
+    config, source = load_preparation_config(config_path, explicit=False)
     effective = prepare_registered_model_runtime(
         config, registry_assignments, registry_path)
     request = _build_request(args, effective)
