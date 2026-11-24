@@ -1196,10 +1196,8 @@ class ResearchAgent:
         required_dimensions = {
             field_id: list(REQUIRED_FIELD_DIMENSIONS) for field_id in core_fields
         }
-        probe_plan = {
-            key: value for key, value in probe_plan.items()
-            if key not in {"required_dimensions", "requirement_reason"}
-        }
+        probe_plan.pop("required_dimensions", None)
+        probe_plan.pop("requirement_reason", None)
         probe_plan["required_dimensions"] = required_dimensions
         if recovered_count < len(probes):
             for number, probe in enumerate(probes, start=1):
