@@ -78,7 +78,8 @@ def shortlist_canary(root, plan_id, *, snapshot_root=None):
     if stored != {k: v for k, v in verified.items() if k != "design_path"}:
         raise CanaryError("Round 2 design differs from verified source evidence")
     if (verified.get("status") != "DESIGNED_OFFLINE"
-            or verified.get("source_alpha_id") != "YPaepL9o"
+            or not isinstance(verified.get("source_alpha_id"), str)
+            or not verified["source_alpha_id"]
             or verified.get("candidate_eligible") is not False
             or verified.get("simulation_authorized") is not False):
         raise CanaryError("a complete, rejected, unapproved design is required")
