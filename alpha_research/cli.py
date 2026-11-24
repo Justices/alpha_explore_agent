@@ -52,6 +52,7 @@ def main(argv=None):
     # workflow entrypoint; the marker is not a dispatch authorization.
     live_commands = {
         "run-once", "run", "run-campaign", "run-super", "run-optimization",
+        "orchestration-local-pilot-regular",
         "plan-super", "plan-regular", "plan-optimization",
         "recover", "recover-research", "recover-workflow", "recover-task",
         "sync-backtest-cache", "tag-alpha",
@@ -66,6 +67,22 @@ def main(argv=None):
             marker_path(root).exists() or marker_path(root).is_symlink()):
         print("live model probe refused: offline mock workspace", file=sys.stderr)
         return 2
+
+    if args.command == "orchestration-local-pilot-regular":
+        # Verify explicit opt-in and frozen Task before constructing any
+        # provider, loading credentials, or opening a BRAIN session.
+        if (args.allow_model_call is not True
+                or args.allow_brain_simulation is not True
+                or not args.lead or not args.executor):
+            print("local pilot requires both registered roles and explicit "
+                  "--allow-model-call --allow-brain-simulation", file=sys.stderr)
+            return 2
+        try:
+            from alpha_research.orchestration.local_regular_pilot import _assert_single_regular
+            _assert_single_regular(MainOrchestrator(root).load(args.task_id))
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            print(f"local pilot preflight blocked: {exc}", file=sys.stderr)
+            return 2
 
     registry_path = args.registry or (
         root / "config" / "model_registry.json" if
@@ -248,6 +265,14 @@ def main(argv=None):
                 agent=agent, config=cfg, expected_workflow=args.workflow)
             print(json.dumps(result, ensure_ascii=False))
             return 0
+        if args.command == "orchestration-local-pilot-regular":
+            from alpha_research.orchestration.local_regular_pilot import run_local_regular_pilot
+            result = run_local_regular_pilot(
+                root, runtime, args.task_id,
+                model_config=cfg["model"],
+                governance_policy=cfg["model_governance"])
+            print(json.dumps(result, ensure_ascii=False))
+            return 0 if result.get("status") == "COMPLETED" else 2
         if args.command in RESEARCH_COMMANDS:
             result = runtime.dispatch(args.command, args, dispatcher=dispatch_research)
             print(json.dumps(result, ensure_ascii=False))
