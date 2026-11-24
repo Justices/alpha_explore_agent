@@ -143,6 +143,39 @@ def _round(value):
     return round(value, 8)
 
 
+def _observed_equal_value_runs(dates, signal_by_date):
+    """Lengths count consecutive export observations, not elapsed market days.
+
+    A missing/non-null gap breaks the run; the same value reappearing after
+    that gap does not establish that the signal stayed unchanged.
+    """
+    lengths = Counter()
+    active = {}
+    for day in dates:
+        current = {}
+        for instrument, value in signal_by_date[day].items():
+            if value is None:
+                continue
+            previous = active.get(instrument)
+            if previous is None:
+                current[instrument] = (value, 1)
+            elif previous[0] == value:
+                current[instrument] = (value, previous[1] + 1)
+            else:
+                lengths[previous[1]] += 1
+                current[instrument] = (value, 1)
+        for instrument, (_, length) in active.items():
+            if instrument not in current:
+                lengths[length] += 1
+        active = current
+    for _, length in active.values():
+        lengths[length] += 1
+    return [
+        {"consecutive_exported_observations": length, "run_count": count}
+        for length, count in sorted(lengths.items())
+    ]
+
+
 def _measure(universe, signals, weights, completeness):
     universe_keys = set(universe)
     if not set(signals).issubset(universe_keys) or not set(weights).issubset(universe_keys):
@@ -197,6 +230,14 @@ def _measure(universe, signals, weights, completeness):
         net = sum(day_weights.values())
         if gross <= 0:
             raise CanaryError("daily portfolio gross weight is zero")
+        # A partial signal export cannot distinguish absent evidence from a
+        # truly null source field, even if portfolio weights are exhaustive.
+        source_field_weight_overlap = (
+            _round(sum(abs(value) for instrument, value in day_weights.items()
+                       if signals.get((day, instrument)) is not None) / gross)
+            if completeness["signal_exhaustive"] and
+               completeness["weights_exhaustive"] else None
+        )
         shares = sorted((abs(v) / gross for v in day_weights.values()), reverse=True)
         sector_gross = defaultdict(float)
         for instrument, value in day_weights.items():
@@ -215,6 +256,10 @@ def _measure(universe, signals, weights, completeness):
             "portfolio_constituents_in_export": len(day_weights),
             "sector_gross_weight_shares": sector_gross_shares,
             "max_sector_gross_weight_share": _round(max(sector_gross.values())),
+            "gross_weight_share_on_nonnull_source_field": source_field_weight_overlap,
+            "gross_weight_share_on_missing_source_field": (
+                _round(1 - source_field_weight_overlap)
+                if source_field_weight_overlap is not None else None),
         }
         per_date.append({
             "date": day,
@@ -256,6 +301,13 @@ def _measure(universe, signals, weights, completeness):
         "by_sector": sector_coverage,
         "by_date_sector": per_date_sector,
         "signal_changes_between_exported_dates": updates,
+        "observed_equal_value_runs": _observed_equal_value_runs(dates, signal_by_date),
+        "signal_run_length_unit": "CONSECUTIVE_EXPORTED_DATES_NOT_MARKET_DAYS",
+        "source_field_weight_overlap_interpretation": (
+            "LOCAL_EXPORT_ASSOCIATION_NOT_PLATFORM_CAUSATION"
+            if completeness["signal_exhaustive"] and
+               completeness["weights_exhaustive"] else
+            "INCOMPLETE_EXPORT_NO_WEIGHT_SIGNAL_OVERLAP_INFERENCE"),
         "coverage_interpretation": (
             "FULL_EXPORTED_UNIVERSE_AS_SELF_ATTESTED"
             if full_scope_claimed else "SAMPLE_ONLY_UNKNOWN_TRUE_UNIVERSE_COVERAGE"),
