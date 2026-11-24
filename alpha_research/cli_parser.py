@@ -391,6 +391,11 @@ def build_parser():
     recordsets.add_argument("--plan-id", required=True)
     recordsets.add_argument("--allow-brain-read", action="store_true",
                             help="authorize only pinned Alpha and its listed recordset GETs")
+    rs_review = sub.add_parser(
+        "canary-recordsets-review",
+        help="offline typed audit of immutable native Alpha recordset evidence")
+    rs_review.add_argument("--plan-id", required=True)
+    rs_review.add_argument("--evidence-path", type=_path_argument, required=True)
     package = sub.add_parser(
         "canary-distribution-package",
         help="validate real local CSV exports, bind immutable checksums and run offline audit")
