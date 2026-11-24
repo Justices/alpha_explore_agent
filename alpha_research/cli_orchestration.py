@@ -48,6 +48,7 @@ from alpha_research.orchestration.release_gate import inspect_production_release
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
 )
+from alpha_research.config import is_default_config_path
 from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
 from alpha_research.orchestration.execution_identity import (
@@ -111,7 +112,9 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
                 "both --lead and --executor registrations are required")
         config_path = args.config or root / "config" / "nastu_quant.json"
         cfg, config_source = load_preparation_config(
-            config_path, explicit=args.config is not None)
+            config_path,
+            explicit=(args.config is not None
+                      and not is_default_config_path(config_path, root)))
         prepared = prepare_registered_model_runtime(
             cfg, registry_assignments, registry_path)
         policy = prepared["model_governance"]
