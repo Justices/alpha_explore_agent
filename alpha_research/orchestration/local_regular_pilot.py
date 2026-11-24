@@ -175,9 +175,16 @@ class LocalRegularPilotAdapter:
             # pass through one bounded gateway; the wrapper is never persisted.
             try:
                 agent.gateway = self.gateway
+                # The supervised one-POST pilot reserves its only BRAIN
+                # Simulation for the production batch. Catalog coverage is
+                # checked deterministically; optional diagnostic probes are
+                # disabled and cannot consume or collide with that reservation.
+                domain_context = {
+                    **context, "allow_diagnostic_simulations": False,
+                }
                 outcome = dispatch(
                     command, args, self.config, self.runner.state_root,
-                    self.gateway, agent, execution_context=context)
+                    self.gateway, agent, execution_context=domain_context)
             finally:
                 agent.gateway = original_gateway
             if not isinstance(outcome, dict):
