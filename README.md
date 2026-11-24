@@ -718,3 +718,17 @@ evaluation rather than an older PASS. Re-evaluations with identical evidence
 are idempotent; changed records archive previous revisions under
 `state/research_v1_1/evaluation_history/` before replacement. Reuse requires
 a matching current evidence and policy hash, never just matching Alpha ID.
+
+
+### One-shot BRAIN Canary (one fixed expression, explicit authorization)
+
+This is a legacy-domain real-API integration test, **not** approval for the new P7 production orchestrator. It never invokes a model, generates more expressions, submits an Alpha, or auto-PATCHes Alpha tags. The source of truth is the exact completed dataset plan. The prepare command authenticates to BRAIN, validates the complete live field/operator catalogs and effective Simulation schema, and writes a durable pre-registration. It sends no POST.
+
+```powershell
+$stateRoot = Join-Path $env:LOCALAPPDATA "alpha-research-live"
+python -m alpha_research --state-root $stateRoot canary-prepare --plan-id c619095d74394a0bb3d89d24910963c6
+python -m alpha_research --state-root $stateRoot canary-execute --plan-id c619095d74394a0bb3d89d24910963c6 --allow-one-simulation
+python -m alpha_research --state-root $stateRoot canary-status --plan-id c619095d74394a0bb3d89d24910963c6
+```
+
+The first actual Simulation dispatch permanently consumes the local one-shot reservation before attempting the network request. A timeout or lost response must be reconciled with the durable platform ledger; do not rerun the same POST or reset the reservation. Standard backend Simulation submission-gate and duplicate-cache safeguards remain active. The Canary must not automatically mutate Alpha tags. Only one expression, rank(analyst_revision_ratio_to_close_ebitda_q1), is accepted. Fixed initial settings are INDUSTRY neutralization, decay 4, truncation 0.08, pasteurization ON, unit handling VERIFY, NaN OFF, full test period, maxTrade OFF. Every setting must be verified against the current live BRAIN schema; missing or incompatible settings block, rather than guessing substitutes. This is a real BRAIN simulation and may incur usage; it does not confer Candidate status.
