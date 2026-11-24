@@ -71,6 +71,23 @@ def build_parser():
     prepare.add_argument("--category")
     prepare.add_argument("--universe")
     prepare.add_argument("--ppa", action="store_true")
+    offline_e2e = sub.add_parser(
+        "orchestration-e2e-offline",
+        help="prepare and execute one isolated domain-mock Task; no provider/BRAIN")
+    offline_e2e.add_argument("--mode", choices=("mock",), required=True)
+    offline_e2e.add_argument(
+        "--workflow", choices=("regular", "super", "optimization"), required=True)
+    offline_e2e.add_argument("--objective", required=True)
+    offline_e2e.add_argument("--region")
+    offline_e2e.add_argument("--delay", type=int)
+    offline_e2e.add_argument("--universe")
+    offline_e2e.add_argument("--dataset", action="append")
+    offline_e2e.add_argument("--category")
+    offline_e2e.add_argument("--ppa", action="store_true")
+    offline_e2e.add_argument("--alpha-id")
+    offline_e2e.add_argument(
+        "--fault", choices=("lost-simulation-response",),
+        help="offline fault injection: reserve the Task and prohibit replay")
     mock_run = sub.add_parser(
         "orchestration-run",
         help="run a prepared task with built-in synthetic fixtures only; no model/BRAIN")
