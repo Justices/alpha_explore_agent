@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from alpha_research.cli_canary import FIELD, SCOPE, run_canary_command
-from alpha_research.cli_canary_distribution import audit_distribution
+from alpha_research.cli_canary_distribution import audit_distribution, _read_csv
 from alpha_research.state.store import atomic_write_json, file_sha256
 from tests.test_canary_field_decision import CanaryFieldDecisionTests
 
@@ -194,6 +194,21 @@ class CanaryDistributionTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(Exception, "NaN or infinite"):
             self._audit()
+
+    def test_mutating_csv_during_audit_is_rejected(self):
+        self._export()
+
+        def read_then_mutate(path, columns):
+            rows = _read_csv(path, columns)
+            if path.name == "signal.csv":
+                with path.open("a", encoding="utf-8") as stream:
+                    stream.write("\n")
+            return rows
+
+        with patch("alpha_research.cli_canary_distribution._read_csv",
+                   side_effect=read_then_mutate):
+            with self.assertRaisesRegex(Exception, "changed during offline audit"):
+                self._audit()
 
     def test_duplicate_instrument_date_and_false_exhaustive_claim_rejected(self):
         self._export(signal=[
