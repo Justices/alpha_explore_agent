@@ -12,6 +12,15 @@ from alpha_research.agents.governance import validate_policy
 from alpha_research.config import load_config
 
 
+# Strictly isolated synthetic Super/Optimization domain mock only. This is not
+# a fallback for user config and is never used by live model execution.
+OFFLINE_PREPARATION_POLICY = {
+    "max_calls": 1,
+    "max_reported_tokens": 4096,
+    "failover": "manual",
+}
+
+
 def prepare_registered_model_runtime(config, assignments, registry_path):
     """Return a fresh configuration with validated model profile and policy.
 
