@@ -783,3 +783,17 @@ python -m alpha_research --state-root "D:\quant\alpha_explore_agent\alpha-resear
 ```
 
 The command checks the existing immutable field decision and validates each file's structure, dates, identifiers, and numerical data. It calculates SHA-256 checksums, creates `evidence_manifest.json` without overwriting any different existing manifest, and then runs the offline distribution audit. It never starts a Gateway, BRAIN/LLM request, simulation, correlation, tag update or Alpha submission. The three completeness flags `--universe-complete`, `--signal-exhaustive`, `--weights-exhaustive` default to **false**. Only pass a flag when the **actual export process** establishes that its claim is true; don't infer completeness from the approximate catalog coverage or local CSV row counts. Partial exports may still yield bounded sample metrics, but portfolio concentration is omitted unless the weights export is attested exhaustive. If raw CSVs are absent, the tool reports `DISTRIBUTION_SOURCE_CSV_MISSING` and does **not** create fake files or a manifest. Raw exports and local manifest are self-attested until independent platform lineage verification; no result grants simulation authorization. Replacing an export requires explicit versioning/separation rather than rewriting a manifest for the same directory.
+
+#### Pinned Alpha native Recordset observation (explicit BRAIN read authorization)
+
+If instrument-level `universe.csv`, `signal.csv`, and `weights.csv` cannot be sourced, **do not manufacture them** from historical Alpha summary metrics. An alternative diagnostic branch can inspect native BRAIN Alpha recordsets (if the account exposes them):
+
+```powershell
+python -m alpha_research --state-root "D:\quant\alpha_explore_agent\alpha-research-live" canary-recordsets-observe `
+  --plan-id c619095d74394a0bb3d89d24910963c6 `
+  --allow-brain-read
+```
+
+Set `BRAIN_CREDENTIALS_FILE` in the environment before invoking this command. Without explicit `--allow-brain-read`, without credentials, or in an offline mock workspace, **no platform connection is made**. The observer uses this project's independent `WorldQuantClient` exclusively for the pinned `GET /alphas/<id>`, `GET /alphas/<id>/recordsets`, and, only when listed, four exact Recordsets: `coverage`, `coverage-by-sector`, `turnover`, `average-value-by-sector`. Authentication may require the client's ordinary `POST /authentication`; no Simulation POST, PATCH, submission, correlation or tag mutation is permitted. First it verifies the Alpha ID, `REGULAR` type, exact original expression, and `EQUITY/USA/Delay 1/TOP3000` settings against the immutable research case. Other recordsets are not fetched. Unsupported, incomplete, invalid or unavailable endpoints remain explicitly unresolved; they do not imply zero coverage or turnover.
+
+Captured, size-bounded JSON responses and their exact SHA-256 fingerprints are stored immutably at `state/canary/<plan-id>_recordsets_<digest>.json`. The CLI emits the report's paths, read status and schema hints, **not** the complete raw data in stdout. The first pass deliberately leaves `ALPHA_RECORDSETS_CAPTURED_SCHEMA_REVIEW_REQUIRED`: parsing requires review of the actual returned schema. Native Recordset coverage describes the Alpha portfolio and **cannot be treated as raw analyst10 DataField availability or per-instrument weight distribution**. It supplements but does not satisfy the three-CSV distribution evidence contract. The command never grants a new Simulation or Candidate admission.
