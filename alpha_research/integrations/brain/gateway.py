@@ -19,6 +19,7 @@ from alpha_research.integrations.brain.guarded_protocol import (
 from alpha_research.orchestration.research_catalog_protocol import (
     research_catalog_request_allowed,
 )
+from alpha_research.integrations.brain.catalog_error_codes import CATALOG_FAILURE_CODES
 
 WHITELIST = {
     "check_simulation_cache",
@@ -49,7 +50,9 @@ READ_ONLY_COMMANDS = {
 # Orchestration production mode defaults to a minimal *positive* read
 # allowlist. Future commands cannot silently become authorized writes.
 class GatewayError(RuntimeError):
-    pass
+    def __init__(self, message, *, code=None):
+        super().__init__(message)
+        self.code = code
 
 
 class Gateway:
@@ -220,6 +223,9 @@ class Gateway:
         if not resp.get("ok"):
             # Never propagate untrusted provider error bodies: they may
             # contain credentials, request headers or account identifiers.
+            code = resp.get("error_code")
+            if cmd == "get_datasets" and code in CATALOG_FAILURE_CODES:
+                raise GatewayError(f"{cmd} failed in platform driver", code=code)
             raise GatewayError(f"{cmd} failed in platform driver")
         return resp.get("result", resp)
 

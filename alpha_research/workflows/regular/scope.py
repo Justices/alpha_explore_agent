@@ -7,6 +7,7 @@ Discovery is read-only and never chooses simulation defaults.
 from datetime import datetime, timezone
 
 from alpha_research.integrations.brain.gateway import GatewayError
+from alpha_research.integrations.brain.catalog_error_codes import CATALOG_FAILURE_CODES
 
 
 class ScopeDiscoveryError(ValueError):
@@ -106,8 +107,15 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
                  "delay": current_delay, "universe": current_universe}
         try:
             catalog = _rows(gateway.call("get_datasets", **scope))
-        except (GatewayError, ScopeDiscoveryError):
-            unresolved.append({"scope": scope, "reason": "dataset_catalog_unavailable"})
+        except GatewayError as exc:
+            issue = {"scope": scope, "reason": "dataset_catalog_unavailable"}
+            if getattr(exc, "code", None) in CATALOG_FAILURE_CODES:
+                issue["catalog_error_code"] = exc.code
+            unresolved.append(issue)
+            continue
+        except ScopeDiscoveryError:
+            unresolved.append({"scope": scope, "reason": "dataset_catalog_unavailable",
+                               "catalog_error_code": "CATALOG_INVALID_PAGE"})
             continue
         catalogs.append({"scope": scope, "count": len(catalog)})
         by_id = {item.get("id"): item for item in catalog

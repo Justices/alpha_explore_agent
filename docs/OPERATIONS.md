@@ -80,3 +80,7 @@ docker compose -f deploy/p7/compose.yaml ps
 ## 本地 CLI 的职责和安全边界
 
 `cli_parser.py` 只定义参数；`cli_orchestration.py` 负责研究准备/授权审计/模拟演练命令，沿用离线封闭和鉴权拒绝语义；`cli_status.py` 只聚合 state-root 内已有记录。`cli.py` 保留实时 BRAIN/模型命令的各自显式安全条件；CLI 拆分不意味着这些入口获得新的生产执行许可。
+
+## 本地真实 Dataset 目录诊断（只读）
+
+`brain-readonly-check` 只验证单页 Catalog 可读，返回的 `dataset_count` 不是完整分页下载的证据。`plan-regular --dataset <ID>` 需要先下载和校验完整的 exact-scope Dataset Catalog，然后才查询给定 ID 的详情。若返回 `dataset_catalog_unavailable`，新版本的 `unresolved[].catalog_error_code` 提供固定、无敏感内容的错误分类（HTTP 拒绝、分页计数变化、重复 ID、响应格式、本地存储或未知）。这不会改变 fail-closed 行为；不要用单页成功代替全量 Catalog 完整性，也不要绕过缺失的 Scope 证据直接 Simulation。`CATALOG_UNKNOWN` 或没有分类码时应检查隔离的受控日志和当前 SHA；不要将真实原始凭证、响应头或错误载荷贴到公共渠道。

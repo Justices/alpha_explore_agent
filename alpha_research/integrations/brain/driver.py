@@ -17,6 +17,9 @@ from alpha_research.integrations.brain.guarded_protocol import (
 from alpha_research.orchestration.research_catalog_protocol import (
     research_catalog_request_allowed,
 )  # noqa: E402
+from alpha_research.integrations.brain.catalog_error_codes import (
+    classify_catalog_failure,
+)  # noqa: E402
 
 
 def research_catalog_frame_allowed(request, scope, *, source_alpha_id=None):
@@ -99,6 +102,7 @@ def main():
             line = line.strip()
             if not line:
                 continue
+            command = None
             try:
                 # A read-only/guarded client cannot ask the driver to parse
                 # an unbounded JSON line and exhaust its memory before the
@@ -141,7 +145,10 @@ def main():
                 error = ("protected platform operation failed"
                          if guarded or read_only
                          else f"{type(exc).__name__}: {str(exc)[:4000]}")
-                write({"ok": False, "error": error})
+                failure = {"ok": False, "error": error}
+                if command == "get_datasets":
+                    failure["error_code"] = classify_catalog_failure(exc)
+                write(failure)
     finally:
         runtime.close()
     return 0
