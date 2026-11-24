@@ -127,6 +127,44 @@ class TestLocalRegularPilot(unittest.TestCase):
         self.assertIs(self.agent.gateway, self.gateway)
         self.assertEqual(self.runner.resume(self.task["task_id"]), done)
 
+    def test_unresolved_campaign_without_real_simulation_is_never_completed(self):
+        self._make_adapter()
+        def no_work(agent, gateway, *, execution_context=None, **kwargs):
+            return {
+                "status": "unresolved", "completed": [],
+                "unresolved": [{"reason": "platform_fields_unavailable"}],
+            }
+        with patch("alpha_research.orchestration.dispatch.run_regular_campaign",
+                   side_effect=no_work) as domain:
+            blocked = self.runner.execute(self.task["task_id"])
+        self.assertEqual(domain.call_count, 1)
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["steps"]["execute"], "RUNNING")
+        self.assertEqual(blocked["budget"], {
+            "limit": 1, "reserved": 1, "used": 0})
+        self.assertIsNone(blocked["result"])
+        self.assertEqual(self.gateway.calls, [])
+        with self.assertRaisesRegex(OrchestrationError, "explicit reconciliation"):
+            self.runner.resume(self.task["task_id"])
+
+    def test_one_simulation_without_intent_provenance_never_completes(self):
+        self._make_adapter()
+        def broken_domain(agent, gateway, *, execution_context=None, **kwargs):
+            gateway.call("simulate_batch", label="production",
+                         variants=[{"name": "a", "expression": "rank(close)"}])
+            return {
+                "status": "budget_complete", "completed": [
+                    {"alpha_ids": ["A1"],
+                     "candidate_status": {"A1": "EVIDENCE_PENDING"}}],
+            }
+        with patch("alpha_research.orchestration.dispatch.run_regular_campaign",
+                   side_effect=broken_domain):
+            blocked = self.runner.execute(self.task["task_id"])
+        self.assertEqual(blocked["status"], "BLOCKED")
+        self.assertEqual(blocked["budget"]["reserved"], 1)
+        self.assertIsNone(blocked["recovery_target"])
+        self.assertEqual(len(self.gateway.calls), 1)
+
     def test_unknown_post_blocks_and_never_replays(self):
         adapter = self._make_adapter()
         def uncertain(agent, gateway, *, execution_context=None, **kwargs):
