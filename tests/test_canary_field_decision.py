@@ -28,7 +28,7 @@ class CanaryFieldDecisionTests(unittest.TestCase):
     def _real_shape(self):
         # Synthetic offline fixture matching user-reported catalog facts:
         # 1 source, 4 directional revision counts, 1 ratio, 1 magnitude.
-        self.fixture.fields = [
+        self.fixture.previous.fields = [
             {"id": FIELD, "dataset": {"id": "analyst10"},
              "type": "MATRIX", "description": "EBITDA revision ratio to close Q1",
              "coverage": 0.2657, "dateCoverage": 1.0},
@@ -57,10 +57,10 @@ class CanaryFieldDecisionTests(unittest.TestCase):
              "description": "Magnitude of analyst EBITDA estimate revision",
              "coverage": 0.2657, "dateCoverage": 1.0},
         ]
-        self.fixture._save_catalogs()
+        self.fixture.previous._save_catalogs()
         canary_path = self.fixture.previous.legacy.canary_path
         canary = json.loads(canary_path.read_text(encoding="utf-8"))
-        canary["catalogs"]["field_count"] = len(self.fixture.fields)
+        canary["catalogs"]["field_count"] = len(self.fixture.previous.fields)
         atomic_write_json(canary_path, canary)
         design_path = self.root / "state" / "canary" / (
             self.plan_id + "_round2_design.json")
