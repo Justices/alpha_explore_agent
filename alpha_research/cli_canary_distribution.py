@@ -226,8 +226,13 @@ def _measure(universe, signals, weights, completeness):
                 "nonnull_fraction": _round(valid / count),
             })
         day_weights = weight_by_date[day]
-        gross = sum(abs(v) for v in day_weights.values())
-        net = sum(day_weights.values())
+        try:
+            gross = math.fsum(abs(v) for v in day_weights.values())
+            net = math.fsum(day_weights.values())
+        except OverflowError as exc:
+            raise CanaryError("portfolio weight exposure overflows finite range") from exc
+        if not math.isfinite(gross) or not math.isfinite(net):
+            raise CanaryError("portfolio weight exposure is nonfinite")
         if gross <= 0:
             raise CanaryError("daily portfolio gross weight is zero")
         # A partial signal export cannot distinguish absent evidence from a
