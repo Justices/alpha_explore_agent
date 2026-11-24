@@ -18,8 +18,10 @@ class SystemConfigTests(unittest.TestCase):
 
     def test_default_template_matches_the_single_code_owned_default(self):
         template = Path(__file__).resolve().parents[1] / "config.example.json"
+        expected = {key: value for key, value in DEFAULT_CONFIG.items()
+                    if key != "model"}
         self.assertEqual(json.loads(template.read_text(encoding="utf-8")),
-                         DEFAULT_CONFIG)
+                         expected)
 
     def test_missing_default_config_is_created_complete(self):
         config = load_config(self.path)
@@ -28,7 +30,7 @@ class SystemConfigTests(unittest.TestCase):
         self.assertEqual(json.loads(self.path.read_text(encoding="utf-8")),
                          DEFAULT_CONFIG)
         self.assertIn("model_governance", config)
-        self.assertNotIn("model", config)
+        self.assertEqual(config["model"], DEFAULT_CONFIG["model"])
 
     def test_only_scope_is_preserved_and_fixed_sections_are_restored(self):
         raw = {
@@ -58,7 +60,7 @@ class SystemConfigTests(unittest.TestCase):
         self.assertEqual(config["scope"]["category"], "ANALYST")
         self.assertEqual(config["scope"]["delay"], 1)
         self.assertEqual(config["scope"]["universe"], "TOP3000")
-        for section in ("gate", "preferred", "auth", "knowledge",
+        for section in ("gate", "preferred", "auth", "model", "knowledge",
                         "model_governance", "probe", "exec"):
             self.assertEqual(config[section], DEFAULT_CONFIG[section])
         self.assertNotIn("model", config)
