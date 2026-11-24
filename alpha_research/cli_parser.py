@@ -376,6 +376,10 @@ def build_parser():
         "canary-field-review",
         help="offline verify field coverage, semantic risks and alternative expression contracts")
     field_review.add_argument("--plan-id", required=True)
+    decision = sub.add_parser(
+        "canary-field-decision",
+        help="offline determine whether verified field alternatives improve catalog coverage")
+    decision.add_argument("--plan-id", required=True)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
