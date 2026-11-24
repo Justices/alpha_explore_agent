@@ -30,7 +30,7 @@ from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
 from alpha_research.orchestration.runtime_context import CliRuntimeContext
 from alpha_research.orchestration.recovery import RecoveryCoordinator
-from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.config import load_config
 from alpha_research.progress import write_progress
 from alpha_research.cli_parser import build_parser, _path_argument
 from alpha_research.cli_orchestration import (
@@ -142,10 +142,7 @@ def main(argv=None):
     if args.command == "rebuild-pools":
         try:
             config_path = args.config or root / "config" / "nastu_quant.json"
-            cfg = (json.loads(config_path.read_text(encoding="utf-8"))
-                   if config_path.exists() else DEFAULT_CONFIG)
-            if not isinstance(cfg, dict):
-                raise ValueError("configuration must be an object")
+            cfg = load_config(config_path, initialize=args.config is None)
             with SingleWriterLock(root / "state" / "agent.lock"):
                 index = CandidatePool(ResearchRecordStore(root)).sync_index(
                     current_policy_sha256=policy_hash(cfg))
@@ -179,9 +176,7 @@ def main(argv=None):
         return 2
     config_path = args.config or root / "config" / "nastu_quant.json"
     try:
-        cfg = json.loads(config_path.read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict):
-            raise ValueError("research config must be a JSON object")
+        cfg = load_config(config_path, initialize=args.config is None)
         # Planning, platform evidence and non-Regular recovery never invoke
         # an Agent or model. Do not require paid-model credentials, local
         # CLIs, role selections or registry availability for these commands.
