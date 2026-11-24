@@ -33,7 +33,6 @@ class DriverBoundaryDiagnostics(unittest.TestCase):
     def run_driver(self, *, fail_dispatch=False, fail_write=False):
         runtime = FakeRuntime(fail_dispatch=fail_dispatch)
         events = []
-        original_write = driver.write
 
         def safe_write(payload):
             if fail_write and payload.get("ok") and "result" in payload:
@@ -58,7 +57,9 @@ class DriverBoundaryDiagnostics(unittest.TestCase):
         self.assertEqual(failure["error_kind"], "DATA_SHAPE")
         self.assertEqual(failure["error_phase"], "PLATFORM_DISPATCH")
         self.assertNotIn("error_stage", failure)
-        self.assertNotIn("error_source", failure)
+        self.assertEqual(failure["error_source"]["module"],
+                         "alpha_research.integrations.brain.driver")
+        self.assertEqual(failure["error_source"]["function"], "main")
 
     def test_response_serialization_failure_is_classified(self):
         events = self.run_driver(fail_write=True)
