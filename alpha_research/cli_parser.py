@@ -362,6 +362,8 @@ def build_parser():
     execute.add_argument("--allow-one-simulation", action="store_true")
     inspect = sub.add_parser("canary-status", help="inspect local single-shot reservation")
     inspect.add_argument("--plan-id", required=True)
+    review = sub.add_parser("canary-review", help="offline verify saved canary evidence and metric gates")
+    review.add_argument("--plan-id", required=True)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
