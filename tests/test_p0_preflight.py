@@ -13,6 +13,7 @@ from unittest.mock import patch
 
 from alpha_research import cli as entry
 from alpha_research.preflight import local_preflight
+from alpha_research.config import DEFAULT_CONFIG
 from workbench.runtime_models import (
     checked_selection, listed_models, registry_path, research_config_path,
 )
@@ -235,19 +236,27 @@ class P0PreflightTests(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertEqual(json.loads(output.getvalue())["models"], "BLOCKED")
 
-    def test_registered_live_cli_requires_budget_even_with_model_keys(self):
+    def test_registered_live_preflight_uses_fixed_default_budget(self):
         self.cfg.write_text("{}", encoding="utf-8")
+        output = StringIO()
         with patch.dict(os.environ, {
             "ZAI_API_KEY": "offline", "MOONSHOT_API_KEY": "offline",
-        }), patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
+            "BRAIN_CREDENTIALS_FILE": "",
+        }), patch.object(entry, "Gateway") as gateway, redirect_stdout(output):
             code = entry.main([
                 *self.arguments, "--lead", "glm", "--executor", "kimi",
-                "run-once", "--objective", "trial",
+                "preflight", "--region", "CHN",
             ])
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 2)  # model is ready; BRAIN credentials are absent
         gateway.assert_not_called()
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["model_budget"], "READY_LOCAL")
+        self.assertEqual(report["models"], "READY_LOCAL")
+        self.assertEqual(report["brain_credentials"], "BLOCKED")
+        self.assertEqual(json.loads(self.cfg.read_text(encoding="utf-8"))["model_governance"],
+                         DEFAULT_CONFIG["model_governance"])
 
-    def test_local_preflight_blocks_missing_budget_policy(self):
+    def test_local_preflight_completes_fixed_budget_from_system_defaults(self):
         self.cfg.write_text(json.dumps({"scope": {"region": "CHN"}}),
                             encoding="utf-8")
         credential = self.root / "credentials.json"
@@ -263,12 +272,38 @@ class P0PreflightTests(unittest.TestCase):
                 *self.arguments, "--lead", "glm", "--executor", "kimi",
                 "preflight",
             ])
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 0)
         report = json.loads(output.getvalue())
-        self.assertEqual(report["model_budget"], "BLOCKED")
+        self.assertEqual(report["model_budget"], "READY_LOCAL")
+        self.assertEqual(report["max_model_calls"], DEFAULT_CONFIG["model_governance"]["max_calls"])
+        self.assertEqual(report["max_reported_tokens"],
+                         DEFAULT_CONFIG["model_governance"]["max_reported_tokens"])
         self.assertEqual(report["models"], "READY_LOCAL")
         self.assertEqual(report["brain_credentials"], "READY_LOCAL")
         self.assertFalse(report["simulation_authorized"])
+        persisted = json.loads(self.cfg.read_text(encoding="utf-8"))
+        self.assertEqual(persisted["model_governance"], DEFAULT_CONFIG["model_governance"])
+
+    def test_preflight_initializes_missing_default_config_without_external_calls(self):
+        self.cfg.unlink()
+        output = StringIO()
+        with patch.dict(os.environ, {
+            "ZAI_API_KEY": "", "MOONSHOT_API_KEY": "",
+            "BRAIN_CREDENTIALS_FILE": "",
+        }), patch.object(entry, "Gateway") as gateway, redirect_stdout(output):
+            code = entry.main([
+                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                "preflight", "--region", "USA",
+            ])
+        self.assertEqual(code, 2)
+        gateway.assert_not_called()
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["config"], "READY_LOCAL")
+        self.assertEqual(report["scope"], "READY_LOCAL")
+        self.assertEqual(report["model_budget"], "READY_LOCAL")
+        self.assertTrue(self.cfg.is_file())
+        self.assertEqual(json.loads(self.cfg.read_text(encoding="utf-8")),
+                         DEFAULT_CONFIG)
 
     def test_model_research_without_role_selection_still_fails_closed(self):
         with patch.object(entry, "Gateway") as gateway, redirect_stderr(StringIO()):
