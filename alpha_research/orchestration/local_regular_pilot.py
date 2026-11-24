@@ -104,6 +104,42 @@ class _SinglePostGateway:
         return self._gateway.call(command, **params)
 
 
+def validate_local_pilot_task(runner, task_id, model_config, governance_policy):
+    """Read-only identity and one-batch safety check used by audit AND dispatch.
+
+    No Gateway, model SDK, platform session or Simulation is instantiated.
+    A successful return is local task eligibility, never authorization.
+    """
+    task = runner.load(task_id)
+    request = _assert_single_regular(task)
+    inspect_execution_proposal(runner, task_id)
+    inspect_execution_identity(runner, task_id, model_config, governance_policy)
+    assert_live_model_routes(model_config)
+    marker = marker_path(runner.state_root)
+    if marker.exists() or marker.is_symlink():
+        raise OrchestrationError("pilot forbidden in mock workspace")
+    if StopSignals(runner.state_root / "state").exists():
+        raise OrchestrationError("global stop flag active")
+    from alpha_research.workflows.regular.campaign import _key
+    campaign_request = {
+        "objective": request["objective"],
+        "region": request["region"],
+        "dataset_ids": request["dataset_ids"],
+        "category": request.get("category"),
+        "delay": request["delay"],
+        "universe": request["universe"],
+        "max_batches": 1,
+        "ppa_profile": request.get("ppa_profile", False),
+    }
+    campaign_id = _key({**campaign_request, "batch_budget": "per_dataset"})
+    campaign_path = (runner.state_root / "state" / "research_v1_1"
+                     / "campaign_runs" / (campaign_id + ".json"))
+    if campaign_path.exists() or campaign_path.is_symlink():
+        raise OrchestrationError(
+            "pilot Campaign already exists; reconcile it rather than repost")
+    return request
+
+
 class LocalRegularPilotAdapter:
     """Task-bound adapter; only created inside explicitly opted-in active CLI."""
 
@@ -122,34 +158,8 @@ class LocalRegularPilotAdapter:
         self.task_id = task_id
         self.config = runtime.config
         self.gateway = _SinglePostGateway(runtime.gateway, runner.state_root)
-        task = runner.load(task_id)
-        self.request = _assert_single_regular(task)
-        inspect_execution_proposal(runner, task_id)
-        inspect_execution_identity(runner, task_id, model_config, governance_policy)
-        assert_live_model_routes(model_config)
-        marker = marker_path(runner.state_root)
-        if marker.exists() or marker.is_symlink():
-            raise OrchestrationError("pilot forbidden in mock workspace")
-        if StopSignals(runner.state_root / "state").exists():
-            raise OrchestrationError("global stop flag active")
-        # A new Task must not silently replay an old same-scope Campaign.
-        from alpha_research.workflows.regular.campaign import _key
-        campaign_request = {
-            "objective": self.request["objective"],
-            "region": self.request["region"],
-            "dataset_ids": self.request["dataset_ids"],
-            "category": self.request.get("category"),
-            "delay": self.request["delay"],
-            "universe": self.request["universe"],
-            "max_batches": 1,
-            "ppa_profile": self.request.get("ppa_profile", False),
-        }
-        campaign_id = _key({**campaign_request, "batch_budget": "per_dataset"})
-        campaign_path = (runner.state_root / "state" / "research_v1_1"
-                         / "campaign_runs" / (campaign_id + ".json"))
-        if campaign_path.exists() or campaign_path.is_symlink():
-            raise OrchestrationError(
-                "pilot Campaign already exists; reconcile it rather than repost")
+        self.request = validate_local_pilot_task(
+            runner, task_id, model_config, governance_policy)
 
     def run(self, workflow, step, request, checkpoints, context=None):
         if workflow != "regular" or request != self.request:
