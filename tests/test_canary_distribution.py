@@ -226,6 +226,15 @@ class CanaryDistributionTests(unittest.TestCase):
         with self.assertRaisesRegex(Exception, "rows are missing"):
             self._audit()
 
+    def test_extreme_finite_weights_cannot_overflow_portfolio_aggregation(self):
+        self._export(weights=[
+            ["2026-11-20", "A", "1e308"], ["2026-11-20", "B", "1e308"],
+            ["2026-11-20", "C", "-0.3"], ["2026-11-23", "A", "0.2"],
+            ["2026-11-23", "B", "0.2"], ["2026-11-23", "C", "-0.6"],
+        ])
+        with self.assertRaisesRegex(Exception, "overflows finite range"):
+            self._audit()
+
     def test_wrong_alpha_or_scope_blocked(self):
         self._export()
         p = self.inputs / "evidence_manifest.json"
