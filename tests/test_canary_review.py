@@ -12,6 +12,7 @@ from alpha_research.cli_canary import EXPRESSION, SCOPE, _variant, run_canary_co
 from alpha_research.cli_canary_review import review_canary
 from alpha_research.integrations.brain.runtime import PlatformRuntime
 from alpha_research.state.store import atomic_write_json, file_sha256
+from alpha_research.simulation.platform_cache import submission_key
 
 
 class CanaryReviewTests(unittest.TestCase):
@@ -109,7 +110,11 @@ class CanaryReviewTests(unittest.TestCase):
         atomic_write_json(self.marker_path, {
             "request_sha256": file_sha256(self.request_path),
             "receipt_sha256": file_sha256(self.receipt_path),
-            "submission_keys": ["f" * 64],
+            "submission_keys": [submission_key({
+                "type": "REGULAR",
+                "settings": PlatformRuntime._platform_settings(self.settings),
+                "regular": EXPRESSION,
+            })],
         })
 
     def test_offline_review_reports_metric_failure_and_never_promotes(self):

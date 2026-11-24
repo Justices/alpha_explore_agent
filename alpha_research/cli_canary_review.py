@@ -14,6 +14,7 @@ from alpha_research.cli_canary import (
     CanaryError, DATASET, EXPRESSION, SCOPE, _read, _canary_path, _verify_plan, _variant
 )
 from alpha_research.integrations.brain.runtime import PlatformRuntime
+from alpha_research.simulation.platform_cache import submission_key
 from alpha_research.qualification.gates import ra_correlation_check_state
 from alpha_research.state.store import atomic_write_json, file_sha256
 from alpha_research.qualification.pool import policy_hash
@@ -95,6 +96,10 @@ def review_canary(root, plan_id):
             or not isinstance(rows, list) or len(rows) != 1):
         raise CanaryError("platform pre-registration or single-request evidence differs")
     platform_settings = PlatformRuntime._platform_settings(canary["settings"])
+    payload = {"type": "REGULAR", "settings": platform_settings,
+               "regular": EXPRESSION}
+    if marker["submission_keys"] != [submission_key(payload)]:
+        raise CanaryError("recorded submission fingerprint does not match canary")
     admissions = receipt.get("field_admissions")
     if (receipt.get("dataset") != DATASET
             or receipt.get("variants") != [_variant()]
@@ -102,14 +107,19 @@ def review_canary(root, plan_id):
             or not isinstance(admissions, list) or len(admissions) != 1
             or admissions[0].get("passed") is not True
             or admissions[0].get("dataset") != DATASET
-            or admissions[0].get("validation", {}).get("verdict") != "PASS"):
+            or not isinstance(admissions[0].get("validation"), dict)
+            or admissions[0]["validation"].get("verdict") != "PASS"
+            or admissions[0]["validation"].get("fields") != [
+                "analyst_revision_ratio_to_close_ebitda_q1"]):
+
         raise CanaryError("pre-backtest field admission receipt is inconsistent")
     row = rows[0]
     if (not isinstance(row, dict) or row.get("alpha_id") != alpha_id
             or row.get("expression") != EXPRESSION or row.get("success") is not True):
         raise CanaryError("Alpha readback does not match the pinned expression")
     details = row.get("details")
-    if not isinstance(details, dict) or details.get("id") != alpha_id:
+    if (not isinstance(details, dict) or details.get("id") != alpha_id
+            or details.get("type") != "REGULAR"):
         raise CanaryError("Alpha detail readback identity missing")
     real_code = details.get("regular")
     real_code = real_code.get("code") if isinstance(real_code, dict) else real_code
