@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 
 from alpha_research.agents.governance import validate_policy
+from alpha_research.config import load_config
 from alpha_research.agents.readiness import inspect_live_model_roles
 from alpha_research.state.paths import expand_path
 
@@ -38,7 +39,7 @@ def _credentials_present(config, environment):
 
 
 def local_preflight(config_path, registry_path, *, lead, executor, region=None,
-                    environment=None):
+                    environment=None, initialize_missing=False):
     """Return local readiness only, without exposing any credential contents."""
     env = os.environ if environment is None else environment
     result = {
@@ -54,10 +55,8 @@ def local_preflight(config_path, registry_path, *, lead, executor, region=None,
         "simulation_authorized": False,
     }
     try:
-        cfg = json.loads(Path(config_path).read_text(encoding="utf-8"))
-        if not isinstance(cfg, dict):
-            raise ValueError("configuration is not a JSON object")
-    except (OSError, ValueError):
+        cfg = load_config(config_path, initialize=initialize_missing)
+    except (OSError, ValueError, TypeError):
         return result
     result["config"] = "READY_LOCAL"
     try:
