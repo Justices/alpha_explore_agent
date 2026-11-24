@@ -56,7 +56,7 @@ def inspect_research_catalog_evidence_frame(
 
 
 def write(payload):
-    sys.stdout.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
+    # Driver stdout is a machine-only JSONL transport. ASCII escapes preserve\n    # Unicode round trips and avoid Windows pipe failures on lone surrogates.\n    sys.stdout.write(json.dumps(payload, ensure_ascii=True, default=str) + "\n")
     sys.stdout.flush()
 
 

@@ -68,6 +68,21 @@ class DriverBoundaryDiagnostics(unittest.TestCase):
         self.assertEqual(failure["error_kind"], "DATA_SHAPE")
         self.assertNotIn("error_stage", failure)
 
+    def test_driver_jsonl_is_unicode_safe_on_strict_utf8_pipe(self):
+        # A remote catalog description can contain lone surrogate escapes.
+        # Legacy ensure_ascii=False raised UnicodeEncodeError in child stdout,
+        # outside catalog Runtime stages; the JSON wire must stay ASCII.
+        destination = io.BytesIO()
+        pipe = io.TextIOWrapper(destination, encoding="utf-8",
+                                errors="strict", write_through=True)
+        with patch.object(driver.sys, "stdout", pipe):
+            driver.write({"ok": True, "result": [
+                {"id": "analyst10", "description": "中文" + "\\ud800"}]})
+        payload = destination.getvalue()
+        self.assertTrue(payload.isascii())
+        parsed = json.loads(payload)
+        self.assertEqual(parsed["result"][0]["description"], "中文" + "\\ud800")
+
     def test_gateway_rejects_untrusted_error_source_values(self):
         gateway = Gateway()
         gateway.proc = type("P", (), {"poll": lambda self: None})()

@@ -93,3 +93,5 @@ docker compose -f deploy/p7/compose.yaml ps
 ### DRIVER 级 DATA_SHAPE / 缺少阶段时的诊断
 
 当 `plan-regular` 返回 `CATALOG_UNKNOWN`、`DATA_SHAPE` 而没有 `catalog_error_stage`，新增 `catalog_error_phase` 指明 Driver 请求解码、参数检查、Runtime 调度或响应写出环节；`catalog_error_source` 仅在异常栈包含项目自身允许的模块时输出模块/函数/行号，不输出原始路径、原始异常或 BRAIN 响应。该标记本身是诊断证据，不代表已完成 Catalog 读取。使用完全相同的 BRAIN scope 重跑，检查当前提交 SHA 与新字段。
+
+Driver JSONL stdout 是机器协议，本轮改为 ASCII-escaped JSON，以避免平台 Dataset 文本包含不完整 Unicode 转义时，在 Windows UTF-8 管道输出阶段发生编码异常。该处理保持 Gateway 解码后的 JSON 字符串不变，不改变 BRAIN 接口参数或授权。
