@@ -182,6 +182,20 @@ class LocalRegularPilotAdapter:
                 agent.gateway = original_gateway
             if not isinstance(outcome, dict):
                 raise OrchestrationError("pilot domain executor returned invalid result")
+            # A campaign can return an unresolved/empty result without throwing.
+            # Do not mark the Task COMPLETED, spend the orchestration budget
+            # and claim an end-to-end success without a real bounded simulation,
+            # one completed batch, a bound Research ID and a recovery Intent.
+            reloaded = self.runner.load(self.task_id)
+            if (self.gateway.simulation_commands_reserved != 1
+                    or outcome.get("status") not in {"scope_complete", "budget_complete"}
+                    or not isinstance(outcome.get("completed"), list)
+                    or len(outcome["completed"]) != 1
+                    or outcome.get("failures")
+                    or not isinstance(reloaded.get("research_identity"), dict)
+                    or not isinstance(reloaded.get("recovery_target"), dict)):
+                raise OrchestrationError(
+                    "pilot end-to-end evidence incomplete; inspect original Task/Intent before retry")
             return {**outcome, "mode": "supervised_local_real_pilot",
                     "simulation_commands_reserved":
                     self.gateway.simulation_commands_reserved,
