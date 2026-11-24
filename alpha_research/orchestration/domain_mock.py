@@ -19,10 +19,13 @@ from alpha_research.state.records import offline_mock_record_scope
 class DomainMockGateway:
     is_offline_mock = True
 
-    def __init__(self, region, source_alpha_id=None, *, lost_response=False):
+    def __init__(self, region, source_alpha_id=None, *, lost_response=False,
+                 dataset_ids=None, category=None):
         self.region = region
         self.source_alpha_id = source_alpha_id
         self.lost_response = lost_response
+        self.dataset_ids = list(dataset_ids) if dataset_ids else ["OFFLINE_DATASET"]
+        self.category = category or "OTHER"
         self.calls = []
 
     def call(self, command, **kwargs):
@@ -37,9 +40,10 @@ class DomainMockGateway:
             return {"selectionHandling": {"type": "choice",
                     "choices": [{"value": "POSITIVE"}]}}
         if command == "get_datasets":
-            return [{"id": "OFFLINE_DATASET", "category": "OTHER",
+            return [{"id": dataset_id, "category": self.category,
                      "region": self.region, "delay": 1, "universe": "TOP3000",
-                     "description": "offline mock dataset"}]
+                     "description": "offline mock dataset"}
+                    for dataset_id in self.dataset_ids]
         if command == "get_user_alphas":
             return {"results": [{"id": "OFFLINE_SUBMITTED", "status": "ACTIVE",
                      "type": "REGULAR", "settings": {
@@ -185,7 +189,9 @@ def build_domain_mock_adapter(state_root, task, *, fault=None):
     cfg["scope"]["delay"] = 1
     gateway = DomainMockGateway(
         region, request.get("alpha_id"),
-        lost_response=fault == "lost-simulation-response")
+        lost_response=fault == "lost-simulation-response",
+        dataset_ids=request.get("dataset_ids"),
+        category=request.get("category"))
     if task["workflow"] == "regular":
         agent = RegularMockAgent(
             state_root, lost_response=fault == "lost-simulation-response")
