@@ -369,6 +369,9 @@ def build_parser():
     design = sub.add_parser(
         "canary-design", help="offline design static-contract candidates from failed Canary")
     design.add_argument("--plan-id", required=True)
+    shortlist = sub.add_parser(
+        "canary-shortlist", help="offline triage design by coverage and matching DataField alternatives")
+    shortlist.add_argument("--plan-id", required=True)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
