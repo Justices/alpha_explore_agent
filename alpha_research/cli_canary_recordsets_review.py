@@ -112,20 +112,75 @@ def review_canary_recordsets(root, plan_id, *, evidence_path, snapshot_root=None
         raise CanaryError("recordset evidence fingerprint does not match file identity")
     report = envelope.get("report")
     payloads = envelope.get("payloads")
-    if (not isinstance(report, dict) or not isinstance(payloads, dict)
-            or report.get("plan_id") != plan_id
-            or report.get("source_alpha_id") != decision["source_alpha_id"]
-            or report.get("scope") != SCOPE
-            or report.get("expression") != EXPRESSION
-            or report.get("source_field_decision_sha256") != file_sha256(saved_decision_path)
-            or report.get("source_provenance_verified") is not True
-            or report.get("simulation_authorized") is not False
+    if not isinstance(report, dict) or not isinstance(payloads, dict):
+        raise CanaryError("recordset evidence has no report/payloads objects")
+    if report.get("plan_id") != plan_id:
+        raise CanaryError("recordset evidence belongs to another plan")
+    if report.get("source_alpha_id") != decision["source_alpha_id"]:
+        raise CanaryError("recordset evidence belongs to another Alpha")
+    if report.get("scope") != SCOPE or report.get("expression") != EXPRESSION:
+        raise CanaryError("recordset evidence scope or expression differs")
+    if report.get("source_field_decision_sha256") != file_sha256(saved_decision_path):
+        raise CanaryError("recordset evidence refers to a different field decision revision")
+    if (report.get("simulation_authorized") is not False
             or report.get("candidate_eligible") is not False
-            or not payloads):
-        raise CanaryError("recordset envelope is not a verified Canary readback")
+            or report.get("alpha_identity_settings_readback_verified") is not True):
+        raise CanaryError("recordset evidence does not prove pinned read-only Alpha identity")
+
     rows = report.get("recordsets")
-    if not isinstance(rows, dict):
-        raise CanaryError("recordset capture metadata missing")
+    if not isinstance(rows, dict) or set(rows) != set(RECORDSETS):
+        raise CanaryError("recordset capture metadata is incomplete")
+
+    if not payloads:
+        # BRAIN can authenticate and return an Alpha detail, yet list no
+        # usable Recordsets (e.g. index forbidden/404 or no matching names).
+        # The observer intentionally saves this negative evidence. It is not
+        # a corrupted readback and must not be reported as a parser error.
+        if (report.get("status") != "ALPHA_RECORDSETS_UNAVAILABLE"
+                or report.get("source_provenance_verified") is not False
+                or report.get("recordset_provenance_verified") is not False
+                or any(not isinstance(item, dict)
+                       or item.get("status") not in ("NOT_LISTED", "UNAVAILABLE")
+                       for item in rows.values())):
+            raise CanaryError("recordset capture claims availability but has no verified payload")
+        reviewed = {
+            "schema_version": 1,
+            "status": "ALPHA_RECORDSETS_UNAVAILABLE_OFFLINE",
+            "plan_id": plan_id,
+            "source_alpha_id": decision["source_alpha_id"],
+            "recordset_evidence_sha256": file_sha256(evidence_path),
+            "recordset_evidence_fingerprint": _fingerprint(envelope),
+            "scope": dict(SCOPE),
+            "recordset_catalog": report.get("recordset_catalog"),
+            "recordset_read_statuses": {
+                name: item["status"] for name, item in rows.items()
+            },
+            "metrics": {},
+            "alpha_identity_settings_readback_verified": True,
+            "recordset_provenance_verified": False,
+            "raw_field_or_weight_distribution_verified": False,
+            "concentration_root_cause_established": False,
+            "candidate_eligible": False,
+            "simulation_authorized": False,
+            "model_invoked": False,
+            "simulation_invoked": False,
+            "alpha_submission_invoked": False,
+            "alpha_tags_modified": False,
+            "next_stage": "RECORDSET_ENDPOINT_UNAVAILABLE_FIND_SUPPORTED_EVIDENCE",
+        }
+        dest = _canary_path(root, plan_id).with_name(
+            plan_id + "_recordsets_review_" + _fingerprint(envelope)[:16] + ".json")
+        if dest.exists() or dest.is_symlink():
+            if _read(dest) != reviewed:
+                raise CanaryError("existing recordset review differs; no overwrite")
+        else:
+            atomic_write_json(dest, reviewed)
+        return {**reviewed, "recordset_review_path": str(dest)}
+
+    if (report.get("status") != "ALPHA_RECORDSETS_CAPTURED_SCHEMA_REVIEW_REQUIRED"
+            or report.get("source_provenance_verified") is not True
+            or report.get("recordset_provenance_verified") is not True):
+        raise CanaryError("recordset capture status/provenance contradicts stored payloads")
     reviewed = {}
     for name, data in payloads.items():
         info = rows.get(name)
