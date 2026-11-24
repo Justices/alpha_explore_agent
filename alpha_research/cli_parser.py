@@ -385,6 +385,23 @@ def build_parser():
         help="offline audit signed field/portfolio evidence; no remote calls")
     distribution.add_argument("--plan-id", required=True)
     distribution.add_argument("--evidence-dir", type=_path_argument)
+    package = sub.add_parser(
+        "canary-distribution-package",
+        help="validate real local CSV exports, bind immutable checksums and run offline audit")
+    package.add_argument("--plan-id", required=True)
+    package.add_argument("--evidence-dir", type=_path_argument)
+    package.add_argument("--universe-source", required=True,
+                         help="origin of universe.csv; record actual export provenance")
+    package.add_argument("--signal-source", required=True,
+                         help="origin of signal.csv; record actual export provenance")
+    package.add_argument("--weights-source", required=True,
+                         help="origin of weights.csv; record actual export provenance")
+    package.add_argument("--universe-complete", action="store_true",
+                         help="explicitly attest complete universe; no automatic inference")
+    package.add_argument("--signal-exhaustive", action="store_true",
+                         help="explicitly attest one signal row per universe instrument/date")
+    package.add_argument("--weights-exhaustive", action="store_true",
+                         help="explicitly attest complete portfolio weights for all included dates")
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
