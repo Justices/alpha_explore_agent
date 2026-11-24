@@ -10,6 +10,7 @@ from contextlib import redirect_stdout
 
 from alpha_research.cli_canary import EXPRESSION, SCOPE, _variant, run_canary_command
 from alpha_research.cli_canary_review import review_canary
+from alpha_research.cli_canary_diagnose import diagnose_canary
 from alpha_research.integrations.brain.runtime import PlatformRuntime
 from alpha_research.state.store import atomic_write_json, file_sha256
 from alpha_research.simulation.platform_cache import submission_key
@@ -199,6 +200,72 @@ class CanaryReviewTests(unittest.TestCase):
         atomic_write_json(self.progress_path, progress)
         with self.assertRaisesRegex(Exception, "settings do not match"):
             review_canary(self.root, self.plan_id)
+
+    def _save_platform_check_rows(self, checks):
+        rows = json.loads(self.output_path.read_text(encoding="utf-8"))
+        rows[0]["is"]["checks"] = checks
+        rows[0]["details"]["is"]["checks"] = checks
+        atomic_write_json(self.output_path, rows)
+        progress = json.loads(self.progress_path.read_text(encoding="utf-8"))
+        progress["output_sha256"] = file_sha256(self.output_path)
+        atomic_write_json(self.progress_path, progress)
+
+    def test_canary_diagnosis_reads_exact_failed_ra_and_signatures(self):
+        self._save_platform_check_rows([
+            {"name": "LOW_SHARPE", "result": "FAIL"},
+            {"name": "HIGH_TURNOVER", "result": "FAIL"},
+            {"name": "LOW_FITNESS", "result": "FAIL"},
+        ])
+        review = review_canary(self.root, self.plan_id)
+        self.assertEqual(review["ra_check_state"], "fail")
+        diagnosed = diagnose_canary(self.root, self.plan_id)
+        self.assertEqual(diagnosed["status"], "DIAGNOSED_OFFLINE")
+        self.assertEqual(diagnosed["ra_state"], "fail")
+        self.assertEqual(diagnosed["failed_ra_checks"],
+                         ["HIGH_TURNOVER", "LOW_FITNESS", "LOW_SHARPE"])
+        self.assertEqual(diagnosed["signatures"][:3],
+                         ["S_SHARPE", "S_FITNESS", "S_TURNOVER_HI"])
+        self.assertEqual(len(diagnosed["hypotheses_not_proven"]), 3)
+        self.assertFalse(diagnosed["candidate_eligible"])
+        self.assertFalse(diagnosed["correlation_allowed"])
+        self.assertTrue(diagnosed["requires_new_simulation_authorization"])
+        self.assertEqual(diagnose_canary(self.root, self.plan_id)["status"],
+                         "DIAGNOSED_OFFLINE")
+
+    def test_diagnosis_no_gateway_cli_and_original_review_immutable(self):
+        self._save_platform_check_rows([{"name": "LOW_SHARPE", "result": "WARNING"}])
+        review_canary(self.root, self.plan_id)
+        args = SimpleNamespace(command="canary-diagnose", plan_id=self.plan_id)
+        stdout = StringIO()
+        with (patch.dict("os.environ", {"BRAIN_CREDENTIALS_FILE": ""}),
+              redirect_stdout(stdout)):
+            rc = run_canary_command(args, self.root,
+                                    gateway_factory=lambda: self.fail("No BRAIN call allowed"))
+        self.assertEqual(rc, 0)
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(result["failed_ra_checks"], ["LOW_SHARPE"])
+        self.assertFalse(result["simulation_invoked"])
+        self.assertFalse(result["model_invoked"])
+        self.assertFalse(result["alpha_submission_invoked"])
+
+    def test_diagnosis_blocks_invalid_ra_checks(self):
+        self._save_platform_check_rows([{"name": "LOW_SHARPE", "result": "UNKNOWN"}])
+        # Incomplete platform RA status may be present in raw evidence but
+        # review won't treat it as terminal pass/fail.
+        review_canary(self.root, self.plan_id)
+        with self.assertRaisesRegex(Exception, "not readable"):
+            diagnose_canary(self.root, self.plan_id)
+
+    def test_diagnosis_refuses_modified_audit_and_unchanged_canonical_output(self):
+        self._save_platform_check_rows([{"name": "LOW_SHARPE", "result": "FAIL"}])
+        review = review_canary(self.root, self.plan_id)
+        diagnose_canary(self.root, self.plan_id)
+        review_path = Path(review["review_path"])
+        stored = json.loads(review_path.read_text(encoding="utf-8"))
+        stored["failed_metrics"] = []
+        atomic_write_json(review_path, stored)
+        with self.assertRaisesRegex(Exception, "previous canary review differs"):
+            diagnose_canary(self.root, self.plan_id)
 
     def test_missing_ra_does_not_get_assumed_pass(self):
         result = review_canary(self.root, self.plan_id)
