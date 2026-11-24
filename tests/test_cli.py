@@ -33,6 +33,7 @@ class TestCli(unittest.TestCase):
                     patch.object(entry, "dispatch_research", return_value={}) as dispatch, \
                     patch.dict(os.environ), redirect_stdout(StringIO()):
                 code = entry.main(["--state-root", temp, "--config", str(config),
+                                   "--lead", "deepseek", "--executor", "deepseek",
                                    "run-super", "--region", "GLB", "--objective", "fixture"])
             self.assertEqual(code, 0)
             regular.assert_not_called()
@@ -53,6 +54,7 @@ class TestCli(unittest.TestCase):
                     "candidate_status": "PENDING_FULL_GATE",
                     "gate": {"A1": {"ppa_eligibility": {"status": "PASS"}}}}
                 code = entry.main(["--state-root", temp, "--config", str(config),
+                                   "--lead", "deepseek", "--executor", "deepseek",
                                    "run-once", "--objective", "explore PPA"])
             self.assertEqual(code, 0)
             result = json.loads(output.getvalue())
