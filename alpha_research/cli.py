@@ -40,6 +40,7 @@ from alpha_research.cli_status import run_status_command
 from alpha_research.cli_models import run_models_command
 from alpha_research.cli_probe import PROBE_COMMANDS, run_probe_command
 from alpha_research.cli_knowledge import KNOWLEDGE_COMMANDS, run_knowledge_command
+from alpha_research.cli_canary import CANARY_COMMANDS, run_canary_command
 
 
 def main(argv=None):
@@ -54,6 +55,7 @@ def main(argv=None):
         "plan-super", "plan-regular", "plan-optimization",
         "recover", "recover-research", "recover-workflow", "recover-task",
         "sync-backtest-cache", "tag-alpha",
+        "canary-prepare", "canary-execute",
     }
     if args.command in live_commands and (
             marker_path(root).exists() or marker_path(root).is_symlink()):
@@ -149,6 +151,8 @@ def main(argv=None):
             return 1
     if args.command in KNOWLEDGE_COMMANDS:
         return run_knowledge_command(args, root)
+    if args.command in CANARY_COMMANDS:
+        return run_canary_command(args, root, gateway_factory=Gateway)
     stop_signals = StopSignals(root / "state")
     if stop_signals.exists() and args.command not in {
             "recover", "recover-research", "recover-workflow", "recover-task",

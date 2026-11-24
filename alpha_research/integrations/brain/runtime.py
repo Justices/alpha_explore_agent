@@ -577,6 +577,18 @@ class PlatformRuntime:
                 "resume_url": progress.get("resume_url"), "status": progress.get("status")}
 
     def run_simulation_batch(self, params):
+        return self._submit_regular_batch(params, canary=False)
+
+    def run_canary_simulation(self, params):
+        # Exactly one expression, and no automatic Alpha metadata writes.
+        if (not isinstance(params, dict)
+                or set(params) != {"batch_id", "dataset_id", "settings", "variants"}
+                or not isinstance(params.get("variants"), list)
+                or len(params["variants"]) != 1):
+            raise PlatformError("canary requires exactly one variant and explicit settings")
+        return self._submit_regular_batch({**params, "label": "production"}, canary=True)
+
+    def _submit_regular_batch(self, params, *, canary):
         paths = self._batch_paths(params.get("batch_id"), params.get("label"))
         request = {"case_key": self.case_key, "run_id": self.run_id,
                    "batch_id": params.get("batch_id"), "label": params.get("label"),
@@ -584,6 +596,8 @@ class PlatformRuntime:
                    "settings": params.get("settings"), "variants": params.get("variants")}
         if params.get("origin_alpha_id") is not None:
             request["origin_alpha_id"] = _component(params["origin_alpha_id"], "origin Alpha ID")
+        if canary:
+            request["canary_no_tags"] = True
         self.validate_simulation_settings(request["settings"])
         variants = request["variants"]
         if not isinstance(variants, list) or not 1 <= len(variants) <= self.BATCH_LIMIT:
@@ -983,7 +997,8 @@ class PlatformRuntime:
                              "alpha_id": alpha_id, "success": True, "is": details.get("is"),
                              "details": details})
         regular = request.get("type") != "SUPER"
-        if regular:
+        tag_enabled = regular and request.get("canary_no_tags") is not True
+        if tag_enabled:
             tags = research_tags(request)
             for row in rows:
                 row["research_tags"] = {"status": "planned", "tags": tags}
@@ -999,7 +1014,7 @@ class PlatformRuntime:
         progress["output_sha256"] = hashlib.sha256(paths["output"].read_bytes()).hexdigest()
         progress["status"] = "COMPLETE"
         atomic_write_json(paths["progress"], progress)
-        if regular:
+        if tag_enabled:
             self._apply_completed_tags(rows, progress["request_sha256"])
         return {"results": rows, "runner": self._metadata(paths)}
 
@@ -1131,7 +1146,7 @@ class PlatformRuntime:
             if progress.get("output_sha256") != hashlib.sha256(paths["output"].read_bytes()).hexdigest():
                 raise PlatformError("completed simulation result changed; recovery blocked")
             rows = self._load(paths["output"])
-            if request.get("type") != "SUPER":
+            if request.get("type") != "SUPER" and request.get("canary_no_tags") is not True:
                 self._apply_completed_tags(rows, progress["request_sha256"])
             return {"results": rows, "runner": self._metadata(paths)}
         if not progress.get("resume_url"):
@@ -1501,6 +1516,8 @@ class PlatformRuntime:
             return self._json(self._request("GET", "/data-sets/" + _component(params.get("dataset_id"), "Dataset ID")))
         if command == "simulate_batch":
             return self.run_simulation_batch(params)
+        if command == "simulate_canary_once":
+            return self.run_canary_simulation(params)
         if command == "simulate_super":
             return self.run_super_simulation(params)
         if command == "resume_simulation_batch":

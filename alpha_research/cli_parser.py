@@ -355,6 +355,13 @@ def build_parser():
     search.add_argument("--limit", type=int, default=5)
     search.add_argument("--include-history", action="store_true",
                          help="return historical-only evidence; never mixed with valid results")
+    prep = sub.add_parser("canary-prepare", help="read-only prepare one pinned BRAIN canary")
+    prep.add_argument("--plan-id", required=True)
+    execute = sub.add_parser("canary-execute", help="post one explicitly authorized pinned Simulation")
+    execute.add_argument("--plan-id", required=True)
+    execute.add_argument("--allow-one-simulation", action="store_true")
+    inspect = sub.add_parser("canary-status", help="inspect local single-shot reservation")
+    inspect.add_argument("--plan-id", required=True)
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
