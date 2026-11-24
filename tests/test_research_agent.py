@@ -1259,6 +1259,27 @@ class TestResearchAgent(unittest.TestCase):
         self.assertEqual([args["label"] for name, args in self.gateway.calls
                           if name == "simulate_batch"], ["production"])
 
+    def test_single_post_policy_suppresses_optional_diagnostic_probes(self):
+        self.model.decisions["plan_probes"] = {
+            "core_fields": ["signal_a", "signal_b"],
+            "probes": [{"field_id": "signal_a", "expression": "invalid("}],
+        }
+        agent = ResearchAgent(self.gateway, self.model, self.config, Path(self.tmp.name))
+        result = agent.run_once(
+            "regular one-post pilot", dataset_id="risk60",
+            allow_diagnostic_simulations=False)
+        self.assertEqual(result["alpha_ids"], ["A1", "A2"])
+        labels = [args["label"] for name, args in self.gateway.calls
+                  if name == "simulate_batch"]
+        self.assertEqual(labels, ["production"])
+        batch = Path(result["batch_dir"])
+        saved = json.loads((batch / "probe_plan.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["probes"], [])
+        self.assertEqual(saved["diagnostic_probe_policy"], {
+            "allowed": False, "suppressed_probe_count": 1,
+            "reason": "single_post_local_regular_pilot",
+        })
+
     def test_rejected_probe_expression_is_replanned_before_any_submission(self):
         self.gateway.single_ids = ["P1"]
         probe = {"field_id": "signal_a", "expression": "signal_a / signal_a",
