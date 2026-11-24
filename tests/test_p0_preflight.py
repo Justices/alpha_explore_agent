@@ -292,7 +292,8 @@ class P0PreflightTests(unittest.TestCase):
             "BRAIN_CREDENTIALS_FILE": "",
         }), patch.object(entry, "Gateway") as gateway, redirect_stdout(output):
             code = entry.main([
-                *self.arguments, "--lead", "glm", "--executor", "kimi",
+                *self.arguments, "--config", str(self.cfg),
+                "--lead", "glm", "--executor", "kimi",
                 "preflight", "--region", "USA",
             ])
         self.assertEqual(code, 2)
