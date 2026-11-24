@@ -1,5 +1,4 @@
 """Complete Dataset read failures are classified at a fixed redacted stage."""
-import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -10,7 +9,7 @@ from alpha_research.integrations.brain.catalog_error_codes import (
     catalog_exception_kind, classify_catalog_failure,
 )
 from alpha_research.integrations.brain.runtime import PlatformError, PlatformRuntime
-from alpha_research.integrations.brain.gateway import Gateway, GatewayError
+from alpha_research.integrations.brain.gateway import GatewayError
 from alpha_research.state.writer_lock import WriterLockError
 from alpha_research.workflows.regular.scope import discover_regular_scope
 
@@ -55,8 +54,8 @@ class CatalogStageDiagnosticTests(unittest.TestCase):
                     "delay": 1, "universe": "TOP3000"})
             self.assertEqual(catalog_failure_stage(ctx.exception), "CATALOG_REMOTE_PAGINATION")
             self.assertEqual(classify_catalog_failure(ctx.exception), "CATALOG_REQUEST_REJECTED")
-            self.assertIsNone((root / "knowledge" / "datasets" / "USA" / "1" /
-                               "TOP3000" / "datasets.json").exists() or None)
+            self.assertFalse((root / "knowledge" / "datasets" / "USA" / "1" /
+                              "TOP3000" / "datasets.json").exists())
 
     def test_full_read_unexpected_platform_error_carries_stage(self):
         with tempfile.TemporaryDirectory() as temp:

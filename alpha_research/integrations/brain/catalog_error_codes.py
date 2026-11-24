@@ -5,6 +5,8 @@ No provider response text, credentials, URLs or arbitrary exception strings
 cross the driver/Gateway boundary.
 """
 
+from contextlib import contextmanager
+
 CATALOG_FAILURE_CODES = frozenset({
     "CATALOG_PAGE_COUNT_CHANGED", "CATALOG_DUPLICATE_IDS",
     "CATALOG_PAGE_INCOMPLETE", "CATALOG_INVALID_RECORDS",
