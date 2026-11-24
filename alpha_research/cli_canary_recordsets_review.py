@@ -45,6 +45,8 @@ def _numeric_series(name, recordset, metric):
     if parsed["status"] != "SCHEMA_VERIFIED":
         return parsed
     names = parsed["columns"]
+    if "date" not in names:
+        return {"status": "SCHEMA_UNRESOLVED", "reason": "DATED_SERIES_NOT_VERIFIED"}
     if metric not in names:
         return {"status": "SCHEMA_UNRESOLVED", "reason": "METRIC_COLUMN_NOT_LISTED",
                 "columns": names, "record_count": len(parsed["rows"])}
@@ -95,15 +97,18 @@ def review_canary_recordsets(root, plan_id, *, evidence_path, snapshot_root=None
     if (decision.get("simulation_authorized") is not False
             or decision.get("candidate_eligible") is not False):
         raise CanaryError("recordset review requires offline-only Canary decision")
-    evidence_path = Path(evidence_path).resolve()
+    source_path = Path(evidence_path)
+    if source_path.is_symlink():
+        raise CanaryError("recordset evidence symlinks are not permitted")
+    evidence_path = source_path.resolve()
     expected_root = _canary_path(root, plan_id).parent.resolve()
     if (evidence_path.parent != expected_root
-            or re.fullmatch(re.escape(plan_id) + r"_recordsets_[a-f0-9]{16}\\.json",
-                            evidence_path.name) is None
-            or evidence_path.is_symlink()):
+            or re.fullmatch(re.escape(plan_id) + r"_recordsets_[a-f0-9]{16}\.json",
+                            evidence_path.name) is None):
         raise CanaryError("recordset evidence must be a pinned local immutable file")
     envelope = _read(evidence_path)
-    if _fingerprint(envelope)[:16] not in evidence_path.name:
+    if evidence_path.name != (
+            plan_id + "_recordsets_" + _fingerprint(envelope)[:16] + ".json"):
         raise CanaryError("recordset evidence fingerprint does not match file identity")
     report = envelope.get("report")
     payloads = envelope.get("payloads")
