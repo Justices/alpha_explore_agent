@@ -18,7 +18,7 @@ from alpha_research.state.store import StopSignals, atomic_write_json, file_sha2
 from alpha_research.state.writer_lock import SingleWriterLock
 from alpha_research.workflows.regular.settings_validation import _validate_test_period
 
-CANARY_COMMANDS = frozenset({"canary-prepare", "canary-execute", "canary-status", "canary-review", "canary-diagnose", "canary-design", "canary-shortlist", "canary-field-review", "canary-field-decision", "canary-distribution-audit", "canary-distribution-package", "canary-recordsets-observe"})
+CANARY_COMMANDS = frozenset({"canary-prepare", "canary-execute", "canary-status", "canary-review", "canary-diagnose", "canary-design", "canary-shortlist", "canary-field-review", "canary-field-decision", "canary-distribution-audit", "canary-distribution-package", "canary-recordsets-observe", "canary-recordsets-review"})
 DATASET = "analyst10"
 FIELD = "analyst_revision_ratio_to_close_ebitda_q1"
 EXPRESSION = f"rank({FIELD})"
@@ -259,6 +259,13 @@ def _execute(root, plan_id, gateway):
 def run_canary_command(args, root: Path, *, gateway_factory):
     try:
         path = _canary_path(root, args.plan_id)
+        if args.command == "canary-recordsets-review":
+            from alpha_research.cli_canary_recordsets_review import review_canary_recordsets
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                result = review_canary_recordsets(
+                    root, args.plan_id, evidence_path=args.evidence_path)
+            print(json.dumps(result, ensure_ascii=True, indent=2))
+            return 0
         if args.command == "canary-recordsets-observe":
             if args.allow_brain_read is not True:
                 raise CanaryError("explicit --allow-brain-read is required")
