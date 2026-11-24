@@ -238,8 +238,8 @@ def _measure(universe, signals, weights, completeness):
         # A partial signal export cannot distinguish absent evidence from a
         # truly null source field, even if portfolio weights are exhaustive.
         source_field_weight_overlap = (
-            _round(sum(abs(value) for instrument, value in day_weights.items()
-                       if signals.get((day, instrument)) is not None) / gross)
+            _round(math.fsum(abs(value) for instrument, value in day_weights.items()
+                            if signals.get((day, instrument)) is not None) / gross)
             if completeness["signal_exhaustive"] and
                completeness["weights_exhaustive"] else None
         )
