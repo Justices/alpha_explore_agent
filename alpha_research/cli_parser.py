@@ -385,6 +385,12 @@ def build_parser():
         help="offline audit signed field/portfolio evidence; no remote calls")
     distribution.add_argument("--plan-id", required=True)
     distribution.add_argument("--evidence-dir", type=_path_argument)
+    recordsets = sub.add_parser(
+        "canary-recordsets-observe",
+        help="opt-in BRAIN GET-only Alpha recordset capture; never simulates")
+    recordsets.add_argument("--plan-id", required=True)
+    recordsets.add_argument("--allow-brain-read", action="store_true",
+                            help="authorize only pinned Alpha and its listed recordset GETs")
     package = sub.add_parser(
         "canary-distribution-package",
         help="validate real local CSV exports, bind immutable checksums and run offline audit")
