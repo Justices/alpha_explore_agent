@@ -114,3 +114,39 @@ def catalog_exception_kind(exc):
     if isinstance(exc, (TypeError, ValueError, KeyError, IndexError)):
         return "DATA_SHAPE"
     return "UNEXPECTED"
+
+
+# Fixed phase names for the driver-level request/dispatch/serialization
+# boundary, which is separate from the catalog Runtime stages.
+CATALOG_DRIVER_PHASES = frozenset({
+    "FRAME_DECODE", "FRAME_VALIDATE", "PLATFORM_DISPATCH", "FRAME_WRITE",
+})
+
+
+def safe_catalog_error_source(exc):
+    """Return an owned source symbol/line or None; never traceback contents.
+
+    This is for the operator's own code version and must not include local
+    absolute paths, caller input, third-party source or exception messages.
+    """
+    tb = getattr(exc, "__traceback__", None)
+    last = None
+    while tb is not None:
+        frame = tb.tb_frame
+        name = frame.f_globals.get("__name__")
+        if (isinstance(name, str)
+                and (name.startswith("alpha_research.integrations.brain.")
+                     or name in {"alpha_research.state.writer_lock",
+                                 "alpha_research.state.store",
+                                 "alpha_research.progress"})):
+            # Modules and function names are from running project code, but
+            # enforce a conservative character/length whitelist regardless.
+            import re
+            symbol = frame.f_code.co_name
+            if (len(name) <= 100 and len(symbol) <= 80
+                    and re.fullmatch(r"[a-zA-Z0-9_.]+", name)
+                    and re.fullmatch(r"[a-zA-Z0-9_]+", symbol)
+                    and 1 <= tb.tb_lineno <= 100000):
+                last = {"module": name, "function": symbol, "line": tb.tb_lineno}
+        tb = tb.tb_next
+    return last

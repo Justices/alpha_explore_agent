@@ -19,6 +19,7 @@ from alpha_research.orchestration.research_catalog_protocol import (
 )  # noqa: E402
 from alpha_research.integrations.brain.catalog_error_codes import (
     classify_catalog_failure, catalog_failure_stage, catalog_exception_kind,
+    safe_catalog_error_source,
 )  # noqa: E402
 
 
@@ -103,6 +104,7 @@ def main():
             if not line:
                 continue
             command = None
+            phase = "FRAME_DECODE"
             try:
                 # A read-only/guarded client cannot ask the driver to parse
                 # an unbounded JSON line and exhaust its memory before the
@@ -115,6 +117,7 @@ def main():
                     write({"ok": False, "error": "driver frame must be an object"})
                     continue
                 command = request.get("cmd")
+                phase = "FRAME_VALIDATE"
                 if command == "shutdown":
                     write({"ok": True, "stage": "shutdown"})
                     break
@@ -139,7 +142,9 @@ def main():
                            "read-only driver refuses this command"})
                     continue
                 params = {key: value for key, value in request.items() if key != "cmd"}
+                phase = "PLATFORM_DISPATCH"
                 result = runtime.dispatch(command, params)
+                phase = "FRAME_WRITE"
                 write({"ok": True, "result": result})
             except Exception as exc:
                 error = ("protected platform operation failed"
@@ -151,7 +156,11 @@ def main():
                         "ok": False, "error": "dataset catalog operation failed",
                         "error_code": classify_catalog_failure(exc),
                         "error_kind": catalog_exception_kind(exc),
+                        "error_phase": phase,
                     }
+                    source = safe_catalog_error_source(exc)
+                    if source is not None:
+                        failure["error_source"] = source
                     stage = catalog_failure_stage(exc)
                     if stage is not None:
                         failure["error_stage"] = stage

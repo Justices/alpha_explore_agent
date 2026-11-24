@@ -89,3 +89,7 @@ docker compose -f deploy/p7/compose.yaml ps
 ### Dataset Catalog UNKNOWN 分析补充
 
 如果完整读取返回 `CATALOG_UNKNOWN`，新的安全诊断字段 `catalog_error_stage` 指示失败位置（如 `CATALOG_LOCK`、`CATALOG_ACCOUNT_IDENTITY`、`CATALOG_REMOTE_PAGINATION`、`CATALOG_SNAPSHOT_WRITE`、`CATALOG_REFERENCE_WRITE`），`catalog_error_kind` 仅输出固定的异常类别，不包含原始异常正文、目录路径、Cookie 或 API 凭证。结果仍为 `unresolved`，不能将其当作 Dataset 准入。若 `catalog_error_stage=CATALOG_REMOTE_PAGINATION`，先检查平台分页契约；若为 `CATALOG_LOCK`，排查本地 `knowledge/.catalog.lock` 是否被其他进程占用；若为 `CATALOG_SNAPSHOT_WRITE`，排查源码工作目录下 `knowledge/` 的写权限。诊断字段不放宽任何 BRAIN / Provider 授权。
+
+### DRIVER 级 DATA_SHAPE / 缺少阶段时的诊断
+
+当 `plan-regular` 返回 `CATALOG_UNKNOWN`、`DATA_SHAPE` 而没有 `catalog_error_stage`，新增 `catalog_error_phase` 指明 Driver 请求解码、参数检查、Runtime 调度或响应写出环节；`catalog_error_source` 仅在异常栈包含项目自身允许的模块时输出模块/函数/行号，不输出原始路径、原始异常或 BRAIN 响应。该标记本身是诊断证据，不代表已完成 Catalog 读取。使用完全相同的 BRAIN scope 重跑，检查当前提交 SHA 与新字段。

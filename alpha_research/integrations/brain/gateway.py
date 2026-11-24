@@ -20,7 +20,7 @@ from alpha_research.orchestration.research_catalog_protocol import (
     research_catalog_request_allowed,
 )
 from alpha_research.integrations.brain.catalog_error_codes import (
-    CATALOG_FAILURE_CODES, CATALOG_FAILURE_STAGES,
+    CATALOG_FAILURE_CODES, CATALOG_FAILURE_STAGES, CATALOG_DRIVER_PHASES,
 )
 
 WHITELIST = {
@@ -52,11 +52,14 @@ READ_ONLY_COMMANDS = {
 # Orchestration production mode defaults to a minimal *positive* read
 # allowlist. Future commands cannot silently become authorized writes.
 class GatewayError(RuntimeError):
-    def __init__(self, message, *, code=None, stage=None, kind=None):
+    def __init__(self, message, *, code=None, stage=None, kind=None,
+                 phase=None, source=None):
         super().__init__(message)
         self.code = code
         self.stage = stage
         self.kind = kind
+        self.phase = phase
+        self.source = source
 
 
 class Gateway:
@@ -231,11 +234,25 @@ class Gateway:
             if cmd == "get_datasets" and code in CATALOG_FAILURE_CODES:
                 stage = resp.get("error_stage")
                 kind = resp.get("error_kind")
+                phase = resp.get("error_phase")
+                source = resp.get("error_source")
+                if (not isinstance(source, dict) or set(source) != {"module", "function", "line"}
+                        or not isinstance(source["module"], str)
+                        or not (source["module"].startswith("alpha_research.integrations.brain.")
+                                or source["module"] in {"alpha_research.state.writer_lock",
+                                                       "alpha_research.state.store",
+                                                       "alpha_research.progress"})
+                        or not isinstance(source["function"], str)
+                        or type(source["line"]) is not int
+                        or not 1 <= source["line"] <= 100000):
+                    source = None
                 raise GatewayError(
                     f"{cmd} failed in platform driver", code=code,
                     stage=stage if stage in CATALOG_FAILURE_STAGES else None,
                     kind=kind if kind in {"LOCK", "PERMISSION", "OS", "PLATFORM",
-                                         "DATA_SHAPE", "UNEXPECTED"} else None)
+                                         "DATA_SHAPE", "UNEXPECTED"} else None,
+                    phase=phase if phase in CATALOG_DRIVER_PHASES else None,
+                    source=source)
             raise GatewayError(f"{cmd} failed in platform driver")
         return resp.get("result", resp)
 

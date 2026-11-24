@@ -118,6 +118,16 @@ def discover_regular_scope(gateway, *, region, dataset_ids=None, category=None,
             if getattr(exc, "kind", None) in {"LOCK", "PERMISSION", "OS", "PLATFORM",
                                               "DATA_SHAPE", "UNEXPECTED"}:
                 issue["catalog_error_kind"] = exc.kind
+            if getattr(exc, "phase", None) in {"FRAME_DECODE", "FRAME_VALIDATE",
+                                               "PLATFORM_DISPATCH", "FRAME_WRITE"}:
+                issue["catalog_error_phase"] = exc.phase
+            source = getattr(exc, "source", None)
+            if (isinstance(source, dict) and set(source) == {"module", "function", "line"}
+                    and isinstance(source["module"], str)
+                    and source["module"].startswith("alpha_research.")
+                    and isinstance(source["function"], str)
+                    and type(source["line"]) is int):
+                issue["catalog_error_source"] = source
             unresolved.append(issue)
             continue
         except ScopeDiscoveryError:
