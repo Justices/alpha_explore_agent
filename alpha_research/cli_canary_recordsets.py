@@ -121,6 +121,7 @@ def observe_canary_recordsets(root, plan_id, *, client=None, snapshot_root=None)
                 "candidate_eligible": False, "simulation_authorized": False,
                 "model_invoked": False, "simulation_invoked": False,
                 "alpha_submission_invoked": False, "alpha_tags_modified": False,
+                "next_stage": "VERIFY_ALPHA_READ_ACCESS_AND_PINNED_IDENTITY",
             }
         _verify_alpha(alpha_read["data"], alpha_id)
         detail_sha = _fingerprint(alpha_read["data"])
@@ -166,11 +167,15 @@ def observe_canary_recordsets(root, plan_id, *, client=None, snapshot_root=None)
             "recordset_catalog": catalog_state,
             "recordsets": observations,
             "alpha_level_recordset_not_raw_field_or_position_evidence": True,
-            "source_provenance_verified": True,
+            "alpha_identity_settings_readback_verified": True,
+            "source_provenance_verified": bool(payloads),
+            "recordset_provenance_verified": bool(payloads),
             "candidate_eligible": False, "simulation_authorized": False,
             "model_invoked": False, "simulation_invoked": False,
             "alpha_submission_invoked": False, "alpha_tags_modified": False,
-            "next_stage": "OFFLINE_RECORDSET_SCHEMA_AND_METRIC_REVIEW",
+            "next_stage": ("OFFLINE_RECORDSET_SCHEMA_AND_METRIC_REVIEW"
+                           if payloads else
+                           "VERIFY_RECORDSET_ACCESS_OR_OTHER_EVIDENCE"),
         }
         envelope = {"report": report, "payloads": payloads}
         digest = _fingerprint(envelope)[:16]
