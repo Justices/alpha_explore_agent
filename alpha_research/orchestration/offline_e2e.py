@@ -88,7 +88,10 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
         raise OrchestrationError(
             "offline E2E requires a fresh empty --state-root; never reuse live research")
-    if set(registry_assignments) != {"research_lead", "research_executor"}:
+    if (set(registry_assignments) != {"research_lead", "research_executor"}
+            or not all(isinstance(value, str) and value.strip()
+                       for value in registry_assignments.values())):
+        # Reject incomplete registrations before even creating config files.
         raise OrchestrationError("both registered Lead and Executor are required")
 
     config_path = args.config or root / "config" / "nastu_quant.json"
