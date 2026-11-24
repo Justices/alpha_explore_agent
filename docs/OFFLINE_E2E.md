@@ -8,6 +8,7 @@
 - **模型生成、Regular 单批次研发执行以及 BRAIN 网关均为脚本化模拟**。Super/Optimization 的 Simulation 也是脚本化模拟。因此不能将任何候选指标或 Alpha ID 视为真实平台结果。
 - 不初始化 `Gateway`、不访问 BRAIN、不调用收费模型、不真实 Simulation、不提交 Alpha。
 - 要求**全新、空目录**作为独立 `--state-root`，绝不能使用有真实数据的 `.alpha-runtime` 或 `alpha-research-live`。
+- 不允许通过 `--config` 指向外部真实配置文件，以免离线流程的自动迁移意外修改真实工作区；仅使用独立 State Root 内的系统默认配置及命令行 Scope 选择。
 - 运行后目录被永久标记 `OFFLINE_DOMAIN_MOCK_ONLY`，不得复用于真实任务。每次重新验收换一个新目录。
 - 配置来自系统默认值，指定 Dataset/Category/Region/Delay/Universe 等 Scope 条件在生效前进行冲突检查；配置文件中固定政策不能覆盖系统默认值。
 
