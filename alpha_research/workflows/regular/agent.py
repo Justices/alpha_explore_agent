@@ -1229,7 +1229,8 @@ class ResearchAgent:
                  remedy_id=None, allow_remedy_round_overrun=False,
                  ppa_profile=False, execution_context=None, research_id=None,
                  field_pool_path=None, expected_category=None, scope_options=None,
-                 dataset_scope_proof=None, field_research=False, prior_research=None) -> dict:
+                 dataset_scope_proof=None, field_research=False, prior_research=None,
+                 allow_diagnostic_simulations=True) -> dict:
         if resume_batch_dir is not None:
             research_id = self._batch_research_id(resume_batch_dir, cached_context or {})
         self._begin_session(research_id or f"regular:{uuid4().hex}")
@@ -1391,12 +1392,29 @@ class ResearchAgent:
             probe_context = {
                 "objective": objective, "scope": scope, "dataset_id": dataset_id,
                 "fields": _field_summaries(fields), "operators": sorted(operators),
-                "prior_batches": prior_case.get("batches", [])}
+                "prior_batches": prior_case.get("batches", []),
+                "diagnostic_simulations_allowed": allow_diagnostic_simulations}
             if field_research:
                 probe_context["screening_only"] = True
             if prior_research:
                 probe_context["prior_campaign_findings"] = prior_research
             probe_plan = self._decide("plan_probes", probe_context, batch_dir=batch_dir)
+            if not isinstance(probe_plan, dict):
+                raise ResearchError("model probe plan must be a JSON object")
+            if type(allow_diagnostic_simulations) is not bool:
+                raise ResearchError("diagnostic Simulation policy must be boolean")
+            if not allow_diagnostic_simulations:
+                proposed_probes = probe_plan.get("probes")
+                suppressed_count = len(proposed_probes) if isinstance(proposed_probes, list) else 0
+                probe_plan = {
+                    **probe_plan,
+                    "probes": [],
+                    "diagnostic_probe_policy": {
+                        "allowed": False,
+                        "suppressed_probe_count": suppressed_count,
+                        "reason": "single_post_local_regular_pilot",
+                    },
+                }
         else:
             batch_dir = Path(resume_batch_dir).resolve()
             if not batch_dir.is_relative_to(self.runs_root.resolve()):
