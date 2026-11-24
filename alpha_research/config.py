@@ -12,6 +12,7 @@ from pathlib import Path
 
 from alpha_research.state import paths
 from alpha_research.state.store import atomic_write_json
+from alpha_research.agents.registry import load_role_profile
 
 
 DEFAULT_CONFIG = {
@@ -25,10 +26,10 @@ DEFAULT_CONFIG = {
         "neutralization": None,
         "truncation": None,
         "pasteurization": None,
-        "unit_handling": "VERIFY",
-        "nan_handling": "OFF",
-        "test_period": "P0Y0M",
-        "max_trade": "OFF",
+        "unit_handling": None,
+        "nan_handling": None,
+        "test_period": None,
+        "max_trade": None,
         "is_start": None,
         "is_end": None,
     },
@@ -57,6 +58,7 @@ DEFAULT_CONFIG = {
     "probe": {"windows": [5, 66]},
     "exec": {"multisim_wait_threshold_s": 1200},
     "auth": {"mode": "auto", "credential_env": "BRAIN_CREDENTIALS_FILE"},
+    "model": load_role_profile(),
     "knowledge": {
         "construction_advisory_path": None,
         "prior_knowledge_path": None,
