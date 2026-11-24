@@ -1184,33 +1184,23 @@ class ResearchAgent:
                 self.void_batch(batch_dir, "probe plan must choose live core fields")
                 write_progress(f"已归档未提交回测的无效探针草稿 · {batch_dir}")
             raise ResearchError("probe plan must choose live core fields")
-        required_dimensions = probe_plan.get("required_dimensions")
         supported_dimensions = set(FIELD_EVIDENCE_KEYS)
         if resuming:
             supported_dimensions.update(("refresh_rate", "scale_units", "typical_level", "distribution"))
-        if isinstance(required_dimensions, dict) and any(
-                not isinstance(item, str) or item not in supported_dimensions
-                for items in required_dimensions.values() if isinstance(items, list)
-                for item in items):
-            write_progress("字段诊断计划包含不支持的诊断维度。允许的维度为 "
-                           + ", ".join(FIELD_EVIDENCE_KEYS))
-            raise ResearchError("required field diagnostics need a justified dimension list")
-        if required_dimensions is not None and (not isinstance(required_dimensions, dict)
-              or set(required_dimensions) != set(core_fields)
-              or any(not isinstance(items, list) or not items
-                     or len(items) != len(set(items))
-                     or not set(REQUIRED_FIELD_DIMENSIONS).issubset(items)
-                     for items in required_dimensions.values())):
-            write_progress("字段诊断计划的维度清单无效。清单必须覆盖每个核心字段，且包含覆盖率")
-            raise ResearchError("required field diagnostics need a justified dimension list")
-        if required_dimensions is not None:
-            reason = probe_plan.get("requirement_reason")
-            reasons = list(reason.values()) if isinstance(reason, dict) else [reason]
-            if ((isinstance(reason, dict) and set(reason) != set(core_fields))
-                    or any(not isinstance(item, str) or not item.strip() for item in reasons)):
-                write_progress("字段诊断计划缺少有效选择理由。请提供一段整体说明，或为每个核心字段提供理由")
-                raise ResearchError("required field diagnostics need a nonempty selection rationale")
-        required_dimensions = {field_id: list(REQUIRED_FIELD_DIMENSIONS) for field_id in core_fields}
+        # Required field evidence is a deterministic research policy, not a
+        # model decision. Older prompts asked the model to echo a dimension
+        # list and rationale, then discarded both and replaced them with this
+        # constant. Rejecting a harmless/legacy/malformed model echo here
+        # blocked the entire campaign before probe_plan.json was persisted.
+        # Derive the requirement from code and canonicalize the saved plan.
+        required_dimensions = {
+            field_id: list(REQUIRED_FIELD_DIMENSIONS) for field_id in core_fields
+        }
+        probe_plan = {
+            key: value for key, value in probe_plan.items()
+            if key not in {"required_dimensions", "requirement_reason"}
+        }
+        probe_plan["required_dimensions"] = required_dimensions
         if recovered_count < len(probes):
             for number, probe in enumerate(probes, start=1):
                 if not isinstance(probe, dict) or not all(probe.get(k) for k in
