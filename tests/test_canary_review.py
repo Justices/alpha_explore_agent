@@ -152,6 +152,44 @@ class CanaryReviewTests(unittest.TestCase):
         saved = json.loads(Path(original["review_path"]).read_text(encoding="utf-8"))
         self.assertEqual(saved["metrics"]["sharpe"], 0.09)
 
+    def test_platform_omits_test_period_but_post_evidence_is_still_verified(self):
+        output = json.loads(self.output_path.read_text(encoding="utf-8"))
+        del output[0]["details"]["settings"]["testPeriod"]
+        atomic_write_json(self.output_path, output)
+        progress = json.loads(self.progress_path.read_text(encoding="utf-8"))
+        progress["output_sha256"] = file_sha256(self.output_path)
+        atomic_write_json(self.progress_path, progress)
+        review = review_canary(self.root, self.plan_id)
+        settings = review["settings_readback_verification"]
+        self.assertEqual(settings["status"], "PARTIAL_READBACK")
+        self.assertEqual(settings["not_echoed"], ["testPeriod"])
+        self.assertTrue(settings["submitted_settings_verified_by_receipt_and_fingerprint"])
+        self.assertEqual(review["status"], "BELOW_THRESHOLD")
+        self.assertEqual(review["failed_metrics"], ["sharpe", "fitness", "turnover"])
+
+    def test_zero_length_test_period_alias_is_explicitly_recorded(self):
+        output = json.loads(self.output_path.read_text(encoding="utf-8"))
+        output[0]["details"]["settings"]["testPeriod"] = "P0Y"
+        atomic_write_json(self.output_path, output)
+        progress = json.loads(self.progress_path.read_text(encoding="utf-8"))
+        progress["output_sha256"] = file_sha256(self.output_path)
+        atomic_write_json(self.progress_path, progress)
+        result = review_canary(self.root, self.plan_id)
+        settings = result["settings_readback_verification"]
+        self.assertEqual(settings["status"], "NORMALIZED_READBACK")
+        self.assertEqual(settings["normalized"], ["testPeriod"])
+        self.assertEqual(settings["not_echoed"], [])
+
+    def test_absent_nonoptional_setting_does_not_pass(self):
+        output = json.loads(self.output_path.read_text(encoding="utf-8"))
+        del output[0]["details"]["settings"]["neutralization"]
+        atomic_write_json(self.output_path, output)
+        progress = json.loads(self.progress_path.read_text(encoding="utf-8"))
+        progress["output_sha256"] = file_sha256(self.output_path)
+        atomic_write_json(self.progress_path, progress)
+        with self.assertRaisesRegex(Exception, "keys: neutralization"):
+            review_canary(self.root, self.plan_id)
+
     def test_source_settings_mismatch_rejected(self):
         output = json.loads(self.output_path.read_text(encoding="utf-8"))
         output[0]["details"]["settings"]["delay"] = 0

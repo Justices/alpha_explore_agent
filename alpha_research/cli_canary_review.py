@@ -41,6 +41,53 @@ def _number(value):
     return float(value)
 
 
+def _compare_alpha_settings(submitted, readback):
+    """Compare BRAIN Alpha detail settings with the POST-locked request.
+
+    BRAIN can omit testPeriod from /alphas/{id} even when the Simulation
+    request contained it. Treat only that single omission (for the pinned
+    zero-length period) as *not echoed*, not as proof of a matching value.
+    Every other missing or different requested setting is a hard failure.
+    """
+    if not isinstance(submitted, dict) or not isinstance(readback, dict):
+        raise CanaryError("Alpha detail settings do not match pre-registration: invalid shape")
+    unexpected = []
+    not_echoed = []
+    normalized = []
+    for key, expected in submitted.items():
+        if key not in readback:
+            if key == "testPeriod" and expected == "P0Y0M":
+                not_echoed.append(key)
+            else:
+                unexpected.append(key)
+            continue
+        actual = readback[key]
+        # Explicit zero-duration equivalents, not arbitrary period coercion.
+        if key == "testPeriod" and expected == "P0Y0M" and actual in ("P0Y", "P0M", "P0D"):
+            normalized.append(key)
+            continue
+        # bool and numeric values must not match by Python's True == 1 rule.
+        if (type(expected) is bool or type(actual) is bool):
+            equal = type(expected) is type(actual) and expected == actual
+        else:
+            equal = actual == expected
+        if not equal:
+            unexpected.append(key)
+    if unexpected:
+        # Only fixed contract key names are displayed; never dump Alpha
+        # detail objects, account data, or original HTTP response bodies.
+        raise CanaryError("Alpha detail settings do not match pre-registration; keys: " +
+                          ", ".join(sorted(unexpected)))
+    return {
+        "status": "PARTIAL_READBACK" if not_echoed else
+                  ("NORMALIZED_READBACK" if normalized else "EXACT_READBACK"),
+        "not_echoed": sorted(not_echoed),
+        "normalized": sorted(normalized),
+        "echo_verified_fields": sorted(set(submitted) - set(not_echoed)),
+        "submitted_settings_verified_by_receipt_and_fingerprint": True,
+    }
+
+
 def review_canary(root, plan_id):
     """Verify the exact existing Simulation receipt; never initiate platform IO."""
     root = Path(root).resolve()
@@ -126,9 +173,7 @@ def review_canary(root, plan_id):
     if real_code != EXPRESSION:
         raise CanaryError("Alpha detail expression does not match request")
     real_settings = details.get("settings")
-    if (not isinstance(real_settings, dict)
-            or any(real_settings.get(k) != v for k, v in platform_settings.items())):
-        raise CanaryError("Alpha detail settings do not match pre-registration")
+    settings_verification = _compare_alpha_settings(platform_settings, real_settings)
     metrics = row.get("is")
     if not isinstance(metrics, dict):
         raise CanaryError("Alpha IS metrics are missing")
@@ -183,6 +228,7 @@ def review_canary(root, plan_id):
         "ra_check_state": ra_state,
         "correlation_checked": False,
         "platform_evidence_verified": True,
+        "settings_readback_verification": settings_verification,
         "plan_sha256": plan_sha,
         "config_policy_sha256": policy_hash(config),
         "platform_output_sha256": progress["output_sha256"],
