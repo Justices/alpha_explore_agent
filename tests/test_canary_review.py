@@ -6,7 +6,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 from io import StringIO
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import redirect_stdout
 
 from alpha_research.cli_canary import EXPRESSION, SCOPE, _variant, run_canary_command
 from alpha_research.cli_canary_review import review_canary
@@ -130,9 +130,7 @@ class CanaryReviewTests(unittest.TestCase):
         args = SimpleNamespace(command="canary-review", plan_id=self.plan_id)
         out = StringIO()
         with (patch.dict("os.environ", {"BRAIN_CREDENTIALS_FILE": ""}),
-              redirect_stdout(out),
-              patch("alpha_research.cli_canary.run_canary_command.__globals__",
-                    create=True) if False else patch("alpha_research.cli_canary._variant", wraps=_variant)):
+              redirect_stdout(out)):
             result = run_canary_command(
                 args, self.root,
                 gateway_factory=lambda: self.fail("Gateway must not be constructed"))
