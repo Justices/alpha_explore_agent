@@ -20,6 +20,8 @@ from alpha_research.simulation.intent import create_simulation_intent, transitio
 
 def _emit(execution_context, event_type, **payload):
     callback = (execution_context or {}).get("emit_event")
+    if isinstance(payload.get("run_id"), str):
+        payload.setdefault("research_id", "optimization:" + payload["run_id"])
     if callable(callback):
         callback(event_type, payload)
 
