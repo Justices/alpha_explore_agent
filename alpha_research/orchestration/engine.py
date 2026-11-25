@@ -51,11 +51,13 @@ class MainOrchestrator:
         self.adapter = adapter
         self.config = config or {}
 
-    def _emit_event(self, task, event_type, *, step=None, payload=None):
+    def _emit_event(self, task, event_type, *, step=None, payload=None,
+                    research_id=None):
         journal = ExecutionEventJournal(self.state_root, task["task_id"])
         return journal.append(
             workflow=task["workflow"], event_type=event_type,
-            research_id=(task.get("research_identity") or {}).get("research_id"),
+            research_id=(research_id or
+                         (task.get("research_identity") or {}).get("research_id")),
             step=step, payload=payload or {})
 
     @staticmethod
@@ -280,8 +282,11 @@ class MainOrchestrator:
                     "bind_recovery_target": lambda kind, reference:
                         self.bind_recovery_target(task_id, kind, reference),
                     "emit_event": lambda event_type, payload=None:
-                        self._emit_event(self.load(task_id), event_type,
-                                         step=step, payload=payload),
+                        self._emit_event(
+                            self.load(task_id), event_type, step=step,
+                            payload=payload,
+                            research_id=(payload or {}).get("research_id")
+                                if isinstance(payload, dict) else None),
                 }
                 outcome = self.adapter.run(task["workflow"], step,
                                            copy.deepcopy(task["request"]),
