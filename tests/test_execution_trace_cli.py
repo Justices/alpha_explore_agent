@@ -33,7 +33,12 @@ class ExecutionTraceCliTests(unittest.TestCase):
             task = MainOrchestrator(directory).create(
                 "regular", {"objective": "nested optimization", "region": "USA"})
             nested_id = "a" * 32
-            ExecutionEventJournal(directory, task["task_id"]).append(
+            journal = ExecutionEventJournal(directory, task["task_id"])
+            journal.append(
+                workflow="regular", event_type="regular.campaign_started",
+                research_id="regular:campaign:" + ("b" * 32),
+                payload={"campaign_id": "b" * 32})
+            journal.append(
                 workflow="regular", event_type="optimization.research_started",
                 research_id="optimization:" + nested_id,
                 payload={"run_id": nested_id})
@@ -45,9 +50,7 @@ class ExecutionTraceCliTests(unittest.TestCase):
                 ])
             self.assertEqual(code, 0)
             report = json.loads(output.getvalue())
-            self.assertIn("regular:campaign:" + task["task_id"], report["task"]["research_ids"]
-                          if "regular:campaign:" + task["task_id"] in report["task"]["research_ids"]
-                          else report["task"]["research_ids"])
+            self.assertIn("regular:campaign:" + ("b" * 32), report["task"]["research_ids"])
             self.assertIn("optimization:" + nested_id, report["task"]["research_ids"])
             self.assertEqual(len(report["model_budgets"]), 2)
             self.assertEqual(report["domain_evidence"]["optimization_runs"][0]["run_id"],
