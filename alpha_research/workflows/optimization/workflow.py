@@ -291,6 +291,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                                       knowledge_pack_ref=str(pack_path))
     _emit(execution_context, "optimization.proposal_generated",
           run_id=run_id, model_session_id=recorder.session_id,
+          model_call_id=recorder.call_id,
           proposal_sha256=_digest(proposal), knowledge_pack_ref=str(pack_path))
     for key in ("rationale", "hypothesis", "failure_criterion"):
         if not isinstance(proposal.get(key), str) or not proposal[key].strip():
