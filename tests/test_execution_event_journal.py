@@ -38,6 +38,14 @@ class ExecutionEventJournalTests(unittest.TestCase):
             self.assertEqual(receipt["status"], "MISSING")
             self.assertEqual(receipt["event_count"], 0)
 
+    def test_empty_existing_journal_is_not_reinitialized(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ExecutionEventJournal(directory, "d" * 32)
+            journal.root.mkdir(parents=True)
+            journal.path.write_text("", encoding="utf-8")
+            with self.assertRaises(ExecutionEventJournalError):
+                journal.append(workflow="regular", event_type="task.created")
+
     def test_tampered_event_is_detected_and_append_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = ExecutionEventJournal(directory, "b" * 32)
