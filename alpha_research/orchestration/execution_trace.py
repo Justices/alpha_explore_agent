@@ -427,9 +427,12 @@ def inspect_execution_trace(state_root, task_id):
                         "probe_batch": payload.get("probe_batch"),
                     }
     if domain.get("campaign"):
-        intent_refs.update(row.get("intent_ref") for row in
-                           domain["campaign"].get("batch_intents", [])
-                           if isinstance(row.get("intent_ref"), str))
+        for row in domain["campaign"].get("batch_intents", []):
+            intent_ref = row.get("intent_ref")
+            if isinstance(intent_ref, str):
+                intent_refs.add(intent_ref)
+                intent_context.setdefault(intent_ref, {
+                    "workflow": "regular", "batch_ref": row.get("batch_ref")})
     recovery_target = task.get("recovery_target") or {}
     if recovery_target.get("kind") == "simulation_intent":
         intent_refs.add(recovery_target.get("ref"))
