@@ -54,6 +54,21 @@ $MultiRoot = "D:\\quant\\alpha_explore_agent\\.alpha-offline-e2e-multi"
 
 Super 使用新的空目录并指定 `--workflow super`。Optimization 使用新的空目录、`--workflow optimization --alpha-id SOURCE`，其中 `SOURCE` 为脚本化源 Alpha，仅供离线调度验证。
 
+## 端到端日志与验收证据
+
+本入口沿用现有的 `ExecutionEventJournal` 和 `inspect_execution_trace`，每个 Task 独立记录：
+
+- `state/logs/execution_events/<TASK_ID>.jsonl`：按执行顺序追加的事件，带递增序号和 SHA-256 哈希链，覆盖 Task 阶段变化、Research 绑定、Campaign 批次、Simulation Intent、Readback、Qualification 和恢复关联事件（以各工作流实际产生的事件为准）。
+- `state/research_v1_1/orchestration/<TASK_ID>.json`：Task 的权威状态、预算、Checkpoint 和恢复目标。
+- `state/research_v1_1/offline_e2e/<TASK_ID>.json`：单次离线验收回执，新增 `trace_status`、`trace_ref`、`trace_event_count`、`trace_last_event_sha256`、`evidence_manifest_status`、`evidence_file_count`。
+- Campaign、Model Call、Simulation Intent、Readback、Audit 和 Candidate 证据仍保留在原有存储位置，由追踪器依据 Research ID 与现有引用关联，不复制出第二套权威状态。
+
+现在，四阶段完成且满足原有执行约束**仍不足以单独判定** `OFFLINE_E2E_PASSED`；还要求 `trace_status=TRACE_VERIFIED`。事件链缺失、损坏或者与 Task 的日志绑定不一致时，回执为 `OFFLINE_E2E_BLOCKED`，即使 Task 本身已经 `COMPLETED`。该状态只表示本轮验收被拒绝，不会篡改原 Task 状态。
+
+`TRACE_VERIFIED` 仅表示事件链及绑定验证通过，不意味着全部外围证据都已齐备。必须分别查看 `evidence_manifest_status` 和模型预算、Session、Domain records 的完整性，不得据此推断真实 Simulation 已完成。
+
+完整只读排查可执行 `orchestration-trace <TASK_ID>`（使用原 Task 所在 State Root）。先保全日志与原始证据，再判断是否能够安全恢复，切勿补写历史事件来伪造连续性。
+
 ## 失败与故障演练
 
 添加 `--fault lost-simulation-response` 可以模拟结果丢失。预期 `status=OFFLINE_E2E_BLOCKED`，`budget.reserved=1`，`budget.used=0`，并保留恢复目标以供调查。不能自动重放，也不能使用此目录再次运行新任务。
