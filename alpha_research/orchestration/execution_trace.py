@@ -307,6 +307,8 @@ def inspect_execution_trace(state_root, task_id):
         str(root / "state" / "research_v1_1" / "orchestration" /
             f"{task_id}.json")
     }
+    if isinstance(trace_ref, str):
+        evidence_refs.add(trace_ref)
     for event in events:
         payload = event.get("payload") or {}
         evidence_refs.update(
