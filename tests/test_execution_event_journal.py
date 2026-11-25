@@ -2,7 +2,6 @@
 import json
 import tempfile
 import unittest
-from pathlib import Path
 
 from alpha_research.orchestration.event_journal import (
     ExecutionEventJournal, ExecutionEventJournalError,
