@@ -28,20 +28,28 @@ def _evidence_manifest(root, references):
     """Hash referenced files and bounded batch artifacts without exposing contents."""
     root = Path(root).resolve()
     rows = []
+    missing = []
     seen = set()
     total_bytes = 0
     truncated = False
     allowed_batch_bytes = 256 * 1024 * 1024
     for reference in sorted(value for value in references
                              if isinstance(value, str) and value):
+        if reference.startswith("session:"):
+            continue
         candidate = Path(reference)
         if not candidate.is_absolute():
             candidate = root / candidate
         try:
+            if candidate.is_symlink():
+                missing.append({"reference": reference, "reason": "symlink_refused"})
+                continue
             path = candidate.resolve(strict=True)
-            if candidate.is_symlink() or not path.is_relative_to(root):
+            if not path.is_relative_to(root):
+                missing.append({"reference": reference, "reason": "outside_state_root"})
                 continue
         except (OSError, RuntimeError):
+            missing.append({"reference": reference, "reason": "missing_or_unreadable"})
             continue
         targets = []
         if path.is_file():
@@ -75,7 +83,9 @@ def _evidence_manifest(root, references):
             total_bytes += size
             rows.append({"path": key, "name": target.name,
                          "size_bytes": size, "sha256": digest})
-    return {"files": rows, "file_count": len(rows),
+    return {"status": "COMPLETE" if not missing and not truncated else "PARTIAL",
+            "files": rows, "file_count": len(rows),
+            "missing_references": missing,
             "total_bytes": total_bytes, "truncated": truncated}
 
 
