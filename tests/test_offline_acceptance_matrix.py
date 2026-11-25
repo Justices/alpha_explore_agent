@@ -58,6 +58,10 @@ class OfflineAcceptanceMatrixTests(unittest.TestCase):
                 self.assertTrue(Path(row["stdout_ref"]).is_file())
                 self.assertTrue(Path(row["stderr_ref"]).is_file())
                 self.assertEqual(len(row["stdout_sha256"]), 64)
+                self.assertIn("orchestration-e2e-offline", row["command_argv"])
+                self.assertIn("--mode", row["command_argv"])
+                self.assertGreaterEqual(row["duration_ms"], 0)
+                self.assertTrue(row["finished_at"])
             self.assertEqual(
                 json.loads((root / "acceptance_matrix.json").read_text())["status"],
                 "INCOMPLETE",
