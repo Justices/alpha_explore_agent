@@ -770,6 +770,10 @@ class ResearchAgent:
         atomic_write_json(batch_dir / "simulation_intent.json", {
             "status": "READ_BACK", "prereg_sha256": digest,
             "alpha_ids": alpha_ids, "settings": simulation_settings})
+        _emit_execution_event(execution_context, "regular.simulation_readback_committed",
+                              batch_ref=str(batch_dir), alpha_ids=alpha_ids,
+                              simulation_intent_ref=str(batch_dir / "simulation_intent.json"),
+                              results_ref=str(batch_dir / "results.json"))
         self._finalize_remedy_outcome(batch_dir, prereg, diagnosis)
         self.campaigns.update(
             case_path.stem, objective=prereg["objective"],
