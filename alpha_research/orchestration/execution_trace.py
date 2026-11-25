@@ -407,14 +407,14 @@ def inspect_execution_trace(state_root, task_id):
     candidate_ids = set()
     for event in events:
         candidate_ids.update(_collect_values(event.get("payload") or {}, "candidate_id"))
-    candidate_ids = {value for value in candidate_ids
-                     if re.fullmatch(r"[0-9a-f]{32}", value)}
     if (domain.get("super_run") or {}).get("candidate_id"):
         candidate_ids.add((domain.get("super_run") or {})["candidate_id"])
     for optimization in domain.get("optimization_runs", []):
         candidate_id = (optimization.get("report") or {}).get("candidate_id")
         if isinstance(candidate_id, str):
             candidate_ids.add(candidate_id)
+    candidate_ids = {value for value in candidate_ids
+                     if re.fullmatch(r"[0-9a-f]{32}", value)}
     try:
         store = ResearchRecordStore(root)
         candidate_rows, preferred_rows = [], []
