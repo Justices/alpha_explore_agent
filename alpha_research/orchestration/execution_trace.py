@@ -19,7 +19,7 @@ def _read_object(path):
 def _safe_model_call(path, record):
     allowed = (
         "call_id", "ts", "task", "agent_role", "agent_backend", "model",
-        "session_id", "research_id", "batch_ref", "status", "outcome",
+        "session_id", "research_id", "batch_ref", "status",
         "context_sha256", "route_sha256", "response_sha256",
         "context_ref", "response_ref", "record_ref",
     )
@@ -148,6 +148,12 @@ def inspect_execution_trace(state_root, task_id):
         path = Path(ref)
         if not path.is_absolute():
             path = root / path
+        try:
+            path = path.resolve(strict=True)
+            if not path.is_relative_to(root):
+                continue
+        except (OSError, RuntimeError):
+            continue
         intent = _read_object(path)
         if intent and intent.get("workflow") in ("regular", "super", "optimization"):
             body = {
