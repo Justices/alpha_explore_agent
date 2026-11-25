@@ -79,7 +79,8 @@ class ExecutionEventJournal:
                         and not isinstance(row.get("research_id"), str))
                     or (row.get("step") is not None and not isinstance(row.get("step"), str))
                     or row.get("previous_event_sha256") != previous
-                    or (supplied is not None and re.fullmatch(r"[0-9a-f]{64}", supplied) is None)
+                    or not isinstance(supplied, str)
+                    or re.fullmatch(r"[0-9a-f]{64}", supplied) is None
                     or supplied != _sha256(_canonical(body))):
                 raise ExecutionEventJournalError(
                     f"execution event hash chain mismatch at line {number}")
