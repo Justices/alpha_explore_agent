@@ -1279,6 +1279,10 @@ class ResearchAgent:
         if resume_batch_dir is not None:
             research_id = self._batch_research_id(resume_batch_dir, cached_context or {})
         self._begin_session(research_id or f"regular:{uuid4().hex}")
+        _emit_execution_event(execution_context, "regular.research_batch_started",
+                              research_id=self.recorder.research_id,
+                              dataset_id=dataset_id, resume=resume_batch_dir is not None,
+                              research_type=("PPA" if ppa_profile else "REGULAR"))
         if not objective or not objective.strip():
             raise ResearchError("research objective is required")
         research_type = ((cached_context or {}).get("research_type")
@@ -1394,6 +1398,11 @@ class ResearchAgent:
                 selection_mode=dataset_selection["mode"],
                 locked=dataset_selection["mode"] == "fixed",
                 candidate_ledger_ref=str(case_path), status="active")
+            _emit_execution_event(execution_context, "regular.dataset_scope_verified",
+                                  research_id=self.recorder.research_id,
+                                  dataset_id=dataset_id, scope=scope,
+                                  selection_mode=dataset_selection["mode"],
+                                  category=category_value if "category_value" in locals() else None)
             write_progress("正在读取字段和算子目录")
             fields = _rows(self.gateway.call("get_datafields", instrument_type="EQUITY",
                                              dataset_id=dataset_id, **context))
@@ -1432,6 +1441,11 @@ class ResearchAgent:
                 "started_at": datetime.now().astimezone().isoformat()})
             self.recorder.bind_batch(batch_dir)
             self._write_batch_knowledge_packs(batch_dir)
+            _emit_execution_event(execution_context, "regular.batch_context_persisted",
+                                  research_id=self.recorder.research_id,
+                                  dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                  batch_context_ref=str(batch_dir / "batch_context.json"),
+                                  operator_count=len(operators), field_count=len(fields))
             self.campaigns.update(campaign_id, current_batch=str(batch_dir),
                                   dataset_state="active", status="active")
             probe_context = {
@@ -1517,11 +1531,22 @@ class ResearchAgent:
         field_rows = {row["id"]: row for row in fields
                       if isinstance(row, dict) and row.get("id") in core_fields}
         atomic_write_json(batch_dir / "probe_plan.json", probe_plan)
+        _emit_execution_event(execution_context, "regular.probe_plan_validated",
+                              research_id=self.recorder.research_id,
+                              dataset_id=dataset_id, batch_ref=str(batch_dir),
+                              probe_count=len(probes), core_field_count=len(core_fields),
+                              required_dimension_count=sum(len(value) for value in required_dimensions.values()),
+                              probe_plan_ref=str(batch_dir / "probe_plan.json"))
         if field_research:
             batch_context = read_json(batch_dir / "batch_context.json")
-            return self._construct_field_plan(batch_dir, batch_context, core_fields,
-                                              field_rows, catalog, operators,
-                                              operator_catalog, prior_case)
+            field_plan = self._construct_field_plan(batch_dir, batch_context, core_fields,
+                                                     field_rows, catalog, operators,
+                                                     operator_catalog, prior_case)
+            _emit_execution_event(execution_context, "regular.field_plan_constructed",
+                                  research_id=self.recorder.research_id,
+                                  dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                  field_plan_ref=str(batch_dir / "field_research_plan.json"))
+            return field_plan
         if probes and len(probe_results) < len(probes):
             probe_settings = self._platform_settings(scope, probe=True)
             self.gateway.call("validate_simulation_settings", settings=probe_settings)
@@ -1639,6 +1664,12 @@ class ResearchAgent:
             write_progress(f"缺少 {len(missing)} 项字段诊断证据，暂停构造表达式 · {preview}")
             raise ResearchError(f"field diagnostics unresolved; batch construction blocked: {missing}")
 
+        _emit_execution_event(execution_context, "regular.field_diagnostics_completed",
+                              research_id=self.recorder.research_id,
+                              dataset_id=dataset_id, batch_ref=str(batch_dir),
+                              core_field_count=len(core_fields),
+                              probe_observation_count=len(probe_observations),
+                              probe_evidence_ref=str(batch_dir / "probe_evidence.json"))
         construction_context = {
             "objective": objective, "research_type": research_type,
             "ppa_rules": ({"max_operators": PPA_MAX_OPERATORS,
@@ -1658,6 +1689,16 @@ class ResearchAgent:
                 for field_id, dimensions in sources.items()}}
         proposal = self._decide("construct_batch", construction_context,
                                 batch_dir=batch_dir)
+        _emit_execution_event(execution_context, "regular.proposal_generated",
+                              research_id=self.recorder.research_id,
+                              dataset_id=dataset_id, batch_ref=str(batch_dir),
+                              model_session_id=self.recorder.session_id,
+                              model_call_id=self.recorder.call_id,
+                              proposal_sha256=hashlib.sha256(json.dumps(
+                                  proposal, ensure_ascii=False, sort_keys=True,
+                                  separators=(",", ":")).encode("utf-8")).hexdigest(),
+                              variant_count=len(proposal.get("variants", []))
+                                  if isinstance(proposal.get("variants"), list) else None)
         proposal.pop("field_report", None)
         proposed_expressions = [row.get("expression") for row in proposal.get("variants", [])
                                 if isinstance(row, dict) and isinstance(row.get("expression"), str)]
@@ -1736,6 +1777,14 @@ class ResearchAgent:
             reason = "expression already tested in this case and Dataset"
             self.void_batch(batch_dir, reason)
             raise ResearchError(reason)
+        _emit_execution_event(execution_context, "regular.expressions_validated",
+                              research_id=self.recorder.research_id,
+                              dataset_id=dataset_id, batch_ref=str(batch_dir),
+                              expression_count=len(expressions),
+                              expression_sha256=[hashlib.sha256(value.encode("utf-8")).hexdigest()
+                                                 for value in expressions],
+                              field_ids=sorted(screened_fields),
+                              operator_counts=operator_counts)
         simulation_settings = self._platform_settings(scope)
         self._ensure_expressions_uncached(
             expressions, dataset_id, scope, simulation_settings,
