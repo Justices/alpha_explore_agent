@@ -19,7 +19,7 @@ def _read_object(path, *, root=None):
             if not path.is_relative_to(root):
                 return None
         value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    except (OSError, ValueError, RuntimeError):
         return None
     return value if isinstance(value, dict) else None
 
@@ -99,7 +99,8 @@ def inspect_execution_trace(state_root, task_id):
     journal = ExecutionEventJournal(root, task_id)
     events = journal.read_events()
     verification = journal.verify()
-    trace_ref = (task.get("trace") or {}).get("journal_ref")
+    trace_meta = task.get("trace")
+    trace_ref = trace_meta.get("journal_ref") if isinstance(trace_meta, dict) else None
     trace_binding_valid = trace_ref == str(journal.path)
     trace_events_consistent = len(events) == verification["event_count"]
     research_id = (task.get("research_identity") or {}).get("research_id")
