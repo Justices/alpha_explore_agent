@@ -54,6 +54,9 @@ class MockWorkflowAdapter:
             return {**validate_workflow_request(workflow, request), "mode": "mock"}
         if step == "execute":
             command, args = command_and_args(workflow, request)
+            emit = (context or {}).get("emit_event")
+            if callable(emit):
+                emit("domain.dispatch_started", {"command": command})
             if context is None or self.dispatcher is not dispatch:
                 result = self.dispatcher(command, args, self.config, self.root,
                                          self.gateway, self.agent)
@@ -63,6 +66,18 @@ class MockWorkflowAdapter:
                                          execution_context=context)
             if not isinstance(result, dict):
                 raise OrchestrationError("research executor returned non-object")
+            emit = (context or {}).get("emit_event")
+            if callable(emit):
+                emit("domain.dispatch_completed", {
+                    "command": command,
+                    "result_keys": sorted(result),
+                    **{key: result[key] for key in (
+                        "status", "campaign_id", "run_id", "branch_id",
+                        "alpha_id", "candidate_alpha_id", "candidate_id",
+                        "candidate_status", "preferred_status", "record_ref",
+                        "state_path", "report_ref", "batches_completed")
+                       if isinstance(result.get(key), (str, int, float, bool))},
+                })
             return result
         if step == "qualify":
             return project_existing_qualification(workflow, checkpoints)
