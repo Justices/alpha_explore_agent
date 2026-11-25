@@ -8,9 +8,9 @@
 |---|---|---|
 | Task 状态与四阶段 Checkpoint | state/research_v1_1/orchestration/<task_id>.json | MainOrchestrator |
 | Task 事件链 | state/logs/execution_events/<task_id>.jsonl | 新增 ExecutionEventJournal |
-| 模型输入/输出与 Attempt 审计 | logs/model_calls/*.record.json、logs/model_log.jsonl | ModelCallJournal |
-| 模型上下文/响应快照 | logs/model_calls/*.context.json、*.response.json | ModelCallJournal |
-| 跨批次模型 Session 索引 | logs/model_sessions/<session_id>.json | DecisionRecorder / ModelCallJournal |
+| 模型输入/输出与 Attempt 审计 | state/logs/model_calls/*.record.json、state/logs/model_log.jsonl | ModelCallJournal |
+| 模型上下文/响应快照 | state/logs/model_calls/*.context.json、*.response.json | ModelCallJournal |
+| 跨批次模型 Session 索引 | state/logs/model_sessions/<session_id>.json | DecisionRecorder / ModelCallJournal |
 | Regular Campaign 与 Dataset 子任务 | state/research_v1_1/campaign_runs/、对应 batch 目录 | Regular Campaign |
 | Super 运行记录 | state/research_v1_1/super_runs/ | Super Workflow |
 | Optimization 源快照、分支、报告 | state/research_v1_1/optimization/ 与 RecordStore | Optimization Workflow |
