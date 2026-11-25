@@ -62,6 +62,8 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             self.assertEqual(event_types.count("regular.dataset_attribution_completed"), 2)
             self.assertEqual(event_types.count("regular.dataset_review_completed"), 2)
             self.assertEqual(event_types.count("regular.dataset_no_selection"), 2)
+            self.assertEqual(event_types.count("regular.dataset_review_started"), 2)
+            self.assertEqual(event_types.count("regular.dataset_attribution_started"), 2)
             self.assertEqual(
                 {key: row["status"] for key, row in
                  trace["domain_evidence"]["campaign"]["dataset_reviews"].items()},
@@ -69,6 +71,11 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             )
             self.assertEqual(trace["domain_evidence"]["campaign"]["campaign_id"],
                              execution["campaign_id"])
+            review_refs = {row["review_ref"] for row in
+                           trace["domain_evidence"]["campaign"]["dataset_reviews"].values()}
+            manifest_paths = {row["path"] for row in trace["evidence_manifest"]["files"]}
+            self.assertEqual(len(review_refs), 2)
+            self.assertTrue(review_refs.issubset(manifest_paths))
             self.assertIsNotNone(completed["research_identity"])
             self.assertIsNotNone(completed["recovery_target"])
             self.assertFalse(any(command in gateway.calls for command in (
@@ -96,6 +103,7 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             evidence_names = {row["name"] for row in trace["evidence_manifest"]["files"]}
             self.assertIn("simulation_intent.json", evidence_names)
             self.assertIn(task["task_id"] + ".json", evidence_names)
+            self.assertEqual(evidence_names.count("review.json"), 2)
 
 
 if __name__ == "__main__":
