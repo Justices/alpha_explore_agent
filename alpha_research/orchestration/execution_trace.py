@@ -103,6 +103,32 @@ def _safe_model_call(path, record):
     return row
 
 
+def _campaign_batch_intents(root, completed):
+    rows = []
+    for receipt in completed:
+        if not isinstance(receipt, dict) or not isinstance(receipt.get("batch_dir"), str):
+            continue
+        parent = Path(receipt["batch_dir"])
+        parent_results = _read_object(parent / "results.json", root=root) or {}
+        children = parent_results.get("child_batches")
+        targets = (children if isinstance(children, list) and children else
+                   [{"batch_dir": str(parent), "alpha_ids": receipt.get("alpha_ids", [])}])
+        for child in targets:
+            if not isinstance(child, dict) or not isinstance(child.get("batch_dir"), str):
+                continue
+            batch = Path(child["batch_dir"])
+            intent_ref = str(batch / "simulation_intent.json")
+            intent = _read_object(batch / "simulation_intent.json", root=root)
+            rows.append({
+                "dataset_id": receipt.get("dataset_id"),
+                "alpha_ids": child.get("alpha_ids"),
+                "batch_ref": str(batch),
+                "intent_ref": intent_ref,
+                "intent_status": intent.get("status") if intent else None,
+            })
+    return rows
+
+
 def _model_budget_trace(root, research_id, has_calls):
     budget_stem = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
     budget_path = (Path(root) / "state" / "logs" / "model_budget" /
@@ -226,14 +252,7 @@ def inspect_execution_trace(state_root, task_id):
                 },
                 "campaign_state_ref": str(path),
                 "campaign_summary_ref": str(path.with_name(f"{campaign_id}_summary.json")),
-                "batch_intents": [{
-                    "dataset_id": row.get("dataset_id"),
-                    "batch_ref": row.get("batch_dir"),
-                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json"),
-                    "intent_status": ((_read_object(
-                        Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root) or {}).get("status")),
-                } for row in saved.get("completed", [])
-                  if isinstance(row, dict) and isinstance(row.get("batch_dir"), str)],
+                "batch_intents": _campaign_batch_intents(root, saved.get("completed", [])),
             }
     elif isinstance(research_id, str) and research_id.startswith("super:"):
         run_id = research_id.removeprefix("super:")
