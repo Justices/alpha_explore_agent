@@ -9,6 +9,19 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.sealed import is_sealed_state
 
 
+def _collect_references(value):
+    refs = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key.endswith("_ref") and isinstance(child, str):
+                refs.add(child)
+            refs.update(_collect_references(child))
+    elif isinstance(value, list):
+        for child in value:
+            refs.update(_collect_references(child))
+    return refs
+
+
 def _read_object(path, *, root=None):
     try:
         path = Path(path)
@@ -477,10 +490,7 @@ def inspect_execution_trace(state_root, task_id):
     if isinstance(trace_ref, str):
         evidence_refs.add(trace_ref)
     for event in events:
-        payload = event.get("payload") or {}
-        evidence_refs.update(
-            value for key, value in payload.items()
-            if key.endswith("_ref") and isinstance(value, str))
+        evidence_refs.update(_collect_references(event.get("payload") or {}))
     for budget_row in model_budgets:
         if budget_row.get("ledger_ref") and Path(budget_row["ledger_ref"]).is_file():
             evidence_refs.add(budget_row["ledger_ref"])
