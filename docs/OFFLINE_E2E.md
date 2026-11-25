@@ -12,6 +12,32 @@
 - 运行后目录被永久标记 `OFFLINE_DOMAIN_MOCK_ONLY`，不得复用于真实任务。每次重新验收换一个新目录。
 - 配置来自系统默认值，指定 Dataset/Category/Region/Delay/Universe 等 Scope 条件在生效前进行冲突检查；配置文件中固定政策不能覆盖系统默认值。
 
+## 一次性执行完整离线验收矩阵（推荐）
+
+该矩阵脚本**复用已有** `orchestration-e2e-offline` CLI，不引入第二套 Orchestrator。每个场景有独立的新 State Root，依次验证 Regular 单 Dataset、Regular 多 Dataset、Super、Optimization，以及 Regular 未知结果的禁止重放行为。某场景失败后会保留现场并执行剩余场景，最后统一输出结果。
+
+在仓库根目录（已切换到当前功能分支）运行：
+
+```powershell
+$Python = "D:\\quant-venv\\Scripts\\python.exe"
+$MatrixRoot = "D:\\quant\\alpha_explore_agent\\.alpha-acceptance-matrix-01"
+
+& $Python scripts/offline_acceptance_matrix.py `
+  --output-root $MatrixRoot `
+  --lead deepseek --executor deepseek
+```
+
+注意：`--output-root` 必须为新目录或空目录，绝不能指向已存在研究证据的 `.alpha-runtime`。每次运行更换新的目录。矩阵不会开启真实模型调用、真实 BRAIN Simulation 或 Alpha 提交。
+
+证据输出：
+
+- `acceptance_matrix.json`：全部场景的统一结果、状态、Task ID、Trace 末端哈希和证据路径。
+- `<case>.stdout.json` 与 `<case>.stderr.txt`：每个场景的原始标准输出和错误输出，并在矩阵中记录 SHA-256。
+- `<case>/state/logs/execution_events/<task_id>.jsonl`：场景完整事件链。
+- `<case>/state/research_v1_1/offline_e2e/<task_id>.json`：该场景的独立验收报告。
+
+只有全部场景满足预期（包括模拟 UNKNOWN 正确返回 BLOCKED）时，矩阵才返回 `status=ACCEPTED`；否则返回 `INCOMPLETE`，同时保留每条流程的原始日志用于集中回溯。矩阵通过不是生产授权。
+
 ## Regular（USA / Delay 1 / TOP3000 / 单 Dataset 与多 Dataset）
 
 Windows PowerShell：
@@ -63,7 +89,7 @@ Super 使用新的空目录并指定 `--workflow super`。Optimization 使用新
 - `state/research_v1_1/offline_e2e/<TASK_ID>.json`：单次离线验收回执，新增 `trace_status`、`trace_ref`、`trace_event_count`、`trace_last_event_sha256`、`evidence_manifest_status`、`evidence_file_count`。
 - Campaign、Model Call、Simulation Intent、Readback、Audit 和 Candidate 证据仍保留在原有存储位置，由追踪器依据 Research ID 与现有引用关联，不复制出第二套权威状态。
 
-现在，四阶段完成且满足原有执行约束**仍不足以单独判定** `OFFLINE_E2E_PASSED`；还要求 `trace_status=TRACE_VERIFIED`。事件链缺失、损坏或者与 Task 的日志绑定不一致时，回执为 `OFFLINE_E2E_BLOCKED`，即使 Task 本身已经 `COMPLETED`。该状态只表示本轮验收被拒绝，不会篡改原 Task 状态。
+现在，四阶段完成且满足原有执行约束**仍不足以单独判定** `OFFLINE_E2E_PASSED`；还要求 `trace_status=TRACE_VERIFIED`，以及 `workflow_handoff_audit.status=VERIFIED`（按业务流程逐节点确认事件顺序、领域记录和关键 ID）。事件链缺失、损坏或者与 Task 的日志绑定不一致时，回执为 `OFFLINE_E2E_BLOCKED`，即使 Task 本身已经 `COMPLETED`。该状态只表示本轮验收被拒绝，不会篡改原 Task 状态。
 
 `TRACE_VERIFIED` 仅表示事件链及绑定验证通过，不意味着全部外围证据都已齐备。必须分别查看 `evidence_manifest_status` 和模型预算、Session、Domain records 的完整性，不得据此推断真实 Simulation 已完成。
 
