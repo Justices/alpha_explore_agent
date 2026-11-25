@@ -74,6 +74,11 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
                 {row["dataset_id"] for row in trace["domain_evidence"]["campaign"]["completed"]},
                 {"dataset_alpha", "dataset_beta"},
             )
+            self.assertEqual(len(trace["domain_evidence"]["simulation_intents"]), 2)
+            self.assertFalse(trace["evidence_manifest"]["truncated"])
+            evidence_names = {row["name"] for row in trace["evidence_manifest"]["files"]}
+            self.assertIn("simulation_intent.json", evidence_names)
+            self.assertIn(task["task_id"] + ".json", evidence_names)
 
 
 if __name__ == "__main__":
