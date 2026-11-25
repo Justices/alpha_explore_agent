@@ -1,6 +1,7 @@
 """Read-only execution trace projection across Task, domain and model evidence."""
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from alpha_research.orchestration.event_journal import ExecutionEventJournal
@@ -107,6 +108,7 @@ def _evidence_manifest(root, references):
                     break
                 digest = hashlib.sha256(target.read_bytes()).hexdigest()
             except OSError:
+                missing.append({"reference": str(target), "reason": "unreadable_file"})
                 continue
             seen.add(key)
             total_bytes += size
@@ -255,7 +257,8 @@ def inspect_execution_trace(state_root, task_id):
     for session_id in session_ids:
         path = root / "state" / "logs" / "model_sessions" / f"{session_id}.json"
         index = _read_object(path, root=root)
-        expected_calls = set(index.get("call_ids", [])) if index else set()
+        raw_call_ids = index.get("call_ids") if index else None
+        expected_calls = set(raw_call_ids) if isinstance(raw_call_ids, list) else set()
         actual_calls = {row.get("call_id") for row in calls
                         if row.get("session_id") == session_id}
         sessions.append({
@@ -401,25 +404,11 @@ def inspect_execution_trace(state_root, task_id):
         if domain["optimization"] is None:
             domain["optimization"] = run_evidence
 
-    candidate_alpha_ids = set()
-    if domain.get("campaign"):
-        for row in domain["campaign"].get("completed", []):
-            candidate_alpha_ids.update(
-                alpha_id for alpha_id in row.get("alpha_ids", [])
-                if isinstance(alpha_id, str))
-    if (domain.get("super_run") or {}).get("alpha_id"):
-        candidate_alpha_ids.add((domain.get("super_run") or {})["alpha_id"])
-    for optimization in domain.get("optimization_runs", []):
-        alpha_id = (optimization.get("report") or {}).get("candidate_alpha_id")
-        if isinstance(alpha_id, str):
-            candidate_alpha_ids.add(alpha_id)
-    if (domain.get("optimization") or {}).get("report"):
-        alpha_id = (domain.get("optimization") or {})["report"].get("candidate_alpha_id")
-        if isinstance(alpha_id, str):
-            candidate_alpha_ids.add(alpha_id)
     candidate_ids = set()
     for event in events:
         candidate_ids.update(_collect_values(event.get("payload") or {}, "candidate_id"))
+    candidate_ids = {value for value in candidate_ids
+                     if re.fullmatch(r"[0-9a-f]{32}", value)}
     if (domain.get("super_run") or {}).get("candidate_id"):
         candidate_ids.add((domain.get("super_run") or {})["candidate_id"])
     for optimization in domain.get("optimization_runs", []):
@@ -440,7 +429,7 @@ def inspect_execution_trace(state_root, task_id):
                 preferred = store.get("preferred", candidate_id)
                 if preferred:
                     preferred_rows.append(preferred)
-            except KeyError:
+            except (KeyError, FileNotFoundError):
                 pass
         def qualification_summary(row):
             return {key: row.get(key) for key in (
