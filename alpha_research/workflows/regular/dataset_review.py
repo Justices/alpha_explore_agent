@@ -14,6 +14,12 @@ from alpha_research.simulation.intent import recover_simulation_intent
 from alpha_research.workflows.optimization.workflow import run_optimization
 
 
+def _emit(execution_context, event_type, **payload):
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        callback(event_type, payload)
+
+
 class DatasetReviewError(ValueError):
     pass
 
@@ -163,10 +169,16 @@ def _batch_evidence(agent, dataset_id, receipt):
 
 
 def review_dataset(agent, gateway, state_root, directory, request,
-                   dataset_id, receipts, failures, *, allow_optimization=True):
+                   dataset_id, receipts, failures, *, allow_optimization=True,
+                   execution_context=None):
     """Persist review before optional execution; recover existing intent, never repost."""
     directory = _validate_directory(directory, state_root)
     path = directory / "review.json"
+    campaign_id = directory.parent.name
+    _emit(execution_context, "regular.dataset_review_started",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          receipt_count=len(receipts) if isinstance(receipts, list) else None,
+          review_ref=str(path))
     if not isinstance(dataset_id, str) or not dataset_id.strip():
         raise DatasetReviewError("Dataset ID required")
     if not isinstance(receipts, list) or not receipts:
@@ -198,12 +210,19 @@ def review_dataset(agent, gateway, state_root, directory, request,
             # Genuine platform recovery reads the original saved intent,
             # not a new run_optimization call. The platform gateway controls
             # whether an interrupted POST can be resumed.
+            _emit(execution_context, "regular.dataset_optimization_recovery_started",
+                  campaign_id=campaign_id, dataset_id=dataset_id,
+                  optimization_intent_ref=str(intent))
             result = recover_simulation_intent(
                 gateway, state_root, intent, config=agent.config)
             if not isinstance(result, dict) or not result.get("candidate_alpha_id"):
                 raise DatasetReviewError("optimization recovery did not settle the saved intent")
             review["optimization"] = result
             review["status"] = "complete"
+            _emit(execution_context, "regular.dataset_optimization_recovered",
+                  campaign_id=campaign_id, dataset_id=dataset_id,
+                  candidate_alpha_id=result.get("candidate_alpha_id"),
+                  optimization_intent_ref=str(intent), review_ref=str(path))
             review.pop("error", None)
             return _save(path, review)
         if review.get("status") not in {"attribution_pending", "optimization_prepared"}:
@@ -242,6 +261,9 @@ def review_dataset(agent, gateway, state_root, directory, request,
     if hasattr(agent, "_begin_session"):
         campaign_id = directory.parent.name
         agent._begin_session(f"regular:campaign:{campaign_id}")
+    _emit(execution_context, "regular.dataset_attribution_started",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          batch_count=len(batch_reports), review_ref=str(path))
     response = agent._decide("review_dataset_results", {
         "objective": request["objective"],
         "dataset_id": dataset_id,
@@ -255,10 +277,20 @@ def review_dataset(agent, gateway, state_root, directory, request,
             or not response["summary"].strip()):
         raise DatasetReviewError("Dataset review requires a nonempty summary")
     selected = response.get("selection")
+    _emit(execution_context, "regular.dataset_attribution_completed",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          model_session_id=agent.recorder.session_id,
+          model_call_id=agent.recorder.call_id,
+          summary_sha256=hashlib.sha256(response["summary"].encode("utf-8")).hexdigest(),
+          selected_alpha_id=selected if isinstance(selected, str) else None,
+          review_ref=str(path))
     if selected is None:
         review.update(status="no_selection", attribution=response, source=None)
         review.pop("error", None)
-        return _save(path, review)
+        saved = _save(path, review)
+        _emit(execution_context, "regular.dataset_no_selection",
+              campaign_id=campaign_id, dataset_id=dataset_id, review_ref=str(path))
+        return saved
     reason = response.get("selection_reason")
     if (not isinstance(selected, str) or selected not in sources
             or not isinstance(reason, str) or not reason.strip()):
@@ -275,7 +307,11 @@ def review_dataset(agent, gateway, state_root, directory, request,
     if not allow_optimization:
         review.update(status="optimization_deferred", attribution=response, source=source_record)
         review.pop("error", None)
-        return _save(path, review)
+        saved = _save(path, review)
+        _emit(execution_context, "regular.dataset_optimization_deferred",
+              campaign_id=campaign_id, dataset_id=dataset_id,
+              source_alpha_id=selected, review_ref=str(path))
+        return saved
     run_id = uuid4().hex
     intent = (Path(state_root).resolve() / "state" / "research_v1_1" /
               "optimization" / f"{run_id}_simulation_intent.json")
@@ -287,10 +323,22 @@ def review_dataset(agent, gateway, state_root, directory, request,
         optimization_intent_ref=str(intent),
     )
     _save(path, review)
+    _emit(execution_context, "regular.dataset_optimization_prepared",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          source_alpha_id=selected, optimization_run_id=run_id,
+          optimization_intent_ref=str(intent), review_ref=str(path))
     # Persist the 'started' state first: a crash cannot be mistaken for
     # permission to submit another optimization. A missing intent is BLOCKED.
     review["status"] = "optimization_pending"
     _save(path, review)
+    optimization_context = None
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        optimization_context = {"emit_event": callback}
+    _emit(execution_context, "regular.dataset_optimization_started",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          source_alpha_id=selected, optimization_run_id=run_id,
+          optimization_intent_ref=str(intent))
     try:
         result = run_optimization(
             gateway, agent.model, agent.config, state_root,
@@ -299,13 +347,28 @@ def review_dataset(agent, gateway, state_root, directory, request,
             expected_dataset=dataset_id, expected_settings=settings,
             ppa_profile=request.get("ppa_profile") is True,
             selection_evidence=reason, stop_flag=getattr(agent, "stop_flag", None),
+            execution_context=optimization_context,
         )
         if not isinstance(result, dict) or not result.get("candidate_alpha_id"):
             raise DatasetReviewError("optimization returned no verified candidate Alpha")
     except Exception as exc:
         review["error"] = f"{type(exc).__name__}: {str(exc)[:400]}"
-        return _save(path, review)
+        saved = _save(path, review)
+        _emit(execution_context, "regular.dataset_optimization_blocked",
+              campaign_id=campaign_id, dataset_id=dataset_id,
+              optimization_run_id=run_id, exception_type=type(exc).__name__,
+              optimization_intent_ref=str(intent), review_ref=str(path))
+        return saved
     review["status"] = "complete"
     review["optimization"] = result
     review.pop("error", None)
-    return _save(path, review)
+    saved = _save(path, review)
+    _emit(execution_context, "regular.dataset_optimization_completed",
+          campaign_id=campaign_id, dataset_id=dataset_id,
+          optimization_run_id=run_id, source_alpha_id=selected,
+          candidate_alpha_id=result.get("candidate_alpha_id"),
+          candidate_id=result.get("candidate_id"),
+          preferred_status=result.get("preferred_status"),
+          optimization_report_ref=result.get("report_ref"),
+          review_ref=str(path))
+    return saved
