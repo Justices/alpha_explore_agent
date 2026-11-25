@@ -94,7 +94,8 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
     required = {
         "regular": (
             "regular.campaign_scheduled", "regular.batch_started",
-            "regular.batch_completed", "regular.campaign_completed"),
+            "regular.batch_completed", "regular.dataset_attribution_completed",
+            "regular.dataset_review_completed", "regular.campaign_completed"),
         "super": (
             "super.research_started", "super.proposal_generated",
             "super.proposal_validated", "super.simulation_intent_prepared",
@@ -120,6 +121,12 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
             len(completed) == expected_attempts
             and events.count("regular.batch_started") == expected_attempts
             and events.count("regular.batch_completed") == expected_attempts
+            and events.count("regular.dataset_attribution_completed") == expected_attempts
+            and events.count("regular.dataset_review_completed") == expected_attempts
+            and events.count("regular.dataset_no_selection") == expected_attempts
+            and len(campaign.get("dataset_reviews") or {}) == expected_attempts
+            and all(row.get("status") == "no_selection" for row in
+                    (campaign.get("dataset_reviews") or {}).values())
             and isinstance(campaign.get("campaign_id"), str)
             and bool(campaign.get("campaign_id"))
             and {row.get("dataset_id") for row in matching("regular.batch_completed")}
