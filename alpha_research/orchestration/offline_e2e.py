@@ -56,12 +56,14 @@ def _build_request(args, config):
         if (fixed_dataset and datasets != [fixed_dataset]):
             raise OrchestrationError("requested Datasets conflict with configured scope")
         if datasets is not None and (
-                len(datasets) != 1
-                or not isinstance(datasets[0], str)
-                or not datasets[0].strip()
-                or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
-                       for ch in datasets[0])):
-            raise OrchestrationError("offline E2E requires at most one valid Dataset ID")
+                not isinstance(datasets, list) or not datasets
+                or any(not isinstance(dataset_id, str) or not dataset_id.strip()
+                       or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                              for ch in dataset_id)
+                       for dataset_id in datasets)
+                or len(set(datasets)) != len(datasets)):
+            raise OrchestrationError(
+                "offline E2E requires a nonempty list of unique valid Dataset IDs")
         request["dataset_ids"] = datasets
         request["category"] = _constraint(
             args.category, scope.get("category"), "Category")
@@ -127,13 +129,23 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
         # simulate_batch. Super/Optimization simulate_super is also scripted.
         attempts = (agent.calls if args.workflow == "regular"
                     else gateway.calls.count("simulate_super"))
+        expected_attempts = (
+            len(request.get("dataset_ids") or ["OFFLINE_DATASET"])
+            if args.workflow == "regular" else 1)
+        execution = done.get("checkpoints", {}).get("execute") or {}
+        completed_batches = execution.get("completed", [])
         completed = (
             done["status"] == "COMPLETED"
             and all(done["steps"].get(step) == "DONE" for step in STEPS)
             and done["budget"] == {"limit": 1, "used": 1, "reserved": 0}
             and done.get("research_identity") is not None
             and done.get("recovery_target") is not None
-            and attempts == 1
+            and attempts == expected_attempts
+            and (args.workflow != "regular"
+                 or isinstance(completed_batches, list)
+                 and len(completed_batches) == expected_attempts
+                 and {row.get("dataset_id") for row in completed_batches}
+                     == set(request.get("dataset_ids") or ["OFFLINE_DATASET"]))
         )
         report = {
             "schema_version": 1,
@@ -147,6 +159,11 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
             "steps": done["steps"],
             "budget": done["budget"],
             "scripted_domain_attempts": attempts,
+            "expected_domain_attempts": expected_attempts,
+            "completed_dataset_batches": len(completed_batches)
+                if args.workflow == "regular" and isinstance(completed_batches, list)
+                else None,
+            "requested_dataset_ids": request.get("dataset_ids"),
             "scripted_gateway_commands": gateway.calls,
             "research_identity_bound": done.get("research_identity") is not None,
             "recovery_target_bound": done.get("recovery_target") is not None,
