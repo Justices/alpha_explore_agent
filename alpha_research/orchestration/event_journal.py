@@ -118,22 +118,17 @@ class ExecutionEventJournal:
                 "another writer is appending execution events") from exc
 
     def read_events(self):
-        """Return all events only after verifying the complete hash chain."""
-        try:
-            with SingleWriterLock(self.lock_path):
-                return self._read_verified()
-        except WriterLockError as exc:
-            raise ExecutionEventJournalError(
-                "execution event journal is being updated") from exc
+        """Return all events only after verifying the complete hash chain.
+
+        Reads intentionally do not acquire the writer lock: a trace inspection
+        must not create lock files or mutate the State Root. A concurrent append
+        that is observed mid-write is rejected by the JSONL/hash-chain checks.
+        """
+        return self._read_verified()
 
     def verify(self):
         """Return a compact verification receipt without mutating the journal."""
-        try:
-            with SingleWriterLock(self.lock_path):
-                rows = self._read_verified()
-        except WriterLockError as exc:
-            raise ExecutionEventJournalError(
-                "execution event journal is being updated") from exc
+        rows = self._read_verified()
         if not self.path.is_file():
             return {
                 "status": "MISSING", "task_id": self.task_id,
