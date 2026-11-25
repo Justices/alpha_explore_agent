@@ -203,6 +203,12 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(task["budget"], {
             "limit": 1, "used": 0, "reserved": 1})
         self.assertIsNotNone(task["recovery_target"])
+        batch = Path(task["recovery_target"]["ref"])
+        self.assertEqual(
+            json.loads((batch / "simulation_intent.json").read_text())["status"],
+            "OUTCOME_UNKNOWN",
+        )
+        self.assertFalse((batch / "results.json").exists())
         trace = inspect_execution_trace(self.root, report["task_id"])
         self.assertEqual(trace["status"], "TRACE_VERIFIED")
         self.assertIn("task.step_blocked", [row["event_type"] for row in trace["events"]])
