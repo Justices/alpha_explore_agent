@@ -154,6 +154,8 @@ class FieldPlanWorkflow:
                   (batch_dir / "field_research_plan.json").read_bytes()).hexdigest())
         write_progress(f"{dataset_id} · 已保存 {len(core_fields)} 个字段的设计结果 · "
                        f"{len(variants)} 条表达式通过校验 · {len(failures)} 项未通过")
+        if execution_context is None:
+            return self.agent._execute_field_plan(batch_dir, context)
         return self.agent._execute_field_plan(
             batch_dir, context, execution_context=execution_context)
 
@@ -208,7 +210,8 @@ class FieldPlanWorkflow:
                 continue
             try:
                 if intent_path.exists():
-                    result = self.agent.recover(child, execution_context=execution_context)
+                    result = (self.agent.recover(child) if execution_context is None else
+                              self.agent.recover(child, execution_context=execution_context))
                 else:
                     self.agent.gateway.call("set_case", case_key=case_key, run_id=run_id)
                     # The child references the saved plan. Its audit calls have their own
@@ -239,9 +242,11 @@ class FieldPlanWorkflow:
                     }
                     runner_variants = [self.agent._production_runner_variant(proposal, item, dataset_id, number)
                                        for number, item in enumerate(group, start=1)]
-                    result = self.agent._execute_production(
-                        child, prereg, runner_variants, case_key, run_id,
-                        execution_context=execution_context)
+                    result = (self.agent._execute_production(
+                        child, prereg, runner_variants, case_key, run_id)
+                        if execution_context is None else self.agent._execute_production(
+                            child, prereg, runner_variants, case_key, run_id,
+                            execution_context=execution_context))
             except Exception as exc:
                 if self.agent.stop_flag and self.agent.stop_flag.exists():
                     stopped = True
