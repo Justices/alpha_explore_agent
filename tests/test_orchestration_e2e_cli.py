@@ -68,7 +68,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(task["request"]["category"], "OTHER")
         self.assertEqual(task["checkpoints"]["execute"]["batches_completed"], 1)
         self.assertEqual(task["result"]["qualification"]["completed"][0][
-            "alpha_ids"], ["OFFLINE_REGULAR_ALPHA"])
+            "alpha_ids"], ["OFFLINE_REGULAR_ALPHA_0001"])
         self.assertEqual(json.loads(Path(report["report_path"]).read_text(
             encoding="utf-8"))["status"], "OFFLINE_E2E_PASSED")
         self.assertTrue(marker_path(self.root).is_file())
