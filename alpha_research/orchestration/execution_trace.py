@@ -162,10 +162,10 @@ def inspect_execution_trace(state_root, task_id):
             candidate_alpha_ids.update(
                 alpha_id for alpha_id in row.get("alpha_ids", [])
                 if isinstance(alpha_id, str))
-    if domain.get("super_run", {}).get("alpha_id"):
-        candidate_alpha_ids.add(domain["super_run"]["alpha_id"])
-    if domain.get("optimization", {}).get("report"):
-        alpha_id = domain["optimization"]["report"].get("candidate_alpha_id")
+    if (domain.get("super_run") or {}).get("alpha_id"):
+        candidate_alpha_ids.add((domain.get("super_run") or {})["alpha_id"])
+    if (domain.get("optimization") or {}).get("report"):
+        alpha_id = (domain.get("optimization") or {})["report"].get("candidate_alpha_id")
         if isinstance(alpha_id, str):
             candidate_alpha_ids.add(alpha_id)
     try:
