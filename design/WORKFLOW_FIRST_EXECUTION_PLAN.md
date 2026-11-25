@@ -94,16 +94,18 @@ Phase 1 must build on these existing components and contracts:
 | `orchestration/local_regular_pilot.py` | Supervised live Regular bridge with a strict one-Dataset/one-batch bound | Keep the existing bound; do not generalize it to Super/Optimization or multi-batch live dispatch |
 | `orchestration/research_runtime_adapter.py` | Scripted offline Super/Optimization preparation/runtime | Keep it explicitly offline until each domain's own live admission and recovery path is verified |
 | `orchestration/workflow_contract.py` | Shared request mapping and projection of domain-owned qualification | Extend only where the existing workflow contract is demonstrably incomplete; do not duplicate domain qualification |
+| `orchestration/event_journal.py` + `execution_trace.py` | New append-only per-Task hash-chained event journal and read-only cross-record trace projection | Link existing Task, Campaign, Model Journal, Simulation Intent, Readback, Candidate and Recovery evidence; never duplicate their business state or store raw prompts/responses |
 
 Important interpretation: Regular Campaign's `max_batches` is a per-Dataset attempt limit in the existing Campaign implementation. With `max_batches=1`, a Campaign containing multiple verified Dataset work items can still execute one batch for each Dataset. The supervised Local Regular Pilot separately requires exactly one Dataset and one batch. Do not confuse the Pilot limit with the Campaign's overall multi-Dataset semantics.
 
-The current `MainOrchestrator` has four coarse task checkpoints (`validate`, `execute`, `qualify`, `collect`). Domain workflows already persist finer-grained records such as Campaign state, Research identity, model-call journal, Simulation Intent, response/readback, audit and Candidate/Preferred records. Phase 1 should link and expose these existing records before introducing any new state machine or replacing domain-owned persistence.
+The current `MainOrchestrator` has four coarse task checkpoints (`validate`, `execute`, `qualify`, `collect`). Domain workflows already persist finer-grained records such as Campaign state, Research identity, model-call journal, Simulation Intent, response/readback, audit and Candidate/Preferred records. The new per-Task event journal is an append-only correlation layer: it records lifecycle milestones, IDs, safe evidence references and hashes, while the existing domain records remain authoritative. `orchestration-execution-trace` verifies the event hash chain and projects the related evidence read-only. Phase 1 should link and expose these existing records before introducing any new state machine or replacing domain-owned persistence.
 
 ## 3. Shared end-to-end contracts (do not prematurely merge domain state)
 
 All three workflows must expose enough evidence for the campaign controller to observe:
 
 - request and immutable scope identity;
+- ordered Task event trace with a verified hash chain, stage transitions and domain milestone references;
 - workflow-specific plan and validation result;
 - model attempt identity, route, context digest, usage/budget settlement and UNKNOWN state;
 - domain Research/Campaign/branch identity;
@@ -124,7 +126,8 @@ For each workflow, produce a traceable vertical slice with:
 - domain execution and platform evidence linked to the task;
 - qualification result or explicit evidence-pending/rejected outcome;
 - a final next-action decision (improve, stop, retain, or await reconciliation);
-- restart/recovery behavior that never blindly replays an unknown external operation.
+- restart/recovery behavior that never blindly replays an unknown external operation;
+- a read-only trace command that verifies and correlates Task events, model-call journals, session indexes, domain records, Simulation Intent/Readback, Candidate and Recovery evidence.
 
 Start with the narrowest Regular vertical slice because a supervised local real Regular path already exists. In parallel, complete offline end-to-end traces for Super and Optimization, then wire their live adapters only behind their own verified domain and external-authority contracts.
 
@@ -162,3 +165,11 @@ Phase 1 is complete only when all three workflow traces reach their workflow-spe
 Phase 2 is complete when each shared responsibility has one canonical owner and all three workflows still pass their end-to-end acceptance traces.
 
 Phase 3 is complete when the resulting codebase is coherent, redundant code is removed, operator instructions are reproducible, and tests/CI pass on the exact final commit.
+
+## 7. Execution evidence and iterative review
+
+The first implementation batch adds a per-Task append-only JSONL event chain under `state/logs/execution_events/`. The event chain is SHA-256 linked, serialized by a single-writer lock and fsynced after each append. It captures Task lifecycle transitions and workflow-specific milestones. Existing ModelCallJournal, Campaign state, Super run records, Optimization source/branch/report records, Simulation Intent, Readback, Candidate/Preferred and Recovery receipts remain the authoritative detailed evidence.
+
+Use `orchestration-execution-trace <TASK_ID>` to verify and inspect the complete local evidence chain. A missing journal is `TRACE_INCOMPLETE`, not success; corrupt history fails closed. See [EXECUTION_TRACE.md](../docs/EXECUTION_TRACE.md).
+
+Optimization is performed in complete batches: first connect and instrument all three existing workflow paths, then review architecture and code together, then execute the consolidated offline regression suite. A discovered issue is recorded and addressed as part of the batch unless it creates an immediate safety hazard or makes further changes unsafe. No live external side effects are used to validate this instrumentation.
