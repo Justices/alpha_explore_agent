@@ -18,6 +18,17 @@ python3 -m alpha_research \
 
 第一条是 Task/Model/Manifest/Catalog/Recovery 的只读状态汇总；第二条只给出生产阻断矩阵，不签发执行 Grant。它们不要求自行手写 Manifest，也不应触发 BRAIN 或模型收费调用。任务不存在、身份冲突、损坏的 Hash、模型 Attempt UNKNOWN、缺失收据应按报告分类，不重建并覆盖旧记录。
 
+## 1.1 查看完整 Task 执行链（只读）
+
+使用创建 Task 时相同的 State Root：
+
+```powershell
+$Python = "D:\quant-venv\Scripts\python.exe"
+& $Python -m alpha_research --state-root "D:\quant\alpha_explore_agent\.alpha-runtime" orchestration-execution-trace <TASK_ID>
+```
+
+命令会校验 Task 独立 JSONL 事件链，并关联既有 Model Call Journal、Session Index、Campaign/Super/Optimization 记录、Simulation Intent 和 Readback 引用。成功必须看到 `TRACE_VERIFIED` 与 `journal_verification.status=VERIFIED`。缺失或损坏的事件链不会自动补写或伪造历史。详细字段和证据保留要求见 [EXECUTION_TRACE.md](EXECUTION_TRACE.md)。
+
 ## 2. 隔离离线研究演练
 
 **仅使用新的、一次性 state root**，不能指向真实 BRAIN 证据目录或已运行任务：
