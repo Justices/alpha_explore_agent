@@ -17,6 +17,7 @@ from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _hash
 from alpha_research.qualification.pool import CandidatePool, policy_hash
 from alpha_research.state.records import ResearchRecordStore
+from alpha_research.orchestration.event_journal import ExecutionEventJournal
 
 WORKFLOWS = ("regular", "super", "optimization")
 STEPS = ("validate", "execute", "qualify", "collect")
@@ -49,6 +50,30 @@ class MainOrchestrator:
         self.root = self.state_root / "state" / "research_v1_1" / "orchestration"
         self.adapter = adapter
         self.config = config or {}
+
+    def _emit_event(self, task, event_type, *, step=None, payload=None):
+        journal = ExecutionEventJournal(self.state_root, task["task_id"])
+        return journal.append(
+            workflow=task["workflow"], event_type=event_type,
+            research_id=(task.get("research_identity") or {}).get("research_id"),
+            step=step, payload=payload or {})
+
+    @staticmethod
+    def _outcome_trace(outcome):
+        """Project identifiers and evidence refs, never prompts or raw responses."""
+        allowed = (
+            "status", "campaign_id", "run_id", "branch_id", "alpha_id",
+            "source_alpha_id", "candidate_alpha_id", "candidate_id",
+            "candidate_status", "preferred_status", "record_ref", "state_path",
+            "report_ref", "simulation_intent_ref", "readback_ref",
+            "candidate_ref", "preferred_ref", "batches_completed",
+        )
+        summary = {key: outcome[key] for key in allowed if key in outcome}
+        for key in ("candidate_ref", "preferred_ref", "record_ref", "state_path",
+                    "report_ref", "simulation_intent_ref", "readback_ref"):
+            if key in summary and not isinstance(summary[key], str):
+                summary.pop(key)
+        return summary
 
     def _path(self, task_id):
         if (not isinstance(task_id, str) or len(task_id) != 32 or
@@ -112,12 +137,35 @@ class MainOrchestrator:
             "budget": {"limit": budget, "used": 0, "reserved": 0},
             "created_at": now, "updated_at": now,
         }
-        return self._save(task)
+        task["trace"] = {
+            "journal_ref": str(self.state_root / "state" / "logs" /
+                               "execution_events" / f"{task_id}.jsonl"),
+            "hash_chain": "sha256",
+        }
+        saved = self._save(task)
+        self._emit_event(saved, "task.created", payload={
+            "request_sha256": saved["request_sha256"],
+            "budget_limit": budget,
+            "scope": {key: request.get(key) for key in (
+                "region", "delay", "universe", "dataset_ids", "category")
+                if key in request},
+        })
+        return saved
 
     def _transition(self, task, **changes):
         prior = task["updated_at"]
         task.update(changes)
-        return self._save(task, expected=prior)
+        saved = self._save(task, expected=prior)
+        self._emit_event(saved, "task.transition", payload={
+            "status": saved["status"],
+            "steps": copy.deepcopy(saved["steps"]),
+            "budget": copy.deepcopy(saved["budget"]),
+            "failure": ({"step": saved["failure"].get("step"),
+                         "reason": saved["failure"].get("reason")}
+                        if isinstance(saved.get("failure"), dict) else None),
+            "checkpoint_names": sorted(saved.get("checkpoints", {})),
+        })
+        return saved
 
     def bind_research_identity(self, task_id, research_id):
         """Durably associate the domain-owned model-budget identity with a task.
@@ -148,11 +196,14 @@ class MainOrchestrator:
                 raise OrchestrationError(
                     "different domain Research ID already bound to task")
             return task
-        return self._transition(task, research_identity={
+        saved = self._transition(task, research_identity={
             "research_id": research_id,
             "workflow": task["workflow"],
             "bound_at": _now(),
         })
+        self._emit_event(saved, "research.identity_bound", payload={
+            "research_id": research_id})
+        return saved
 
     def bind_recovery_target(self, task_id, kind, reference):
         """Persist the exact workflow artifact needed to recover an execute step."""
@@ -180,8 +231,11 @@ class MainOrchestrator:
                 raise OrchestrationError("simulation intent is unreadable") from exc
             if intent.get("workflow") != task["workflow"]:
                 raise OrchestrationError("simulation intent workflow does not match task")
-        return self._transition(task, recovery_target={
+        saved = self._transition(task, recovery_target={
             "kind": kind, "ref": str(path), "bound_at": _now()})
+        self._emit_event(saved, "recovery.target_bound", payload={
+            "kind": kind, "target_ref": str(path)})
+        return saved
 
     def execute(self, task_id):
         """Fail fast on concurrent executors before touching RUNNING state.
@@ -217,12 +271,17 @@ class MainOrchestrator:
                 task["budget"]["reserved"] += 1
             task = self._transition(task, status="RUNNING")
             try:
+                self._emit_event(task, "task.step_started", step=step, payload={
+                    "budget": copy.deepcopy(task["budget"])})
                 context = {
                     "task_id": task_id,
                     "bind_research_identity": lambda research_id:
                         self.bind_research_identity(task_id, research_id),
                     "bind_recovery_target": lambda kind, reference:
                         self.bind_recovery_target(task_id, kind, reference),
+                    "emit_event": lambda event_type, payload=None:
+                        self._emit_event(self.load(task_id), event_type,
+                                         step=step, payload=payload),
                 }
                 outcome = self.adapter.run(task["workflow"], step,
                                            copy.deepcopy(task["request"]),
@@ -241,6 +300,10 @@ class MainOrchestrator:
                     task["budget"]["reserved"] -= 1
                     task["budget"]["used"] += 1
                 task = self._transition(task, status="RUNNING", failure=None)
+                self._emit_event(task, "task.step_completed", step=step, payload={
+                    "outcome_sha256": _hash(outcome),
+                    "outcome": self._outcome_trace(outcome),
+                })
             except Exception as exc:
                 task = self.load(task_id)
                 # Fail closed: RUNNING execute has unknown external outcome.
@@ -248,9 +311,18 @@ class MainOrchestrator:
                 reason = "outcome_unknown_manual_reconciliation_required" if step == "execute" else type(exc).__name__
                 task = self._transition(task, status="BLOCKED",
                                         failure={"step": step, "reason": reason})
+                self._emit_event(task, "task.step_blocked", step=step, payload={
+                    "reason": reason, "exception_type": type(exc).__name__,
+                    "budget": copy.deepcopy(task["budget"]),
+                })
                 return task
         task = self._transition(task, status="COMPLETED",
                                 result=copy.deepcopy(task["checkpoints"].get("collect")))
+        self._emit_event(task, "task.completed", payload={
+            "steps": copy.deepcopy(task["steps"]),
+            "budget": copy.deepcopy(task["budget"]),
+            "research_id": (task.get("research_identity") or {}).get("research_id"),
+        })
         return task
 
     def resume(self, task_id):
@@ -333,7 +405,12 @@ class MainOrchestrator:
             "receipt_ref": str(receipt_path), "receipt_sha256": actual_sha,
             "reconciled_at": _now(),
         }
-        return self._transition(task, status="RUNNING", failure=None)
+        saved = self._transition(task, status="RUNNING", failure=None)
+        self._emit_event(saved, "task.reconciled", step=step, payload={
+            "receipt_ref": str(receipt_path), "receipt_sha256": actual_sha,
+            "outcome_sha256": _hash(outcome),
+        })
+        return saved
 
 
 def pool_snapshot(state_root, config):
