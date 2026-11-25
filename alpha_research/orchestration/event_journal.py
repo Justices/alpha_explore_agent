@@ -6,6 +6,7 @@ No credentials, prompts, raw provider responses or expression bodies belong here
 """
 import hashlib
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -63,10 +64,22 @@ class ExecutionEventJournal:
                 raise ExecutionEventJournalError("execution event must be an object")
             supplied = row.get("event_sha256")
             body = {key: value for key, value in row.items() if key != "event_sha256"}
-            if (row.get("schema_version") != SCHEMA_VERSION
+            if (type(row.get("schema_version")) is not int
+                    or row.get("schema_version") != SCHEMA_VERSION
                     or row.get("task_id") != self.task_id
+                    or type(row.get("sequence")) is not int
                     or row.get("sequence") != number
+                    or not isinstance(row.get("event_id"), str)
+                    or re.fullmatch(r"[0-9a-f]{32}", row["event_id"]) is None
+                    or not isinstance(row.get("workflow"), str) or not row["workflow"]
+                    or not isinstance(row.get("event_type"), str) or not row["event_type"]
+                    or not isinstance(row.get("occurred_at"), str)
+                    or not isinstance(row.get("payload"), dict)
+                    or (row.get("research_id") is not None
+                        and not isinstance(row.get("research_id"), str))
+                    or (row.get("step") is not None and not isinstance(row.get("step"), str))
                     or row.get("previous_event_sha256") != previous
+                    or (supplied is not None and re.fullmatch(r"[0-9a-f]{64}", supplied) is None)
                     or supplied != _sha256(_canonical(body))):
                 raise ExecutionEventJournalError(
                     f"execution event hash chain mismatch at line {number}")
@@ -80,6 +93,10 @@ class ExecutionEventJournal:
             raise ExecutionEventJournalError("workflow is required")
         if not isinstance(event_type, str) or not event_type.strip():
             raise ExecutionEventJournalError("event type is required")
+        if research_id is not None and not isinstance(research_id, str):
+            raise ExecutionEventJournalError("Research ID must be a string")
+        if step is not None and not isinstance(step, str):
+            raise ExecutionEventJournalError("Task step must be a string")
         if payload is None:
             payload = {}
         if not isinstance(payload, dict):
