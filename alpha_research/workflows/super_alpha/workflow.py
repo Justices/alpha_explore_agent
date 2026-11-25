@@ -278,6 +278,9 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         atomic_write_json(run_path, run)
         persist_shared(status="outcome_unknown",
                        unresolved=["platform_simulation_outcome_requires_reconciliation"])
+        _emit(execution_context, "super.simulation_outcome_unknown",
+              run_id=run_id, batch_id=batch_id,
+              simulation_intent_ref=str(intent_path))
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
                                 default=str).encode("utf-8")
@@ -287,6 +290,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
         response_sha256=__import__("hashlib").sha256(response_bytes).hexdigest(),
         response_ref=str(response_path))
+    _emit(execution_context, "super.simulation_response_received",
+          run_id=run_id, batch_id=batch_id, response_ref=str(response_path))
     run["response_ref"] = str(response_path)
     atomic_write_json(run_path, run)
     rows = result.get("results") if isinstance(result, dict) else None
