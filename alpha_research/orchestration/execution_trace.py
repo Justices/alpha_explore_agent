@@ -6,6 +6,7 @@ from pathlib import Path
 from alpha_research.orchestration.event_journal import ExecutionEventJournal
 from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.state.records import ResearchRecordStore
+from alpha_research.state.sealed import is_sealed_state
 
 
 def _read_object(path, *, root=None):
@@ -123,6 +124,43 @@ def inspect_execution_trace(state_root, task_id):
             if record and record.get("research_id") == research_id:
                 calls.append(_safe_model_call(path, record))
 
+    model_budget = {
+        "status": "NOT_APPLICABLE" if not research_id else "NOT_CREATED",
+        "ledger_ref": None, "summary": None, "calls": [],
+    }
+    if research_id:
+        budget_stem = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
+        budget_path = (root / "state" / "logs" / "model_budget" /
+                       f"{budget_stem}.json")
+        model_budget["ledger_ref"] = str(budget_path)
+        budget_state = _read_object(budget_path, root=root)
+        if budget_state is not None:
+            if (budget_state.get("research_id") == research_id
+                    and is_sealed_state(budget_state)
+                    and isinstance(budget_state.get("calls"), list)):
+                budget_calls = budget_state["calls"]
+                model_budget["status"] = "VERIFIED"
+                model_budget["summary"] = {
+                    "attempts": len(budget_calls),
+                    "successful": sum(row.get("status") == "OK" for row in budget_calls),
+                    "failed": sum(row.get("status") == "ERROR" for row in budget_calls),
+                    "unknown": sum(row.get("status") == "UNKNOWN" for row in budget_calls),
+                    "unresolved": sum(row.get("status") == "IN_FLIGHT" for row in budget_calls),
+                    "reported_tokens": sum(
+                        value for row in budget_calls
+                        for value in (row.get("token_in"), row.get("token_out"))
+                        if type(value) is int),
+                }
+                model_budget["calls"] = [{
+                    key: row.get(key) for key in (
+                        "call_id", "task", "role", "backend", "status",
+                        "token_in", "token_out", "backend_sha256")
+                    if key in row
+                } for row in budget_calls if isinstance(row, dict)]
+            else:
+                model_budget["status"] = "INVALID"
+        elif calls:
+            model_budget["status"] = "MISSING"
     session_ids = sorted({row.get("session_id") for row in calls
                           if isinstance(row.get("session_id"), str)})
     sessions = []
@@ -314,6 +352,8 @@ def inspect_execution_trace(state_root, task_id):
         evidence_refs.update(
             value for key, value in payload.items()
             if key.endswith("_ref") and isinstance(value, str))
+    if model_budget.get("ledger_ref") and model_budget["status"] == "VERIFIED":
+        evidence_refs.add(model_budget["ledger_ref"])
     for row in calls:
         evidence_refs.update(row.get(key) for key in (
             "context_ref", "response_ref", "record_ref",
@@ -366,6 +406,7 @@ def inspect_execution_trace(state_root, task_id):
         "journal_verification": verification,
         "events": events,
         "model_calls": calls,
+        "model_budget": model_budget,
         "model_sessions": sessions,
         "evidence_manifest": evidence_manifest,
         "domain_evidence": domain,
