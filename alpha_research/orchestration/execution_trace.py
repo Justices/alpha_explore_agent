@@ -133,7 +133,7 @@ def inspect_execution_trace(state_root, task_id):
     if isinstance(research_id, str) and research_id.startswith("regular:campaign:"):
         campaign_id = research_id.removeprefix("regular:campaign:")
         path = root / "state" / "research_v1_1" / "campaign_runs" / f"{campaign_id}.json"
-        saved = _read_object(path)
+        saved = _read_object(path, root=root)
         if saved:
             domain["campaign"] = {
                 "campaign_id": campaign_id, "status": saved.get("status"),
@@ -160,7 +160,7 @@ def inspect_execution_trace(state_root, task_id):
                 "batch_intents": [{
                     "dataset_id": row.get("dataset_id"),
                     "batch_ref": row.get("batch_dir"),
-                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root),
+                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json"),
                     "intent_status": ((_read_object(
                         Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root) or {}).get("status")),
                 } for row in saved.get("completed", [])
@@ -269,6 +269,8 @@ def inspect_execution_trace(state_root, task_id):
         if not path.is_absolute():
             path = root / path
         try:
+            if path.is_symlink():
+                continue
             path = path.resolve(strict=True)
             if not path.is_relative_to(root):
                 continue
