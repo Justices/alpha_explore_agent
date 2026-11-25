@@ -117,7 +117,7 @@ def inspect_execution_trace(state_root, task_id):
     sessions = []
     for session_id in session_ids:
         path = root / "state" / "logs" / "model_sessions" / f"{session_id}.json"
-        index = _read_object(path)
+        index = _read_object(path, root=root)
         sessions.append({
             "session_id": session_id,
             "status": "READABLE" if index else "MISSING_OR_UNREADABLE",
@@ -160,7 +160,7 @@ def inspect_execution_trace(state_root, task_id):
                 "batch_intents": [{
                     "dataset_id": row.get("dataset_id"),
                     "batch_ref": row.get("batch_dir"),
-                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json"),
+                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root),
                     "intent_status": ((_read_object(
                         Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root) or {}).get("status")),
                 } for row in saved.get("completed", [])
@@ -185,7 +185,7 @@ def inspect_execution_trace(state_root, task_id):
         run_id = research_id.removeprefix("optimization:")
         base = root / "state" / "research_v1_1" / "optimization"
         report_path = base / f"{run_id}_optimization_report.json"
-        report = _read_object(report_path)
+        report = _read_object(report_path, root=root)
         branch_id = next((event.get("payload", {}).get("branch_id")
                           for event in events
                           if event.get("event_type") ==
@@ -274,7 +274,7 @@ def inspect_execution_trace(state_root, task_id):
                 continue
         except (OSError, RuntimeError):
             continue
-        intent = _read_object(path)
+        intent = _read_object(path, root=root)
         if intent and intent.get("workflow") in ("regular", "super", "optimization"):
             body = {
                 "workflow": intent.get("workflow"),
