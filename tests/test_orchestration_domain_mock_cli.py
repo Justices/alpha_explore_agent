@@ -101,10 +101,13 @@ class DomainMockCliTests(unittest.TestCase):
         self.assertEqual(task["checkpoints"]["execute"]["batches_completed"], 1)
         self.assertEqual(
             task["checkpoints"]["execute"]["completed"][0]["alpha_ids"],
-            ["OFFLINE_REGULAR_ALPHA"])
+            ["OFFLINE_REGULAR_ALPHA_0001"])
         self.assertTrue(list(self.root.rglob("simulation_intent.json")))
         self.assertEqual(
             len(ResearchRecordStore(self.root).list("campaign")), 1)
+        self.assertEqual(
+            task["checkpoints"]["execute"]["dataset_reviews"]["OFFLINE_DATASET"]["status"],
+            "no_selection")
         code, _, _ = self.call(
             ["orchestration-domain-mock", task_id, "--mode", "mock"])
         self.assertEqual(code, 2)
