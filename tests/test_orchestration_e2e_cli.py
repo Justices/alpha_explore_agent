@@ -121,6 +121,10 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(task["budget"], {
             "limit": 1, "used": 0, "reserved": 1})
         self.assertIsNotNone(task["recovery_target"])
+        trace = inspect_execution_trace(self.root, report["task_id"])
+        self.assertEqual(trace["status"], "TRACE_VERIFIED")
+        self.assertIn("task.step_blocked", [row["event_type"] for row in trace["events"]])
+        self.assertTrue(trace["evidence_manifest"]["files"])
         self.assertEqual(json.loads(Path(report["report_path"]).read_text(
             encoding="utf-8"))["status"], "OFFLINE_E2E_BLOCKED")
         second, out, err = self.invoke(extra=["--dataset", "analyst10"])
