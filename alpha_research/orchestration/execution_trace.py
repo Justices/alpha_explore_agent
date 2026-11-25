@@ -21,7 +21,8 @@ def _safe_model_call(path, record):
         "call_id", "ts", "task", "agent_role", "agent_backend", "model",
         "session_id", "research_id", "batch_ref", "status",
         "context_sha256", "route_sha256", "response_sha256",
-        "context_ref", "response_ref", "record_ref",
+        "context_ref", "response_ref", "record_ref", "knowledge_pack_ref",
+        "token_in", "token_out", "latency_ms", "provider",
     )
     row = {key: record[key] for key in allowed if key in record}
     row["record_path"] = str(path)
@@ -88,6 +89,14 @@ def inspect_execution_trace(state_root, task_id):
                 },
                 "campaign_state_ref": str(path),
                 "campaign_summary_ref": str(path.with_name(f"{campaign_id}_summary.json")),
+                "batch_intents": [{
+                    "dataset_id": row.get("dataset_id"),
+                    "batch_ref": row.get("batch_dir"),
+                    "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json"),
+                    "intent_status": ((_read_object(
+                        Path(row.get("batch_dir", "")) / "simulation_intent.json") or {}).get("status")),
+                } for row in saved.get("completed", [])
+                  if isinstance(row, dict) and isinstance(row.get("batch_dir"), str)],
             }
     elif isinstance(research_id, str) and research_id.startswith("super:"):
         run_id = research_id.removeprefix("super:")
