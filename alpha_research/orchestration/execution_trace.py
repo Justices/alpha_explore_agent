@@ -169,7 +169,7 @@ def inspect_execution_trace(state_root, task_id):
     elif isinstance(research_id, str) and research_id.startswith("super:"):
         run_id = research_id.removeprefix("super:")
         path = root / "state" / "research_v1_1" / "super_runs" / f"{run_id}.json"
-        saved = _read_object(path)
+        saved = _read_object(path, root=root)
         if saved:
             domain["super_run"] = {
                 key: saved.get(key) for key in (
