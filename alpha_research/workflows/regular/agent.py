@@ -1012,7 +1012,15 @@ class ResearchAgent:
         if not isinstance(context, dict):
             raise ResearchError("batch context is unreadable; research thread cannot be recovered")
         self._begin_session(self._batch_research_id(batch_dir, context))
+        _emit_execution_event(execution_context, "regular.recovery_started",
+                              research_id=self.recorder.research_id,
+                              batch_ref=str(batch_dir),
+                              simulation_intent_ref=str(batch_dir / "simulation_intent.json"))
         if (batch_dir / "field_research_plan.json").exists():
+            _emit_execution_event(execution_context, "regular.field_plan_recovery_started",
+                                  research_id=self.recorder.research_id,
+                                  batch_ref=str(batch_dir),
+                                  field_plan_ref=str(batch_dir / "field_research_plan.json"))
             return self._execute_field_plan(batch_dir, context)
         production_intent = batch_dir / "simulation_intent.json"
         if completed_probes_only and not has_only_completed_probes(batch_dir):
@@ -1031,6 +1039,12 @@ class ResearchAgent:
                 raise ResearchError("READ_BACK intent has no saved results; recovery blocked")
             result = json.loads(result_path.read_text(encoding="utf-8"))
             prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
+            _emit_execution_event(execution_context, "regular.recovery_readback_reused",
+                                  research_id=self.recorder.research_id,
+                                  batch_ref=str(batch_dir),
+                                  simulation_intent_ref=str(production_intent),
+                                  results_ref=str(result_path),
+                                  alpha_ids=result.get("alpha_ids", []))
             simulation_settings = (intent.get("settings") or
                                    prereg.get("simulation_settings") or
                                    self._platform_settings(prereg["scope"]))
@@ -1072,13 +1086,32 @@ class ResearchAgent:
                 raise ResearchError("unsubmitted simulation evidence changed; recovery blocked")
             if self.stop_flag and self.stop_flag.exists():
                 raise ResearchError("stop flag is set; no new simulation posted")
+            _emit_execution_event(execution_context, "regular.recovery_simulation_posting",
+                                  research_id=self.recorder.research_id,
+                                  batch_ref=str(batch_dir),
+                                  simulation_intent_ref=str(production_intent))
             self.gateway.call("set_case", case_key=runner["case_key"], run_id=runner["run_id"])
             runner_variants = [self._production_runner_variant(
                 prereg["proposal"], variant, prereg["dataset_id"], index + 1)
                 for index, variant in enumerate(variants)]
-            raw = self._simulate(runner_variants, intent["settings"],
-                                 prereg["dataset_id"], batch_dir, "production")
+            try:
+                raw = self._simulate(runner_variants, intent["settings"],
+                                     prereg["dataset_id"], batch_dir, "production")
+            except Exception as exc:
+                _emit_execution_event(execution_context, "regular.recovery_simulation_outcome_unknown",
+                                      research_id=self.recorder.research_id,
+                                      batch_ref=str(batch_dir),
+                                      simulation_intent_ref=str(production_intent),
+                                      exception_type=type(exc).__name__)
+                raise
             atomic_write_json(raw_path, raw)
+            _emit_execution_event(execution_context, "regular.recovery_response_received",
+                                  research_id=self.recorder.research_id,
+                                  batch_ref=str(batch_dir),
+                                  response_ref=str(raw_path),
+                                  response_sha256=hashlib.sha256(json.dumps(
+                                      raw, ensure_ascii=False, sort_keys=True,
+                                      separators=(",", ":")).encode("utf-8")).hexdigest())
         rows = raw.get("alpha_results") if isinstance(raw, dict) else None
         if len(expressions) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
             rows = [raw]
@@ -1093,9 +1126,14 @@ class ResearchAgent:
                 self._record_completed_expressions(
                     expressions, prereg["dataset_id"], prereg["scope"],
                     intent["settings"])
+                _emit_execution_event(execution_context, "regular.recovery_alpha_readback_resolved",
+                                      research_id=self.recorder.research_id,
+                                      batch_ref=str(batch_dir), alpha_ids=alpha_ids,
+                                      response_ref=str(raw_path))
                 return self._complete(batch_dir, prereg, alpha_ids,
                                       intent["prereg_sha256"],
-                                      intent.get("settings"))
+                                      intent.get("settings"),
+                                      execution_context=execution_context)
         recent = self._recent_alphas()
         matched, missing, match_notes = match_alphas_detailed(
             expressions, intent["settings"], recent)
