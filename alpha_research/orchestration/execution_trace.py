@@ -36,6 +36,9 @@ def inspect_execution_trace(state_root, task_id):
     journal = ExecutionEventJournal(root, task_id)
     events = journal.read_events()
     verification = journal.verify()
+    trace_ref = (task.get("trace") or {}).get("journal_ref")
+    trace_binding_valid = trace_ref == str(journal.path)
+    trace_events_consistent = len(events) == verification["event_count"]
     research_id = (task.get("research_identity") or {}).get("research_id")
 
     calls = []
@@ -186,7 +189,11 @@ def inspect_execution_trace(state_root, task_id):
     return {
         "schema_version": 1,
         "status": ("TRACE_VERIFIED" if verification["status"] == "VERIFIED"
-                   and verification["event_count"] > 0 else "TRACE_INCOMPLETE"),
+                   and verification["event_count"] > 0
+                   and trace_binding_valid and trace_events_consistent
+                   else "TRACE_INCOMPLETE"),
+        "trace_binding_valid": trace_binding_valid,
+        "trace_events_consistent": trace_events_consistent,
         "task": {
             "task_id": task_id, "workflow": task.get("workflow"),
             "status": task.get("status"), "steps": task.get("steps"),
