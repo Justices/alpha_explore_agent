@@ -43,6 +43,12 @@ from alpha_research.workflows.regular.field_catalog import (
 )
 
 
+def _emit_execution_event(execution_context, event_type, **payload):
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        callback(event_type, payload)
+
+
 class ResearchAgent:
     def __init__(self, gateway, model, config: dict, runs_root: Path,
                  stop_flag: Path = None):
@@ -469,7 +475,7 @@ class ResearchAgent:
         )
 
     def _complete(self, batch_dir, prereg, alpha_ids, digest,
-                  simulation_settings=None):
+                  simulation_settings=None, *, execution_context=None):
         readback = {}
         for alpha_id in alpha_ids:
             details = self.gateway.call("get_alpha_details", alpha_id=alpha_id)
@@ -480,6 +486,10 @@ class ResearchAgent:
                                   "checks": {"checks": (
                                       is_data.get("checks") if isinstance(is_data, dict)
                                       else None)}}
+        _emit_execution_event(execution_context, "regular.readback_completed",
+                              batch_ref=str(batch_dir), alpha_ids=alpha_ids,
+                              readback_count=len(readback),
+                              readback_ref=str(Path(batch_dir) / "readback.json"))
         scope = prereg["scope"]
         simulation_settings = (simulation_settings or prereg.get("simulation_settings")
                                or self._platform_settings(scope))
@@ -493,6 +503,13 @@ class ResearchAgent:
                 evidence["details"], evidence["checks"], scope["region"],
                 self.config, operator_count=operator_counts.get(expression),
                 **ppa_gate_kwargs(prereg, expression))
+        _emit_execution_event(execution_context, "regular.ra_gate_completed",
+                              batch_ref=str(batch_dir),
+                              results={alpha_id: {
+                                  "ra_fail_count": verdict.get("ra_fail_count"),
+                                  "correlation_allowed": verdict.get("correlation_allowed"),
+                                  "status": verdict.get("status"),
+                              } for alpha_id, verdict in prelim.items()})
         contenders = dict(case.get("contenders") or {})
         for alpha_id, item in contenders.items():
             if alpha_id not in alpha_ids and item.get("status") == "CANDIDATE":
@@ -556,6 +573,8 @@ class ResearchAgent:
             if alpha_id in contenders:
                 contenders[alpha_id]["local_self_rejected"] = (
                     local_self_correlation_state(prefilter, self_limit) == "fail")
+        _emit_execution_event(execution_context, "regular.local_self_correlation_completed",
+                              batch_ref=str(batch_dir), results=prefilters)
         gate = {}
         for alpha_id, evidence in readback.items():
             preliminary = prelim[alpha_id]
@@ -600,6 +619,10 @@ class ResearchAgent:
                     "alpha_id": alpha_id, "evidence": evidence,
                     "gate": verdict}, batch_dir=batch_dir)
                 evidence["review"] = review
+                _emit_execution_event(execution_context, "regular.candidate_review_completed",
+                                      batch_ref=str(batch_dir), alpha_id=alpha_id,
+                                      verdict=review.get("verdict"),
+                                      evidence_refs=review.get("evidence_refs", []))
                 if (review.get("verdict") != "CLEAR" or
                         not isinstance(review.get("reason"), str) or
                         not review["reason"].strip() or
@@ -649,6 +672,15 @@ class ResearchAgent:
                 verdict["status"] = "PAIRWISE_CONFLICT"
         case["contenders"] = contenders
         atomic_write_json(batch_dir / "gate.json", gate)
+        _emit_execution_event(execution_context, "regular.correlation_gate_completed",
+                              batch_ref=str(batch_dir),
+                              results={alpha_id: {
+                                  "status": verdict.get("status"),
+                                  "failures": verdict.get("failures", []),
+                                  "pending": verdict.get("pending", []),
+                                  "ra_fail_count": verdict.get("ra_fail_count"),
+                              } for alpha_id, verdict in gate.items()},
+                              gate_ref=str(batch_dir / "gate.json"))
         try:
             diagnosis = diagnose_batch(
                 batch_dir, prereg, gate, readback, self.config,
@@ -679,6 +711,10 @@ class ResearchAgent:
                     "status": "unavailable", "error_type": type(exc).__name__,
                     "error": str(exc)}
         atomic_write_json(batch_dir / "diagnosis.json", diagnosis)
+        _emit_execution_event(execution_context, "regular.diagnosis_completed",
+                              batch_ref=str(batch_dir),
+                              failure_alpha_count=len(failed_alphas),
+                              diagnosis_ref=str(batch_dir / "diagnosis.json"))
         if not any(item.get("batch") == str(batch_dir)
                    for item in case.get("batches", [])):
             case.setdefault("batches", []).append({
@@ -722,6 +758,12 @@ class ResearchAgent:
                     "model_tokens": None}
         atomic_write_json(batch_dir / "metering.json", metering)
         atomic_write_json(batch_dir / "results.json", result)
+        _emit_execution_event(execution_context, "regular.batch_results_persisted",
+                              batch_ref=str(batch_dir), alpha_ids=alpha_ids,
+                              candidate_status=result["candidate_status"],
+                              results_ref=str(batch_dir / "results.json"),
+                              diagnosis_ref=str(batch_dir / "diagnosis.json"),
+                              gate_ref=str(batch_dir / "gate.json"))
         atomic_write_json(batch_dir / "simulation_intent.json", {
             "status": "READ_BACK", "prereg_sha256": digest,
             "alpha_ids": alpha_ids, "settings": simulation_settings})
@@ -1780,7 +1822,7 @@ class ResearchAgent:
         self._record_completed_expressions(expressions, dataset_id, scope,
                                            simulation_settings)
         return self._complete(batch_dir, prereg, alpha_ids, digest,
-                              simulation_settings)
+                              simulation_settings, execution_context=execution_context)
 
     def run_case(self, objective: str, max_batches: int, dataset_id: str = None, *,
                  diagnosis_id=None, remedy_id=None,
