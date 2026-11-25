@@ -36,8 +36,8 @@ Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用
 当前事件覆盖：
 - Task 创建、阶段状态迁移、阶段开始/完成/阻断、Task 完成；
 - Domain Research ID、Recovery Target 绑定、人工协调结果；
-- Regular Campaign 排程、Dataset 批次开始/完成/失败、Dataset Review、Campaign 完成；
-- Super/Optimization 的提案、校验、分支、Simulation Intent、POST、Readback、源完整性和 Qualification 里程碑；
+- Regular Campaign 排程、Dataset Scope、字段/探针计划、字段证据、Proposal、表达式校验、Pre-registration、Simulation Intent/POST/Readback、RA Gate、局部/两两相关性、Canonical Audit、Diagnosis、Dataset Attribution、嵌套 Optimization 和 Campaign 完成；
+- Super/Optimization 的源快照、知识包、提案（关联 Model Call/Session ID）、校验、分支、Simulation Intent、POST/未知结果/Readback、源完整性和 Qualification 里程碑；
 - Domain dispatch 的开始和完成。
 
 模型调用仍由现有 Model Journal 记录；执行链通过 Research ID、Session ID、Batch Ref 和模型调用记录关联，不复制 Prompt/Response 内容。一个 Regular Campaign Task 可以包含多个 Dataset 子任务以及独立 Optimization Research ID；事件的 Research ID 按领域运行标识关联，Task 的主 Research Identity 保持兼容，追踪命令会汇总该 Task 事件链中出现的全部 Research ID 与各自的 Model Budget Ledger。
