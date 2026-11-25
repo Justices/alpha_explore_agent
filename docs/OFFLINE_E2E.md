@@ -5,7 +5,7 @@
 ## 适用范围与安全边界
 
 - `orchestration-e2e-offline` 会调用真实的 `MainOrchestrator`、`dispatch` 和 Regular Campaign 调度器。
-- **模型生成、Regular 单批次研发执行以及 BRAIN 网关均为脚本化模拟**。Super/Optimization 的 Simulation 也是脚本化模拟。因此不能将任何候选指标或 Alpha ID 视为真实平台结果。
+- **模型生成、Regular 实验批次和 BRAIN 网关均为脚本化模拟**；Regular Campaign 已使用真实 `review_dataset` 对模拟 prereg、READ_BACK、results 和 attribution 证据执行校验与 Dataset 归因，离线 Review 决策固定为 `no_selection`，不构成真实研究判断。Super/Optimization 的 Simulation 也是脚本化模拟。因此不能将任何候选指标或 Alpha ID 视为真实平台结果。
 - 不初始化 `Gateway`、不访问 BRAIN、不调用收费模型、不真实 Simulation、不提交 Alpha。
 - 要求**全新、空目录**作为独立 `--state-root`，绝不能使用有真实数据的 `.alpha-runtime` 或 `alpha-research-live`。
 - 不允许通过 `--config` 指向外部真实配置文件，以免离线流程的自动迁移意外修改真实工作区；仅使用独立 State Root 内的系统默认配置及命令行 Scope 选择。
@@ -89,7 +89,7 @@ Super 使用新的空目录并指定 `--workflow super`。Optimization 使用新
 - `state/research_v1_1/offline_e2e/<TASK_ID>.json`：单次离线验收回执，新增 `trace_status`、`trace_ref`、`trace_event_count`、`trace_last_event_sha256`、`evidence_manifest_status`、`evidence_file_count`。
 - Campaign、Model Call、Simulation Intent、Readback、Audit 和 Candidate 证据仍保留在原有存储位置，由追踪器依据 Research ID 与现有引用关联，不复制出第二套权威状态。
 
-现在，四阶段完成且满足原有执行约束**仍不足以单独判定** `OFFLINE_E2E_PASSED`；还要求 `trace_status=TRACE_VERIFIED`，以及 `workflow_handoff_audit.status=VERIFIED`（按业务流程逐节点确认事件顺序、领域记录和关键 ID）。事件链缺失、损坏或者与 Task 的日志绑定不一致时，回执为 `OFFLINE_E2E_BLOCKED`，即使 Task 本身已经 `COMPLETED`。该状态只表示本轮验收被拒绝，不会篡改原 Task 状态。
+现在，四阶段完成且满足原有执行约束**仍不足以单独判定** `OFFLINE_E2E_PASSED`；还要求 `trace_status=TRACE_VERIFIED`，以及 `workflow_handoff_audit.status=VERIFIED`（按业务流程逐节点确认事件顺序、领域记录和关键 ID；Regular 必须含每个 Dataset 的归因及 Review 完成事件）。事件链缺失、损坏或者与 Task 的日志绑定不一致时，回执为 `OFFLINE_E2E_BLOCKED`，即使 Task 本身已经 `COMPLETED`。该状态只表示本轮验收被拒绝，不会篡改原 Task 状态。
 
 `TRACE_VERIFIED` 仅表示事件链及绑定验证通过，不意味着全部外围证据都已齐备。必须分别查看 `evidence_manifest_status` 和模型预算、Session、Domain records 的完整性，不得据此推断真实 Simulation 已完成。
 
