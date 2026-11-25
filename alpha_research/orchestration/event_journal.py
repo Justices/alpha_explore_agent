@@ -114,6 +114,15 @@ class ExecutionEventJournal:
             raise ExecutionEventJournalError(
                 "another writer is appending execution events") from exc
 
+    def read_events(self):
+        """Return all events only after verifying the complete hash chain."""
+        try:
+            with SingleWriterLock(self.lock_path):
+                return self._read_verified()
+        except WriterLockError as exc:
+            raise ExecutionEventJournalError(
+                "execution event journal is being updated") from exc
+
     def verify(self):
         """Return a compact verification receipt without mutating the journal."""
         try:
