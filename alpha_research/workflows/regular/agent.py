@@ -1021,7 +1021,8 @@ class ResearchAgent:
                                   research_id=self.recorder.research_id,
                                   batch_ref=str(batch_dir),
                                   field_plan_ref=str(batch_dir / "field_research_plan.json"))
-            return self._execute_field_plan(batch_dir, context)
+            return self._execute_field_plan(batch_dir, context,
+                                            execution_context=execution_context)
         production_intent = batch_dir / "simulation_intent.json"
         if completed_probes_only and not has_only_completed_probes(batch_dir):
             raise ResearchError("diagnostic results are not fully reconciled; use simulation recovery")
@@ -1613,7 +1614,8 @@ class ResearchAgent:
             batch_context = read_json(batch_dir / "batch_context.json")
             field_plan = self._construct_field_plan(batch_dir, batch_context, core_fields,
                                                      field_rows, catalog, operators,
-                                                     operator_catalog, prior_case)
+                                                     operator_catalog, prior_case,
+                                                     execution_context=execution_context)
             _emit_execution_event(execution_context, "regular.field_plan_constructed",
                                   research_id=self.recorder.research_id,
                                   dataset_id=dataset_id, batch_ref=str(batch_dir),
@@ -1945,14 +1947,17 @@ class ResearchAgent:
                                         execution_context=execution_context)
 
     def _construct_field_plan(self, batch_dir, context, core_fields, field_rows,
-                              catalog, operators, operator_catalog, prior_case):
+                              catalog, operators, operator_catalog, prior_case,
+                              *, execution_context=None):
         return self.field_plans.construct(
             batch_dir, context, core_fields, field_rows, catalog,
             operators, operator_catalog, prior_case,
+            execution_context=execution_context,
         )
 
-    def _execute_field_plan(self, batch_dir, context):
-        return self.field_plans.execute(batch_dir, context)
+    def _execute_field_plan(self, batch_dir, context, *, execution_context=None):
+        return self.field_plans.execute(batch_dir, context,
+                                        execution_context=execution_context)
 
     def _execute_production(self, batch_dir, prereg, runner_variants,
                             platform_case_key, platform_run_id, *, execution_context=None):
