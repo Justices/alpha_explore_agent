@@ -109,7 +109,6 @@ def _model_budget_trace(root, research_id, has_calls):
                    f"{budget_stem}.json")
     result = {
         "research_id": research_id,
-        "research_ids": research_ids,
         "status": "NOT_CREATED",
         "ledger_ref": str(budget_path),
         "summary": None,
@@ -470,8 +469,9 @@ def inspect_execution_trace(state_root, task_id):
             "status": task.get("status"), "steps": task.get("steps"),
             "budget": task.get("budget"), "request_sha256": task.get("request_sha256"),
             "research_id": research_id,
+            "research_ids": research_ids,
             "recovery_target": task.get("recovery_target"),
-            "trace_ref": (task.get("trace") or {}).get("journal_ref"),
+            "trace_ref": trace_ref,
             "checkpoint_names": sorted(task.get("checkpoints", {})),
         },
         "journal_verification": verification,
