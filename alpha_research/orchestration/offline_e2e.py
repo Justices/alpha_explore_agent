@@ -147,6 +147,10 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
                  and {row.get("dataset_id") for row in completed_batches}
                      == set(request.get("dataset_ids") or ["OFFLINE_DATASET"]))
         )
+        from alpha_research.orchestration.execution_trace import inspect_execution_trace
+        trace = inspect_execution_trace(root, task_id)
+        trace_verified = trace["status"] == "TRACE_VERIFIED"
+        completed = completed and trace_verified
         report = {
             "schema_version": 1,
             "status": ("OFFLINE_E2E_PASSED" if completed else "OFFLINE_E2E_BLOCKED"),
@@ -168,6 +172,13 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
             "research_identity_bound": done.get("research_identity") is not None,
             "recovery_target_bound": done.get("recovery_target") is not None,
             "failure": done.get("failure"),
+            "trace_status": trace["status"],
+            "trace_ref": trace["journal_verification"]["journal_ref"],
+            "trace_event_count": trace["journal_verification"]["event_count"],
+            "trace_last_event_sha256": trace["journal_verification"]["last_event_sha256"],
+            "trace_binding_valid": trace["trace_binding_valid"],
+            "evidence_manifest_status": trace["evidence_manifest"]["status"],
+            "evidence_file_count": trace["evidence_manifest"]["file_count"],
             "automatic_retry_allowed": False,
             "provider_model_invoked": False,
             "brain_invoked": False,
