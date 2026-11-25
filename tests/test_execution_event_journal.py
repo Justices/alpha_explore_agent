@@ -45,6 +45,40 @@ class ExecutionEventJournalTests(unittest.TestCase):
             with self.assertRaises(ExecutionEventJournalError):
                 journal.append(workflow="regular", event_type="task.created")
 
+    def test_symlinked_journal_cannot_read_or_append(self):
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside.jsonl"
+            outside.write_text("protected", encoding="utf-8")
+            journal = ExecutionEventJournal(root / "workspace", "e" * 32)
+            journal.root.mkdir(parents=True)
+            try:
+                journal.path.symlink_to(outside)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation unavailable")
+            with self.assertRaisesRegex(ExecutionEventJournalError, "unsafe"):
+                journal.read_events()
+            with self.assertRaisesRegex(ExecutionEventJournalError, "unsafe"):
+                journal.append(workflow="regular", event_type="task.created")
+            self.assertEqual(outside.read_text(encoding="utf-8"), "protected")
+
+    def test_symlinked_log_directory_is_refused(self):
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            state = root / "state"
+            state.mkdir()
+            external = root / "external"
+            external.mkdir()
+            try:
+                (state / "logs").symlink_to(external, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlink creation unavailable")
+            journal = ExecutionEventJournal(root, "f" * 32)
+            with self.assertRaisesRegex(ExecutionEventJournalError, "unsafe"):
+                journal.append(workflow="super", event_type="task.created")
+
     def test_tampered_event_is_detected_and_append_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = ExecutionEventJournal(directory, "b" * 32)
