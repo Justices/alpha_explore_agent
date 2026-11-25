@@ -94,7 +94,9 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
     required = {
         "regular": (
             "regular.campaign_scheduled", "regular.batch_started",
-            "regular.batch_completed", "regular.dataset_attribution_completed",
+            "regular.batch_completed", "regular.dataset_review_started",
+            "regular.dataset_attribution_started",
+            "regular.dataset_attribution_completed", "regular.dataset_no_selection",
             "regular.dataset_review_completed", "regular.campaign_completed"),
         "super": (
             "super.research_started", "super.proposal_generated",
@@ -117,22 +119,39 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
     if workflow == "regular":
         campaign = domain.get("campaign") or {}
         completed = campaign.get("completed") or []
+        dataset_ids = {row.get("dataset_id") for row in completed}
+        review_rows = campaign.get("dataset_reviews") or {}
+        review_refs = {row.get("review_ref") for row in review_rows.values()
+                       if isinstance(row, dict)}
+        evidence_files = (trace.get("evidence_manifest") or {}).get("files", [])
+        evidence_paths = {row.get("path") for row in evidence_files
+                          if isinstance(row, dict)}
+        review_evidence_bound = (
+            len(review_refs) == expected_attempts
+            and None not in review_refs
+            and review_refs.issubset(evidence_paths))
+        regular_stages = (
+            "regular.batch_started", "regular.batch_completed",
+            "regular.dataset_review_started",
+            "regular.dataset_attribution_started",
+            "regular.dataset_attribution_completed",
+            "regular.dataset_no_selection", "regular.dataset_review_completed",
+        )
         domain_valid = (
             len(completed) == expected_attempts
-            and events.count("regular.batch_started") == expected_attempts
-            and events.count("regular.batch_completed") == expected_attempts
-            and events.count("regular.dataset_attribution_completed") == expected_attempts
-            and events.count("regular.dataset_review_completed") == expected_attempts
-            and events.count("regular.dataset_no_selection") == expected_attempts
-            and len(campaign.get("dataset_reviews") or {}) == expected_attempts
-            and all(row.get("status") == "no_selection" for row in
-                    (campaign.get("dataset_reviews") or {}).values())
+            and len(dataset_ids) == expected_attempts
+            and all(events.count(name) == expected_attempts
+                    for name in regular_stages)
+            and len(review_rows) == expected_attempts
+            and all(row.get("status") == "no_selection"
+                    for row in review_rows.values())
+            and review_evidence_bound
             and isinstance(campaign.get("campaign_id"), str)
             and bool(campaign.get("campaign_id"))
-            and {row.get("dataset_id") for row in matching("regular.batch_completed")}
-                == {row.get("dataset_id") for row in completed}
+            and all({row.get("dataset_id") for row in matching(name)} == dataset_ids
+                    for name in regular_stages)
             and all(row.get("campaign_id") == campaign["campaign_id"]
-                    for row in matching("regular.batch_completed")))
+                    for name in regular_stages for row in matching(name)))
     elif workflow == "super":
         run = domain.get("super_run") or {}
         domain_valid = all(run.get(key) for key in (
@@ -156,6 +175,8 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
         "missing_events": missing,
         "events_ordered": ordered,
         "domain_evidence_bound": bool(domain_valid),
+        "review_evidence_bound": (review_evidence_bound
+                                  if workflow == "regular" else None),
     }
 
 
