@@ -1805,14 +1805,42 @@ class ResearchAgent:
             "runner": {"case_key": platform_case_key,
                        "run_id": platform_run_id,
                        "batch_id": batch_dir.name, "label": "production"}})
+        _emit_execution_event(execution_context, "regular.preregistration_locked",
+                              batch_ref=str(batch_dir), dataset_id=dataset_id,
+                              expression_count=len(expressions),
+                              prereg_ref=str(prereg_path),
+                              prereg_sha256=digest,
+                              state_ref=str(batch_dir / "state.json"))
+        _emit_execution_event(execution_context, "regular.simulation_intent_prepared",
+                              batch_ref=str(batch_dir),
+                              simulation_intent_ref=str(batch_dir / "simulation_intent.json"),
+                              prereg_sha256=digest, expression_count=len(expressions))
         if execution_context is not None:
             bind_target = execution_context.get("bind_recovery_target")
             if callable(bind_target):
                 bind_target("regular_batch", batch_dir)
 
-        raw = self._simulate(runner_variants, simulation_settings,
-                             dataset_id, batch_dir, "production")
+        _emit_execution_event(execution_context, "regular.simulation_posting",
+                              batch_ref=str(batch_dir),
+                              simulation_intent_ref=str(batch_dir / "simulation_intent.json"),
+                              expression_count=len(expressions))
+        try:
+            raw = self._simulate(runner_variants, simulation_settings,
+                                 dataset_id, batch_dir, "production")
+        except Exception as exc:
+            _emit_execution_event(execution_context, "regular.simulation_outcome_unknown",
+                                  batch_ref=str(batch_dir),
+                                  simulation_intent_ref=str(batch_dir / "simulation_intent.json"),
+                                  exception_type=type(exc).__name__)
+            raise
         atomic_write_json(batch_dir / "simulation_raw.json", raw)
+        response_sha256 = hashlib.sha256(json.dumps(
+            raw, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        _emit_execution_event(execution_context, "regular.simulation_response_received",
+                              batch_ref=str(batch_dir),
+                              response_ref=str(batch_dir / "simulation_raw.json"),
+                              response_sha256=response_sha256)
         if not isinstance(raw, dict) or raw.get("error"):
             raise ResearchError("simulation unresolved; inspect intent and reconcile before retrying")
         alpha_rows = raw.get("alpha_results") or []
@@ -1824,6 +1852,11 @@ class ResearchAgent:
             raise ResearchError("simulation children unresolved; do not resubmit this batch")
         self._record_completed_expressions(expressions, dataset_id, scope,
                                            simulation_settings)
+        _emit_execution_event(execution_context, "regular.simulation_children_resolved",
+                              batch_ref=str(batch_dir), alpha_ids=alpha_ids,
+                              expression_count=len(expressions),
+                              response_ref=str(batch_dir / "simulation_raw.json"),
+                              response_sha256=response_sha256)
         return self._complete(batch_dir, prereg, alpha_ids, digest,
                               simulation_settings, execution_context=execution_context)
 
