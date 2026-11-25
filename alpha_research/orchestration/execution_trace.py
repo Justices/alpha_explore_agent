@@ -77,8 +77,12 @@ def inspect_execution_trace(state_root, task_id):
                 } for row in saved.get("completed", []) if isinstance(row, dict)],
                 "dataset_reviews": {
                     key: {"status": value.get("status"),
-                          "review_ref": str(path.parent / "dataset_reviews" /
-                                            campaign_id / key / "review.json")}
+                          "review_ref": str(
+                              path.parent / "dataset_reviews" / campaign_id /
+                              hashlib.sha256(json.dumps(
+                                  {"dataset_id": key}, sort_keys=True,
+                                  ensure_ascii=False, separators=(",", ":")
+                              ).encode("utf-8")).hexdigest()[:32] / "review.json")}
                     for key, value in saved.get("dataset_reviews", {}).items()
                     if isinstance(value, dict)
                 },
