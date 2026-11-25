@@ -64,7 +64,9 @@ def inspect_execution_trace(state_root, task_id):
         })
 
     domain = {"campaign": None, "super_run": None,
-              "optimization": None, "simulation_intents": []}
+              "optimization": None, "simulation_intents": [],
+              "qualification_records": {"status": "UNAVAILABLE",
+                                        "candidates": [], "preferred": []}}
     if isinstance(research_id, str) and research_id.startswith("regular:campaign:"):
         campaign_id = research_id.removeprefix("regular:campaign:")
         path = root / "state" / "research_v1_1" / "campaign_runs" / f"{campaign_id}.json"
@@ -110,7 +112,8 @@ def inspect_execution_trace(state_root, task_id):
                 key: saved.get(key) for key in (
                     "run_id", "status", "region", "objective", "batch_id",
                     "alpha_id", "candidate_id", "candidate_status",
-                    "preferred_status", "prereg_ref", "simulation_intent_ref",
+                    "preferred_status", "candidate_record_ref",
+                    "preferred_record_ref", "prereg_ref", "simulation_intent_ref",
                     "response_ref", "readback_ref", "audit_ref")
                 if key in saved
             }
@@ -139,17 +142,51 @@ def inspect_execution_trace(state_root, task_id):
             "report": ({key: report.get(key) for key in (
                 "source_alpha_id", "candidate_alpha_id", "candidate_id",
                 "candidate_status", "preferred_status", "dataset_id",
+                "candidate_record_ref", "preferred_record_ref",
                 "source_snapshot_ref", "simulation_intent_ref", "readback_ref",
                 "audit_ref", "source_unchanged_verified")} if report else None),
             "branch": ({key: branch.get(key) for key in (
                 "branch_id", "status", "source_id", "source_alpha_id",
                 "source_snapshot_ref", "candidate_alpha_id", "candidate_id",
                 "candidate_status", "preferred_status", "simulation_intent_ref",
-                "receipt_ref", "audit_ref", "report_ref")} if branch else None),
+                "receipt_ref", "audit_ref", "report_ref",
+                "candidate_record_ref", "preferred_record_ref")} if branch else None),
             "source": ({key: source.get(key) for key in (
                 "source_id", "alpha_id", "source_type", "snapshot_ref",
                 "details_sha256", "source_properties_sha256")} if source else None),
         }
+
+    candidate_alpha_ids = set()
+    if domain.get("campaign"):
+        for row in domain["campaign"].get("completed", []):
+            candidate_alpha_ids.update(
+                alpha_id for alpha_id in row.get("alpha_ids", [])
+                if isinstance(alpha_id, str))
+    if domain.get("super_run", {}).get("alpha_id"):
+        candidate_alpha_ids.add(domain["super_run"]["alpha_id"])
+    if domain.get("optimization", {}).get("report"):
+        alpha_id = domain["optimization"]["report"].get("candidate_alpha_id")
+        if isinstance(alpha_id, str):
+            candidate_alpha_ids.add(alpha_id)
+    try:
+        store = ResearchRecordStore(root)
+        candidate_rows = [row for row in store.list("candidate")
+                          if row.get("alpha_id") in candidate_alpha_ids]
+        preferred_rows = [row for row in store.list("preferred")
+                          if row.get("alpha_id") in candidate_alpha_ids]
+        def qualification_summary(row):
+            return {key: row.get(key) for key in (
+                "candidate_id", "alpha_id", "workflow", "status",
+                "candidate_status", "preferred_status", "metrics",
+                "failures", "pending", "source_ref", "candidate_ref",
+                "evidence_refs", "created_at", "updated_at") if key in row}
+        domain["qualification_records"] = {
+            "status": "READABLE",
+            "candidates": [qualification_summary(row) for row in candidate_rows],
+            "preferred": [qualification_summary(row) for row in preferred_rows],
+        }
+    except (OSError, ValueError, KeyError, TypeError):
+        domain["qualification_records"]["status"] = "UNREADABLE"
 
     intent_refs = set()
     for event in events:
