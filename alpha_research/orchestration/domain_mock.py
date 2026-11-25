@@ -8,6 +8,7 @@ from contextlib import ExitStack, contextmanager
 from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 from unittest.mock import patch
 
 from alpha_research.config import DEFAULT_CONFIG
@@ -133,11 +134,16 @@ class DomainMockRecorder:
         if not getattr(model, "is_offline_mock", False):
             raise OrchestrationError("offline model required")
         self.model = model
+        self.session_id = uuid4().hex
+        self.call_id = uuid4().hex
+        self._call_sequence = 0
 
     def begin_session(self, *, research_id):
         return None
 
     def complete_json(self, task, context, **kwargs):
+        self._call_sequence += 1
+        self.call_id = uuid4().hex
         # Only the explicit P4.18 isolated runtime records this scripted
         # attempt. Its write-ahead entry is durable before the model fake
         # returns. Existing domain mocks remain independent.
