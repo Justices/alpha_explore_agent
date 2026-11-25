@@ -78,6 +78,7 @@ class DecisionRecorder:
         self.session_id = None
         self.research_id = None
         self.batch_dir = None
+        self.call_id = None
         self._attached_unbound_calls = set()
         self.journal.reset_session()
 
@@ -93,6 +94,7 @@ class DecisionRecorder:
         self.session_id = selected_session
         self.research_id = research_id or self.session_id
         self.batch_dir = None
+        self.call_id = None
         self._attached_unbound_calls = set()
         self.journal.reset_session()
         return self.session_id
