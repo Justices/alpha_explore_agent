@@ -54,8 +54,12 @@ class MainOrchestrator:
     def _emit_event(self, task, event_type, *, step=None, payload=None,
                     research_id=None):
         journal = ExecutionEventJournal(self.state_root, task["task_id"])
+        domain_workflow = (event_type.partition(".")[0]
+                           if isinstance(event_type, str) else "")
+        event_workflow = (domain_workflow if domain_workflow in
+                          {"regular", "super", "optimization"} else task["workflow"])
         return journal.append(
-            workflow=task["workflow"], event_type=event_type,
+            workflow=event_workflow, event_type=event_type,
             research_id=(research_id or
                          (task.get("research_identity") or {}).get("research_id")),
             step=step, payload=payload or {})
