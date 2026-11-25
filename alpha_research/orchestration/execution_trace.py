@@ -445,8 +445,7 @@ def inspect_execution_trace(state_root, task_id):
         evidence_refs.update(value for key, value in
                              domain["super_run"].items()
                              if key.endswith("_ref") and isinstance(value, str))
-    if domain.get("optimization"):
-        optimization = domain["optimization"]
+    for optimization in domain.get("optimization_runs", []):
         if isinstance(optimization.get("report_ref"), str):
             evidence_refs.add(optimization["report_ref"])
         for group in ("report", "branch", "source"):
