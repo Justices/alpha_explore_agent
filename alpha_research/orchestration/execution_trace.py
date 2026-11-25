@@ -103,6 +103,51 @@ def _safe_model_call(path, record):
     return row
 
 
+def _model_budget_trace(root, research_id, has_calls):
+    budget_stem = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
+    budget_path = (Path(root) / "state" / "logs" / "model_budget" /
+                   f"{budget_stem}.json")
+    result = {
+        "research_id": research_id,
+        "research_ids": research_ids,
+        "status": "NOT_CREATED",
+        "ledger_ref": str(budget_path),
+        "summary": None,
+        "calls": [],
+    }
+    state = _read_object(budget_path, root=root)
+    if state is None:
+        if has_calls:
+            result["status"] = "MISSING"
+        return result
+    rows = state.get("calls")
+    if (state.get("research_id") != research_id
+            or not is_sealed_state(state)
+            or not isinstance(rows, list)
+            or not all(isinstance(row, dict) for row in rows)):
+        result["status"] = "INVALID"
+        return result
+    result["status"] = "VERIFIED"
+    result["summary"] = {
+        "attempts": len(rows),
+        "successful": sum(row.get("status") == "OK" for row in rows),
+        "failed": sum(row.get("status") == "ERROR" for row in rows),
+        "unknown": sum(row.get("status") == "UNKNOWN" for row in rows),
+        "unresolved": sum(row.get("status") == "IN_FLIGHT" for row in rows),
+        "reported_tokens": sum(
+            value for row in rows
+            for value in (row.get("token_in"), row.get("token_out"))
+            if type(value) is int),
+    }
+    result["calls"] = [{
+        key: row.get(key) for key in (
+            "call_id", "task", "role", "backend", "status",
+            "token_in", "token_out", "backend_sha256")
+        if key in row
+    } for row in rows]
+    return result
+
+
 def inspect_execution_trace(state_root, task_id):
     """Verify the Task event chain and correlate existing model/domain records."""
     root = Path(state_root).resolve()
@@ -115,53 +160,27 @@ def inspect_execution_trace(state_root, task_id):
     trace_binding_valid = trace_ref == str(journal.path)
     trace_events_consistent = len(events) == verification["event_count"]
     research_id = (task.get("research_identity") or {}).get("research_id")
+    research_ids = list(dict.fromkeys(
+        [value for value in [research_id] if isinstance(value, str)] +
+        [event.get("research_id") for event in events
+         if isinstance(event.get("research_id"), str)]))
 
     calls = []
     calls_root = root / "state" / "logs" / "model_calls"
-    if calls_root.exists() and research_id:
+    if calls_root.exists() and research_ids:
         for path in sorted(calls_root.glob("*.record.json")):
             record = _read_object(path, root=root)
-            if record and record.get("research_id") == research_id:
+            if record and record.get("research_id") in set(research_ids):
                 calls.append(_safe_model_call(path, record))
 
-    model_budget = {
-        "status": "NOT_APPLICABLE" if not research_id else "NOT_CREATED",
-        "ledger_ref": None, "summary": None, "calls": [],
-    }
-    if research_id:
-        budget_stem = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
-        budget_path = (root / "state" / "logs" / "model_budget" /
-                       f"{budget_stem}.json")
-        model_budget["ledger_ref"] = str(budget_path)
-        budget_state = _read_object(budget_path, root=root)
-        if budget_state is not None:
-            if (budget_state.get("research_id") == research_id
-                    and is_sealed_state(budget_state)
-                    and isinstance(budget_state.get("calls"), list)
-                    and all(isinstance(row, dict) for row in budget_state["calls"])):
-                budget_calls = budget_state["calls"]
-                model_budget["status"] = "VERIFIED"
-                model_budget["summary"] = {
-                    "attempts": len(budget_calls),
-                    "successful": sum(row.get("status") == "OK" for row in budget_calls),
-                    "failed": sum(row.get("status") == "ERROR" for row in budget_calls),
-                    "unknown": sum(row.get("status") == "UNKNOWN" for row in budget_calls),
-                    "unresolved": sum(row.get("status") == "IN_FLIGHT" for row in budget_calls),
-                    "reported_tokens": sum(
-                        value for row in budget_calls
-                        for value in (row.get("token_in"), row.get("token_out"))
-                        if type(value) is int),
-                }
-                model_budget["calls"] = [{
-                    key: row.get(key) for key in (
-                        "call_id", "task", "role", "backend", "status",
-                        "token_in", "token_out", "backend_sha256")
-                    if key in row
-                } for row in budget_calls if isinstance(row, dict)]
-            else:
-                model_budget["status"] = "INVALID"
-        elif calls:
-            model_budget["status"] = "MISSING"
+    model_budgets = [
+        _model_budget_trace(root, current_id, any(
+            row.get("research_id") == current_id for row in calls))
+        for current_id in research_ids
+    ]
+    model_budget = next(
+        (row for row in model_budgets if row["research_id"] == research_id),
+        model_budgets[0] if model_budgets else None)
     session_ids = sorted({row.get("session_id") for row in calls
                           if isinstance(row.get("session_id"), str)})
     sessions = []
@@ -177,7 +196,8 @@ def inspect_execution_trace(state_root, task_id):
         })
 
     domain = {"campaign": None, "super_run": None,
-              "optimization": None, "simulation_intents": [],
+              "optimization": None, "optimization_runs": [],
+              "simulation_intents": [],
               "qualification_records": {"status": "UNAVAILABLE",
                                         "candidates": [], "preferred": []}}
     if isinstance(research_id, str) and research_id.startswith("regular:campaign:"):
@@ -269,6 +289,52 @@ def inspect_execution_trace(state_root, task_id):
                 "details_sha256", "source_properties_sha256")} if source else None),
         }
 
+    for current_id in research_ids:
+        if not current_id.startswith("optimization:"):
+            continue
+        run_id = current_id.removeprefix("optimization:")
+        if any(row.get("run_id") == run_id for row in domain["optimization_runs"]):
+            continue
+        base = root / "state" / "research_v1_1" / "optimization"
+        report_path = base / f"{run_id}_optimization_report.json"
+        report = _read_object(report_path, root=root)
+        branch_id = next((event.get("payload", {}).get("branch_id")
+                          for event in events
+                          if event.get("event_type") ==
+                          "optimization.candidate_branch_created"
+                          and event.get("payload", {}).get("run_id") == run_id), None)
+        branch = None
+        source = None
+        if branch_id:
+            try:
+                record_store = ResearchRecordStore(root)
+                branch = record_store.get("candidate_branch", branch_id)
+                source = record_store.get("optimization_source", branch["source_id"])
+            except (OSError, ValueError, KeyError):
+                pass
+        run_evidence = {
+            "run_id": run_id,
+            "report_ref": str(report_path) if report else None,
+            "report": ({key: report.get(key) for key in (
+                "source_alpha_id", "candidate_alpha_id", "candidate_id",
+                "candidate_status", "preferred_status", "dataset_id",
+                "candidate_record_ref", "preferred_record_ref",
+                "source_snapshot_ref", "simulation_intent_ref", "readback_ref",
+                "audit_ref", "source_unchanged_verified")} if report else None),
+            "branch": ({key: branch.get(key) for key in (
+                "branch_id", "status", "source_id", "source_alpha_id",
+                "source_snapshot_ref", "candidate_alpha_id", "candidate_id",
+                "candidate_status", "preferred_status", "simulation_intent_ref",
+                "receipt_ref", "audit_ref", "report_ref",
+                "candidate_record_ref", "preferred_record_ref")} if branch else None),
+            "source": ({key: source.get(key) for key in (
+                "source_id", "alpha_id", "source_type", "snapshot_ref",
+                "details_sha256", "source_properties_sha256")} if source else None),
+        }
+        domain["optimization_runs"].append(run_evidence)
+        if domain["optimization"] is None:
+            domain["optimization"] = run_evidence
+
     candidate_alpha_ids = set()
     if domain.get("campaign"):
         for row in domain["campaign"].get("completed", []):
@@ -277,6 +343,10 @@ def inspect_execution_trace(state_root, task_id):
                 if isinstance(alpha_id, str))
     if (domain.get("super_run") or {}).get("alpha_id"):
         candidate_alpha_ids.add((domain.get("super_run") or {})["alpha_id"])
+    for optimization in domain.get("optimization_runs", []):
+        alpha_id = (optimization.get("report") or {}).get("candidate_alpha_id")
+        if isinstance(alpha_id, str):
+            candidate_alpha_ids.add(alpha_id)
     if (domain.get("optimization") or {}).get("report"):
         alpha_id = (domain.get("optimization") or {})["report"].get("candidate_alpha_id")
         if isinstance(alpha_id, str):
@@ -353,8 +423,9 @@ def inspect_execution_trace(state_root, task_id):
         evidence_refs.update(
             value for key, value in payload.items()
             if key.endswith("_ref") and isinstance(value, str))
-    if model_budget.get("ledger_ref") and Path(model_budget["ledger_ref"]).is_file():
-        evidence_refs.add(model_budget["ledger_ref"])
+    for budget_row in model_budgets:
+        if budget_row.get("ledger_ref") and Path(budget_row["ledger_ref"]).is_file():
+            evidence_refs.add(budget_row["ledger_ref"])
     for row in calls:
         evidence_refs.update(row.get(key) for key in (
             "context_ref", "response_ref", "record_ref",
@@ -408,6 +479,7 @@ def inspect_execution_trace(state_root, task_id):
         "events": events,
         "model_calls": calls,
         "model_budget": model_budget,
+        "model_budgets": model_budgets,
         "model_sessions": sessions,
         "evidence_manifest": evidence_manifest,
         "domain_evidence": domain,
