@@ -14,6 +14,8 @@ def _read_object(path, *, root=None):
         path = Path(path)
         if root is not None:
             root = Path(root).resolve()
+            if not path.is_absolute():
+                path = root / path
             if path.is_symlink():
                 return None
             path = path.resolve(strict=True)
