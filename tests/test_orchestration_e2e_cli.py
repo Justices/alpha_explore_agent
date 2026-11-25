@@ -165,6 +165,29 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                       report["workflow_handoff_audit"]["missing_events"])
         self.assertFalse(report["production_authorized"])
 
+    def test_trace_with_mismatched_domain_identity_cannot_pass_e2e(self):
+        from alpha_research.orchestration.execution_trace import inspect_execution_trace
+        real_inspector = inspect_execution_trace
+
+        def mismatched_trace(root, task_id):
+            result = real_inspector(root, task_id)
+            for row in result["events"]:
+                if row["event_type"] == "super.qualification_completed":
+                    row["payload"] = {**row["payload"], "candidate_id": "forged"}
+            return result
+
+        with patch(
+            "alpha_research.orchestration.execution_trace.inspect_execution_trace",
+            side_effect=mismatched_trace,
+        ):
+            code, output, error = self.invoke("super")
+        self.assertEqual(code, 2, error)
+        report = json.loads(output)
+        self.assertEqual(report["task_status"], "COMPLETED")
+        self.assertEqual(report["workflow_handoff_audit"]["status"], "INCOMPLETE")
+        self.assertFalse(report["workflow_handoff_audit"]["domain_evidence_bound"])
+        self.assertFalse(report["production_authorized"])
+
     def test_lost_scripted_result_blocks_and_refuses_replay(self):
         code, output, error = self.invoke(extra=[
             "--dataset", "analyst10", "--fault", "lost-simulation-response",
