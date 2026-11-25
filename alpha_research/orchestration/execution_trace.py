@@ -277,6 +277,14 @@ def inspect_execution_trace(state_root, task_id):
               "simulation_intents": [],
               "qualification_records": {"status": "UNAVAILABLE",
                                         "candidates": [], "preferred": []}}
+    dataset_review_refs = {
+        payload.get("dataset_id"): payload.get("review_ref")
+        for event in events
+        if event.get("event_type") == "regular.dataset_review_completed"
+        and isinstance((payload := event.get("payload")), dict)
+        and isinstance(payload.get("dataset_id"), str)
+        and isinstance(payload.get("review_ref"), str)
+    }
     if isinstance(research_id, str) and research_id.startswith("regular:campaign:"):
         campaign_id = research_id.removeprefix("regular:campaign:")
         path = root / "state" / "research_v1_1" / "campaign_runs" / f"{campaign_id}.json"
@@ -292,9 +300,12 @@ def inspect_execution_trace(state_root, task_id):
                     "completed_at": row.get("completed_at"),
                 } for row in saved.get("completed", []) if isinstance(row, dict)],
                 "dataset_reviews": {
-                    key: {field: value.get(field) for field in (
-                        "status", "source", "optimization_run_id")
-                        if field in value}
+                    key: {
+                        **{field: value.get(field) for field in (
+                            "status", "source", "optimization_run_id")
+                            if field in value},
+                        "review_ref": dataset_review_refs.get(key),
+                    }
                     for key, value in saved.get("dataset_reviews", {}).items()
                     if isinstance(value, dict)
                 },
