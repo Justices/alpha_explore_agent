@@ -8,9 +8,17 @@ from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.state.records import ResearchRecordStore
 
 
-def _read_object(path):
+def _read_object(path, *, root=None):
     try:
-        value = json.loads(Path(path).read_text(encoding="utf-8"))
+        path = Path(path)
+        if root is not None:
+            root = Path(root).resolve()
+            if path.is_symlink():
+                return None
+            path = path.resolve(strict=True)
+            if not path.is_relative_to(root):
+                return None
+        value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
     return value if isinstance(value, dict) else None
@@ -31,7 +39,7 @@ def _evidence_manifest(root, references):
             candidate = root / candidate
         try:
             path = candidate.resolve(strict=True)
-            if not path.is_relative_to(root) or path.is_symlink():
+            if candidate.is_symlink() or not path.is_relative_to(root):
                 continue
         except (OSError, RuntimeError):
             continue
@@ -100,7 +108,7 @@ def inspect_execution_trace(state_root, task_id):
     calls_root = root / "state" / "logs" / "model_calls"
     if calls_root.exists() and research_id:
         for path in sorted(calls_root.glob("*.record.json")):
-            record = _read_object(path)
+            record = _read_object(path, root=root)
             if record and record.get("research_id") == research_id:
                 calls.append(_safe_model_call(path, record))
 
@@ -154,7 +162,7 @@ def inspect_execution_trace(state_root, task_id):
                     "batch_ref": row.get("batch_dir"),
                     "intent_ref": str(Path(row.get("batch_dir", "")) / "simulation_intent.json"),
                     "intent_status": ((_read_object(
-                        Path(row.get("batch_dir", "")) / "simulation_intent.json") or {}).get("status")),
+                        Path(row.get("batch_dir", "")) / "simulation_intent.json", root=root) or {}).get("status")),
                 } for row in saved.get("completed", [])
                   if isinstance(row, dict) and isinstance(row.get("batch_dir"), str)],
             }
