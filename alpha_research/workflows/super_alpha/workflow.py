@@ -181,6 +181,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         knowledge_pack_ref=str(pack_path))
     _emit(execution_context, "super.proposal_generated", run_id=run_id,
           model_session_id=recorder.session_id,
+          model_call_id=recorder.call_id,
           proposal_sha256=__import__("hashlib").sha256(json.dumps(
               proposal, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
           knowledge_pack_ref=str(pack_path))
