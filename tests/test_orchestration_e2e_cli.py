@@ -56,6 +56,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(report["scripted_domain_attempts"], 1)
         self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
         self.assertEqual(report["workflow_handoff_audit"]["status"], "VERIFIED")
+        self.assertTrue(report["workflow_handoff_audit"]["review_evidence_bound"])
         self.assertTrue(report["trace_binding_valid"])
         self.assertGreater(report["trace_event_count"], 0)
         self.assertEqual(len(report["trace_last_event_sha256"]), 64)
