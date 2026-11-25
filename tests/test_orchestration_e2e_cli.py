@@ -55,6 +55,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertTrue(report["recovery_target_bound"])
         self.assertEqual(report["scripted_domain_attempts"], 1)
         self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
+        self.assertEqual(report["workflow_handoff_audit"]["status"], "VERIFIED")
         self.assertTrue(report["trace_binding_valid"])
         self.assertGreater(report["trace_event_count"], 0)
         self.assertEqual(len(report["trace_last_event_sha256"]), 64)
@@ -91,6 +92,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                 self.assertEqual(result["status"], "OFFLINE_E2E_PASSED")
                 self.assertEqual(result["scripted_domain_attempts"], 1)
                 self.assertEqual(result["trace_status"], "TRACE_VERIFIED")
+                self.assertEqual(result["workflow_handoff_audit"]["status"], "VERIFIED")
                 self.assertTrue(Path(result["trace_ref"]).is_file())
                 self.assertIn("simulate_super", result["scripted_gateway_commands"])
                 self.assertFalse(result["brain_simulation_invoked"])
@@ -135,6 +137,32 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(report["status"], "OFFLINE_E2E_BLOCKED")
         self.assertEqual(report["trace_status"], "TRACE_INCOMPLETE")
         self.assertFalse(report["trace_binding_valid"])
+        self.assertFalse(report["production_authorized"])
+
+    def test_trace_with_missing_domain_handoff_cannot_pass_e2e(self):
+        from alpha_research.orchestration.execution_trace import inspect_execution_trace
+        real_inspector = inspect_execution_trace
+
+        def incomplete_trace(root, task_id):
+            result = real_inspector(root, task_id)
+            result["events"] = [
+                row for row in result["events"]
+                if row["event_type"] != "regular.campaign_completed"
+            ]
+            return result
+
+        with patch(
+            "alpha_research.orchestration.execution_trace.inspect_execution_trace",
+            side_effect=incomplete_trace,
+        ):
+            code, output, error = self.invoke(extra=["--dataset", "analyst10"])
+        self.assertEqual(code, 2, error)
+        report = json.loads(output)
+        self.assertEqual(report["task_status"], "COMPLETED")
+        self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
+        self.assertEqual(report["workflow_handoff_audit"]["status"], "INCOMPLETE")
+        self.assertIn("regular.campaign_completed",
+                      report["workflow_handoff_audit"]["missing_events"])
         self.assertFalse(report["production_authorized"])
 
     def test_lost_scripted_result_blocks_and_refuses_replay(self):
@@ -190,6 +218,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(report["scripted_domain_attempts"], 2)
         self.assertEqual(report["completed_dataset_batches"], 2)
         self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
+        self.assertEqual(report["workflow_handoff_audit"]["status"], "VERIFIED")
         task = MainOrchestrator(self.root).load(report["task_id"])
         self.assertEqual(task["request"]["dataset_ids"], ["analyst10", "analyst11"])
         self.assertEqual(
