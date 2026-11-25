@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 运行与运维 | [OPERATIONS.md](OPERATIONS.md) | 本地只读诊断、隔离 Authority 演练、容器部署注意事项、凭证与故障处理 |
 | 执行链与证据 | [EXECUTION_TRACE.md](EXECUTION_TRACE.md) | Task 事件 Hash 链、模型调用关联、Campaign/Super/Optimization 证据、Readback、Candidate 与日志保留 |
-| 测试与发布 | [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) | 跨模块验证矩阵、真实生产阻断项、CI 与风险分类 |
+| 全流程离线验收 | [OFFLINE_E2E.md](OFFLINE_E2E.md) | 五场景独立 State Root 验收矩阵、逐流程日志、Task/领域证据校验及失败后的完整回溯 |\n| 测试与发布 | [RELEASE_ACCEPTANCE.md](RELEASE_ACCEPTANCE.md) | 跨模块验证矩阵、真实生产阻断项、CI 与风险分类 |
 | 业务与模块 | [CURRENT_DESIGN.md](../design/CURRENT_DESIGN.md) | 三种业务流程、角色、知识、模型、BRAIN、权限、费用、恢复、Candidate |
 | 低层组件 | [RESEARCH_ARCHITECTURE_V1_1.md](../design/RESEARCH_ARCHITECTURE_V1_1.md) | 组件职责与依赖边界 |
 
