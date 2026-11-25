@@ -12,7 +12,6 @@ from alpha_research.orchestration.domain_mock import (
     build_domain_mock_adapter, mock_domain_boundary,
 )
 from alpha_research.orchestration.engine import MainOrchestrator
-from alpha_research.orchestration.event_journal import ExecutionEventJournal
 from alpha_research.orchestration.execution_trace import inspect_execution_trace
 
 
