@@ -14,6 +14,7 @@ from unittest.mock import patch
 from alpha_research.cli import main
 from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.orchestration.mock_workspace import marker_path
+from alpha_research.orchestration.execution_trace import inspect_execution_trace
 
 
 class OfflineEndToEndCliTests(unittest.TestCase):
@@ -91,6 +92,20 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                 self.assertEqual(task["budget"]["used"], 1)
                 self.assertEqual(task["steps"]["collect"], "DONE")
                 self.assertIsNotNone(task["recovery_target"])
+                trace = inspect_execution_trace(root, result["task_id"])
+                self.assertEqual(trace["status"], "TRACE_VERIFIED")
+                event_types = [event["event_type"] for event in trace["events"]]
+                if workflow == "super":
+                    self.assertIn("super.proposal_generated", event_types)
+                    self.assertIn("super.simulation_readback_completed", event_types)
+                    self.assertIn("super.qualification_completed", event_types)
+                    self.assertIsNotNone(trace["domain_evidence"]["super_run"])
+                else:
+                    self.assertIn("optimization.source_snapshot_captured", event_types)
+                    self.assertIn("optimization.proposal_generated", event_types)
+                    self.assertIn("optimization.simulation_readback_completed", event_types)
+                    self.assertIn("optimization.qualification_completed", event_types)
+                    self.assertIsNotNone(trace["domain_evidence"]["optimization"]["branch"])
 
     def test_lost_scripted_result_blocks_and_refuses_replay(self):
         code, output, error = self.invoke(extra=[
