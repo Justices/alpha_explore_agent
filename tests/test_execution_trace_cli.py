@@ -47,6 +47,7 @@ class ExecutionTraceCliTests(unittest.TestCase):
             self.assertEqual(report["journal_verification"]["event_count"], 1)
             self.assertEqual(report["events"][0]["event_type"], "task.created")
             self.assertEqual(report["model_calls"], [])
+            self.assertEqual(report["evidence_manifest"]["status"], "COMPLETE")
 
 
 if __name__ == "__main__":
