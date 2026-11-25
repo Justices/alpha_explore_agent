@@ -63,6 +63,13 @@ class OfflineAcceptanceMatrixTests(unittest.TestCase):
                 "INCOMPLETE",
             )
 
+    def test_live_named_state_root_is_rejected_before_creation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".alpha-runtime"
+            with self.assertRaisesRegex(ValueError, "live research state root"):
+                run_matrix(root)
+            self.assertFalse(root.exists())
+
     def test_existing_output_root_is_refused_without_rewriting_files(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
