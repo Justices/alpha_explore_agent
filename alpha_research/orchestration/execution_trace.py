@@ -176,7 +176,8 @@ def inspect_execution_trace(state_root, task_id):
 
     return {
         "schema_version": 1,
-        "status": "TRACE_VERIFIED",
+        "status": ("TRACE_VERIFIED" if verification["status"] == "VERIFIED"
+                   and verification["event_count"] > 0 else "TRACE_INCOMPLETE"),
         "task": {
             "task_id": task_id, "workflow": task.get("workflow"),
             "status": task.get("status"), "steps": task.get("steps"),
