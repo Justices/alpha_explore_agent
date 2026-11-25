@@ -19,7 +19,7 @@
 | 审核与优选 | state/research_v1_1/candidate/、preferred/ | CandidateQualificationService |
 | 中断与恢复 | state/research_v1_1/recoveries/ | RecoveryCoordinator |
 
-Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用和摘要 Hash。追踪命令另外生成只读 evidence_manifest，对已关联的 Task、模型上下文/响应快照、Campaign、Simulation Intent、Readback、Audit、Candidate 和批次文件计算 SHA-256。不记录 API Key、Cookie、模型 Prompt、原始模型响应或 Alpha 表达式正文。模型原始输入/输出仍由现有 Model Journal 按原有访问边界保存。
+Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用和摘要 Hash。追踪命令另外生成只读 evidence_manifest，对已关联的 Task、模型上下文/响应快照、Campaign、Dataset Review、Simulation Intent、Readback、Audit、Candidate 和批次文件计算 SHA-256。Regular Dataset Review 的 review.json 由 `regular.dataset_review_completed` 事件绑定到对应 Dataset，并纳入 evidence_manifest；验收时同时校验 Review 生命周期事件、Dataset ID、Campaign ID 和 Review 文件哈希。不记录 API Key、Cookie、模型 Prompt、原始模型响应或 Alpha 表达式正文。模型原始输入/输出仍由现有 Model Journal 按原有访问边界保存。
 
 ## 2. Task 事件链
 
