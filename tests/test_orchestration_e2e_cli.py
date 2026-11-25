@@ -115,6 +115,28 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                     self.assertIn("optimization.qualification_completed", event_types)
                     self.assertIsNotNone(trace["domain_evidence"]["optimization"]["branch"])
 
+    def test_successful_domain_does_not_pass_with_missing_trace_evidence(self):
+        with patch(
+            "alpha_research.orchestration.execution_trace.inspect_execution_trace",
+            return_value={
+                "status": "TRACE_INCOMPLETE",
+                "trace_binding_valid": False,
+                "journal_verification": {
+                    "journal_ref": "missing", "event_count": 0,
+                    "last_event_sha256": None,
+                },
+                "evidence_manifest": {"status": "PARTIAL", "file_count": 0},
+            },
+        ):
+            code, output, error = self.invoke(extra=["--dataset", "analyst10"])
+        self.assertEqual(code, 2, error)
+        report = json.loads(output)
+        self.assertEqual(report["task_status"], "COMPLETED")
+        self.assertEqual(report["status"], "OFFLINE_E2E_BLOCKED")
+        self.assertEqual(report["trace_status"], "TRACE_INCOMPLETE")
+        self.assertFalse(report["trace_binding_valid"])
+        self.assertFalse(report["production_authorized"])
+
     def test_lost_scripted_result_blocks_and_refuses_replay(self):
         code, output, error = self.invoke(extra=[
             "--dataset", "analyst10", "--fault", "lost-simulation-response",
