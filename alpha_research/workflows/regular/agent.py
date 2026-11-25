@@ -1281,14 +1281,16 @@ class ResearchAgent:
         self._begin_session(research_id or f"regular:{uuid4().hex}")
         _emit_execution_event(execution_context, "regular.research_batch_started",
                               research_id=self.recorder.research_id,
-                              dataset_id=dataset_id, resume=resume_batch_dir is not None,
-                              research_type=("PPA" if ppa_profile else "REGULAR"))
+                              dataset_id=dataset_id, resume=resume_batch_dir is not None)
         if not objective or not objective.strip():
             raise ResearchError("research objective is required")
         research_type = ((cached_context or {}).get("research_type")
                          if resume_batch_dir is not None else None)
         if research_type not in ("REGULAR", "PPA"):
             research_type = "PPA" if ppa_profile or ppa_requested(objective) else "REGULAR"
+        _emit_execution_event(execution_context, "regular.research_type_selected",
+                              research_id=self.recorder.research_id,
+                              research_type=research_type)
         remedy_reference = self._resolve_remedy_reference(
             objective, diagnosis_id, remedy_id, allow_remedy_round_overrun)
         if resume_batch_dir is not None:
@@ -1402,7 +1404,7 @@ class ResearchAgent:
                                   research_id=self.recorder.research_id,
                                   dataset_id=dataset_id, scope=scope,
                                   selection_mode=dataset_selection["mode"],
-                                  category=category_value if "category_value" in locals() else None)
+                                  category=expected_category)
             write_progress("正在读取字段和算子目录")
             fields = _rows(self.gateway.call("get_datafields", instrument_type="EQUITY",
                                              dataset_id=dataset_id, **context))
@@ -1784,7 +1786,10 @@ class ResearchAgent:
                               expression_sha256=[hashlib.sha256(value.encode("utf-8")).hexdigest()
                                                  for value in expressions],
                               field_ids=sorted(screened_fields),
-                              operator_counts=operator_counts)
+                              operator_counts=[{
+                                  "expression_sha256": hashlib.sha256(expression.encode("utf-8")).hexdigest(),
+                                  "operator_count": count,
+                              } for expression, count in operator_counts.items()])
         simulation_settings = self._platform_settings(scope)
         self._ensure_expressions_uncached(
             expressions, dataset_id, scope, simulation_settings,
