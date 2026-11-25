@@ -278,10 +278,11 @@ def review_dataset(agent, gateway, state_root, directory, request,
             or not response["summary"].strip()):
         raise DatasetReviewError("Dataset review requires a nonempty summary")
     selected = response.get("selection")
+    recorder = getattr(agent, "recorder", None)
     _emit(execution_context, "regular.dataset_attribution_completed",
           campaign_id=campaign_id, dataset_id=dataset_id,
-          model_session_id=agent.recorder.session_id,
-          model_call_id=agent.recorder.call_id,
+          model_session_id=getattr(recorder, "session_id", None),
+          model_call_id=getattr(recorder, "call_id", None),
           summary_sha256=hashlib.sha256(json.dumps(
               response.get("summary"), ensure_ascii=False, sort_keys=True,
               separators=(",", ":")).encode("utf-8")).hexdigest(),
