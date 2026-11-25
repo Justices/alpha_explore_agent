@@ -18,7 +18,7 @@
 | 审核与优选 | state/research_v1_1/candidate/、preferred/ | CandidateQualificationService |
 | 中断与恢复 | state/research_v1_1/recoveries/ | RecoveryCoordinator |
 
-Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用和摘要 Hash。不记录 API Key、Cookie、模型 Prompt、原始模型响应或 Alpha 表达式正文。模型原始输入/输出仍由现有 Model Journal 按原有访问边界保存。
+Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用和摘要 Hash。追踪命令另外生成只读 evidence_manifest，对已关联的 Task、模型上下文/响应快照、Campaign、Simulation Intent、Readback、Audit、Candidate 和批次文件计算 SHA-256。不记录 API Key、Cookie、模型 Prompt、原始模型响应或 Alpha 表达式正文。模型原始输入/输出仍由现有 Model Journal 按原有访问边界保存。
 
 ## 2. Task 事件链
 
@@ -56,7 +56,7 @@ $Python = "D:\quant-venv\Scripts\python.exe"
 3. 依据 Research ID 关联 Model Call Records 和 Session Index；
 4. 读取对应 Campaign / Super / Optimization 记录；
 5. 解析已引用 Simulation Intent 的状态和响应/Readback 引用；
-6. 输出结构化 JSON，不调用模型、不访问 BRAIN、不修改研究状态。
+6. 输出结构化 JSON，并提供 evidence_manifest（文件路径、大小、SHA-256；批次目录仅列文件元数据，不输出内容），不调用模型、不访问 BRAIN、不修改研究状态。
 
 成功输出 status=TRACE_VERIFIED 和 journal_verification.status=VERIFIED。事件文件缺失或损坏时，不会重建历史，也不会把缺失的事件当作验证成功。
 
