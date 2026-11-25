@@ -59,6 +59,14 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             self.assertEqual(event_types.count("regular.batch_started"), 2)
             self.assertEqual(event_types.count("regular.batch_completed"), 2)
             self.assertIn("regular.campaign_completed", event_types)
+            self.assertEqual(event_types.count("regular.dataset_attribution_completed"), 2)
+            self.assertEqual(event_types.count("regular.dataset_review_completed"), 2)
+            self.assertEqual(event_types.count("regular.dataset_no_selection"), 2)
+            self.assertEqual(
+                {key: row["status"] for key, row in
+                 trace["domain_evidence"]["campaign"]["dataset_reviews"].items()},
+                {"dataset_alpha": "no_selection", "dataset_beta": "no_selection"},
+            )
             self.assertEqual(trace["domain_evidence"]["campaign"]["campaign_id"],
                              execution["campaign_id"])
             self.assertIsNotNone(completed["research_identity"])
