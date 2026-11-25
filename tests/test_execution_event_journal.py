@@ -31,6 +31,13 @@ class ExecutionEventJournalTests(unittest.TestCase):
                 ["task.created", "task.step_started"],
             )
 
+    def test_missing_journal_is_not_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = ExecutionEventJournal(directory, "c" * 32)
+            receipt = journal.verify()
+            self.assertEqual(receipt["status"], "MISSING")
+            self.assertEqual(receipt["event_count"], 0)
+
     def test_tampered_event_is_detected_and_append_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             journal = ExecutionEventJournal(directory, "b" * 32)
