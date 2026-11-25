@@ -282,7 +282,9 @@ def review_dataset(agent, gateway, state_root, directory, request,
           campaign_id=campaign_id, dataset_id=dataset_id,
           model_session_id=agent.recorder.session_id,
           model_call_id=agent.recorder.call_id,
-          summary_sha256=hashlib.sha256(response["summary"].encode("utf-8")).hexdigest(),
+          summary_sha256=hashlib.sha256(json.dumps(
+              response.get("summary"), ensure_ascii=False, sort_keys=True,
+              separators=(",", ":")).encode("utf-8")).hexdigest(),
           selected_alpha_id=selected if isinstance(selected, str) else None,
           review_ref=str(path))
     if selected is None:
