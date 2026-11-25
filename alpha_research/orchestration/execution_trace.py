@@ -137,7 +137,8 @@ def inspect_execution_trace(state_root, task_id):
         if budget_state is not None:
             if (budget_state.get("research_id") == research_id
                     and is_sealed_state(budget_state)
-                    and isinstance(budget_state.get("calls"), list)):
+                    and isinstance(budget_state.get("calls"), list)
+                    and all(isinstance(row, dict) for row in budget_state["calls"])):
                 budget_calls = budget_state["calls"]
                 model_budget["status"] = "VERIFIED"
                 model_budget["summary"] = {
@@ -352,7 +353,7 @@ def inspect_execution_trace(state_root, task_id):
         evidence_refs.update(
             value for key, value in payload.items()
             if key.endswith("_ref") and isinstance(value, str))
-    if model_budget.get("ledger_ref") and model_budget["status"] == "VERIFIED":
+    if model_budget.get("ledger_ref") and Path(model_budget["ledger_ref"]).is_file():
         evidence_refs.add(model_budget["ledger_ref"])
     for row in calls:
         evidence_refs.update(row.get(key) for key in (
