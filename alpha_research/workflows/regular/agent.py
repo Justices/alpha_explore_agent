@@ -1949,15 +1949,16 @@ class ResearchAgent:
     def _construct_field_plan(self, batch_dir, context, core_fields, field_rows,
                               catalog, operators, operator_catalog, prior_case,
                               *, execution_context=None):
+        kwargs = ({"execution_context": execution_context}
+                  if execution_context is not None else {})
         return self.field_plans.construct(
             batch_dir, context, core_fields, field_rows, catalog,
-            operators, operator_catalog, prior_case,
-            execution_context=execution_context,
-        )
+            operators, operator_catalog, prior_case, **kwargs)
 
     def _execute_field_plan(self, batch_dir, context, *, execution_context=None):
-        return self.field_plans.execute(batch_dir, context,
-                                        execution_context=execution_context)
+        kwargs = ({"execution_context": execution_context}
+                  if execution_context is not None else {})
+        return self.field_plans.execute(batch_dir, context, **kwargs)
 
     def _execute_production(self, batch_dir, prereg, runner_variants,
                             platform_case_key, platform_run_id, *, execution_context=None):
