@@ -23,7 +23,7 @@ During phase 1, make the smallest changes needed to connect a missing handoff or
 ```text
 Campaign request
  -> pin Region / Dataset(s) / Category / Delay / Universe
- -> create Campaign parent and Dataset child tasks
+ -> persist the existing Campaign parent, work items and per-Dataset subtasks
  -> acquire and review field/operator evidence
  -> construct economic hypotheses and expressions
  -> validate expressions and simulation settings
@@ -78,6 +78,26 @@ Optimization request + source Alpha ID
 ```
 
 Acceptance: source Alpha remains immutable; every variant is a separately identified branch; comparisons are reproducible and scope-equivalent.
+
+## 2.1 Existing implementation to evolve (no greenfield redesign)
+
+Phase 1 must build on these existing components and contracts:
+
+| Existing component | Existing responsibility | Evolution rule |
+|---|---|---|
+| `orchestration/engine.py:MainOrchestrator` | Durable Task lifecycle, four checkpoints, task budget, task/recovery locks and receipt-based reconciliation | Keep it as the task-level control plane; add only the missing handoffs needed to trace the actual workflow |
+| `orchestration/dispatch.py:dispatch` | Routes to the existing Regular Campaign, native Super workflow and Optimization workflow | Keep this as the existing domain dispatch boundary; do not create a parallel workflow implementation |
+| `orchestration/offline_adapter.py:MockWorkflowAdapter` | Invokes the real dispatcher with explicitly offline Gateway/Model implementations | Use it for end-to-end offline vertical slices; never treat it as a live adapter |
+| `workflows/regular/campaign.py` | Existing Campaign planning, work-item schedule, per-Dataset progress/review, bounded batch execution and campaign summary | Extend the existing Campaign lifecycle and preserve its persisted records/subtasks |
+| `workflows/super_alpha/workflow.py` | Existing BRAIN-native Super preparation, proposal, Simulation Intent, readback and qualification | Preserve native Super schema and workflow-specific lifecycle |
+| `workflows/optimization/workflow.py` | Existing immutable source snapshot, independent candidate branch, Simulation Intent, source-integrity check, readback and qualification | Preserve source/branch lineage and existing optimization records |
+| `orchestration/local_regular_pilot.py` | Supervised live Regular bridge with a strict one-Dataset/one-batch bound | Keep the existing bound; do not generalize it to Super/Optimization or multi-batch live dispatch |
+| `orchestration/research_runtime_adapter.py` | Scripted offline Super/Optimization preparation/runtime | Keep it explicitly offline until each domain's own live admission and recovery path is verified |
+| `orchestration/workflow_contract.py` | Shared request mapping and projection of domain-owned qualification | Extend only where the existing workflow contract is demonstrably incomplete; do not duplicate domain qualification |
+
+Important interpretation: Regular Campaign's `max_batches` is a per-Dataset attempt limit in the existing Campaign implementation. With `max_batches=1`, a Campaign containing multiple verified Dataset work items can still execute one batch for each Dataset. The supervised Local Regular Pilot separately requires exactly one Dataset and one batch. Do not confuse the Pilot limit with the Campaign's overall multi-Dataset semantics.
+
+The current `MainOrchestrator` has four coarse task checkpoints (`validate`, `execute`, `qualify`, `collect`). Domain workflows already persist finer-grained records such as Campaign state, Research identity, model-call journal, Simulation Intent, response/readback, audit and Candidate/Preferred records. Phase 1 should link and expose these existing records before introducing any new state machine or replacing domain-owned persistence.
 
 ## 3. Shared end-to-end contracts (do not prematurely merge domain state)
 
