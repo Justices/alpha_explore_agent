@@ -69,7 +69,7 @@ class DomainMockGateway:
 
 
 class RegularMockAgent:
-    """Scripted batch, executed by the real Campaign scheduler (not ResearchAgent)."""
+    """Scripted per-Dataset batch boundary driven by the real Campaign scheduler."""
     def __init__(self, state_root, *, lost_response=False):
         self.runs_root = Path(state_root) / "runs"
         self.stop_flag = Path(state_root) / "state" / "stop.flag"
@@ -78,10 +78,9 @@ class RegularMockAgent:
 
     def run_once(self, objective, *, dataset_id, **kwargs):
         self.calls += 1
-        if self.calls > 1:
-            raise OrchestrationError("offline Regular attempted additional batch")
         scope = kwargs["fixed_scope"]
-        batch = self.runs_root / scope["region"] / dataset_id / "offline_mock_batch"
+        batch = (self.runs_root / scope["region"] / dataset_id /
+                 f"offline_mock_batch_{self.calls:04d}")
         batch.mkdir(parents=True, exist_ok=True)
         intent = batch / "simulation_intent.json"
         intent.write_text('{"workflow":"regular","mode":"offline_domain_mock"}',
@@ -91,10 +90,11 @@ class RegularMockAgent:
             context["bind_recovery_target"]("regular_batch", batch)
         if self.lost_response:
             raise RuntimeError("injected lost Regular mock batch response")
+        alpha_id = f"OFFLINE_REGULAR_ALPHA_{self.calls:04d}"
         return {
             "batch_dir": str(batch),
-            "alpha_ids": ["OFFLINE_REGULAR_ALPHA"],
-            "candidate_status": {"OFFLINE_REGULAR_ALPHA": "EVIDENCE_PENDING"},
+            "alpha_ids": [alpha_id],
+            "candidate_status": {alpha_id: "EVIDENCE_PENDING"},
         }
 
 
