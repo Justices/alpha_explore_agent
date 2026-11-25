@@ -5,6 +5,7 @@ This module NEVER automatically repeats an optimization after an intent exists.
 It must call recover_simulation_intent on the existing intent instead.
 """
 import copy
+import hashlib
 import json
 from pathlib import Path
 from uuid import uuid4
