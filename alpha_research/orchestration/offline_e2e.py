@@ -82,6 +82,64 @@ def _build_request(args, config):
     return request
 
 
+def _verify_domain_handoffs(trace, workflow, expected_attempts):
+    """Audit a completed offline vertical slice using existing domain events.
+
+    A valid Task hash chain alone is insufficient: the domain must have
+    emitted a complete, ordered execution chain and its stored evidence must
+    match the expected workflow-specific handoffs. This is read-only.
+    """
+    events = [row.get("event_type") for row in trace.get("events", [])
+              if isinstance(row, dict)]
+    required = {
+        "regular": (
+            "regular.campaign_scheduled", "regular.batch_started",
+            "regular.batch_completed", "regular.campaign_completed"),
+        "super": (
+            "super.research_started", "super.proposal_generated",
+            "super.proposal_validated", "super.simulation_intent_prepared",
+            "super.simulation_readback_completed", "super.qualification_completed"),
+        "optimization": (
+            "optimization.research_started", "optimization.source_snapshot_captured",
+            "optimization.proposal_generated", "optimization.candidate_branch_created",
+            "optimization.simulation_intent_prepared",
+            "optimization.simulation_readback_completed",
+            "optimization.source_integrity_verified",
+            "optimization.qualification_completed"),
+    }[workflow]
+    missing = [name for name in required if name not in events]
+    positions = [events.index(name) for name in required if name in events]
+    ordered = not missing and positions == sorted(positions)
+    domain = trace.get("domain_evidence") or {}
+    if workflow == "regular":
+        campaign = domain.get("campaign") or {}
+        completed = campaign.get("completed") or []
+        domain_valid = (
+            len(completed) == expected_attempts
+            and events.count("regular.batch_started") == expected_attempts
+            and events.count("regular.batch_completed") == expected_attempts
+            and isinstance(campaign.get("campaign_id"), str)
+            and bool(campaign.get("campaign_id")))
+    elif workflow == "super":
+        run = domain.get("super_run") or {}
+        domain_valid = all(run.get(key) for key in (
+            "run_id", "simulation_intent_ref", "readback_ref",
+            "candidate_id", "candidate_record_ref", "preferred_record_ref"))
+    else:
+        optimization = domain.get("optimization") or {}
+        report = optimization.get("report") or {}
+        domain_valid = all(report.get(key) for key in (
+            "source_snapshot_ref", "simulation_intent_ref", "readback_ref",
+            "candidate_id", "candidate_record_ref", "preferred_record_ref",
+        )) and report.get("source_unchanged_verified") is True
+    return {
+        "status": "VERIFIED" if ordered and domain_valid else "INCOMPLETE",
+        "missing_events": missing,
+        "events_ordered": ordered,
+        "domain_evidence_bound": bool(domain_valid),
+    }
+
+
 def run_offline_e2e(args, root, registry_assignments, registry_path):
     """Prepare and execute exactly one mock-only Task; retain readback evidence."""
     root = Path(root).resolve()
@@ -150,7 +208,8 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
         from alpha_research.orchestration.execution_trace import inspect_execution_trace
         trace = inspect_execution_trace(root, task_id)
         trace_verified = trace["status"] == "TRACE_VERIFIED"
-        completed = completed and trace_verified
+        handoffs = _verify_domain_handoffs(trace, args.workflow, expected_attempts)
+        completed = completed and trace_verified and handoffs["status"] == "VERIFIED"
         report = {
             "schema_version": 1,
             "status": ("OFFLINE_E2E_PASSED" if completed else "OFFLINE_E2E_BLOCKED"),
@@ -173,6 +232,7 @@ def run_offline_e2e(args, root, registry_assignments, registry_path):
             "recovery_target_bound": done.get("recovery_target") is not None,
             "failure": done.get("failure"),
             "trace_status": trace["status"],
+            "workflow_handoff_audit": handoffs,
             "trace_ref": trace["journal_verification"]["journal_ref"],
             "trace_event_count": trace["journal_verification"]["event_count"],
             "trace_last_event_sha256": trace["journal_verification"]["last_event_sha256"],
