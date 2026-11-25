@@ -131,6 +131,12 @@ class ExecutionEventJournal:
         except WriterLockError as exc:
             raise ExecutionEventJournalError(
                 "execution event journal is being updated") from exc
+        if not self.path.is_file():
+            return {
+                "status": "MISSING", "task_id": self.task_id,
+                "event_count": 0, "first_event_sha256": None,
+                "last_event_sha256": None, "journal_ref": str(self.path),
+            }
         return {
             "status": "VERIFIED",
             "task_id": self.task_id,
