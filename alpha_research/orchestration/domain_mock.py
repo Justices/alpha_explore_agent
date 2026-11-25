@@ -95,7 +95,8 @@ class RegularMockAgent:
         alpha_id = f"OFFLINE_REGULAR_ALPHA_{self.calls:04d}"
         atomic_write_json(intent, {
             "workflow": "regular", "mode": "offline_domain_mock",
-            "status": "READ_BACK", "alpha_ids": [alpha_id],
+            "status": ("OUTCOME_UNKNOWN" if self.lost_response
+                       else "READ_BACK"), "alpha_ids": [alpha_id],
             "settings": scope,
         })
         atomic_write_json(batch / "prereg.json", {
@@ -103,17 +104,17 @@ class RegularMockAgent:
             "variants": [{"expression": "rank(signal_a)"}],
             "simulation_settings": scope,
         })
+        context = kwargs.get("execution_context")
+        if context is not None:
+            context["bind_recovery_target"]("regular_batch", batch)
+        if self.lost_response:
+            raise RuntimeError("injected lost Regular mock batch response")
         atomic_write_json(batch / "results.json", {
             "alpha_ids": [alpha_id], "attribution_status": "complete",
             "attribution": {"summary": "Synthetic batch attribution"},
             "readback": {alpha_id: {"details": {"id": alpha_id,
                 "is": {"sharpe": 0.2, "fitness": 0.1}}}},
         })
-        context = kwargs.get("execution_context")
-        if context is not None:
-            context["bind_recovery_target"]("regular_batch", batch)
-        if self.lost_response:
-            raise RuntimeError("injected lost Regular mock batch response")
         return {
             "batch_dir": str(batch),
             "alpha_ids": [alpha_id],
