@@ -10,6 +10,7 @@
 | Task 事件链 | state/logs/execution_events/<task_id>.jsonl | 新增 ExecutionEventJournal |
 | 模型输入/输出与 Attempt 审计 | state/logs/model_calls/*.record.json、state/logs/model_log.jsonl | ModelCallJournal |
 | 模型上下文/响应快照 | state/logs/model_calls/*.context.json、*.response.json | ModelCallJournal |
+| 模型 Attempt / Token 预算账本 | state/logs/model_budget/<research-hash>.json | ModelCallLedger（sealed JSON） |
 | 跨批次模型 Session 索引 | state/logs/model_sessions/<session_id>.json | DecisionRecorder / ModelCallJournal |
 | Regular Campaign 与 Dataset 子任务 | state/research_v1_1/campaign_runs/、对应 batch 目录 | Regular Campaign |
 | Super 运行记录 | state/research_v1_1/super_runs/ | Super Workflow |
@@ -53,7 +54,7 @@ $Python = "D:\quant-venv\Scripts\python.exe"
 该命令：
 1. 读取 Task；
 2. 完整验证该 Task 的事件 Hash 链；
-3. 依据 Research ID 关联 Model Call Records 和 Session Index；
+3. 依据 Research ID 关联 Model Call Records、Session Index 和 sealed Model Budget Ledger（Attempt 状态及 Token 结算）；
 4. 读取对应 Campaign / Super / Optimization 记录；
 5. 解析已引用 Simulation Intent 的状态和响应/Readback 引用；
 6. 输出结构化 JSON，并提供 evidence_manifest（文件路径、大小、SHA-256；批次目录仅列文件元数据，不输出内容），不调用模型、不访问 BRAIN、不修改研究状态。
