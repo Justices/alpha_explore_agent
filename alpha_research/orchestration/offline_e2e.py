@@ -111,6 +111,8 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
     positions = [events.index(name) for name in required if name in events]
     ordered = not missing and positions == sorted(positions)
     domain = trace.get("domain_evidence") or {}
+    matching = lambda name: [row.get("payload") or {} for row in trace.get("events", [])
+                             if isinstance(row, dict) and row.get("event_type") == name]
     if workflow == "regular":
         campaign = domain.get("campaign") or {}
         completed = campaign.get("completed") or []
@@ -119,19 +121,29 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
             and events.count("regular.batch_started") == expected_attempts
             and events.count("regular.batch_completed") == expected_attempts
             and isinstance(campaign.get("campaign_id"), str)
-            and bool(campaign.get("campaign_id")))
+            and bool(campaign.get("campaign_id"))
+            and {row.get("dataset_id") for row in matching("regular.batch_completed")}
+                == {row.get("dataset_id") for row in completed}
+            and all(row.get("campaign_id") == campaign["campaign_id"]
+                    for row in matching("regular.batch_completed")))
     elif workflow == "super":
         run = domain.get("super_run") or {}
         domain_valid = all(run.get(key) for key in (
             "run_id", "simulation_intent_ref", "readback_ref",
-            "candidate_id", "candidate_status", "preferred_status"))
+            "candidate_id", "candidate_status", "preferred_status")) and all(
+                row.get("run_id") == run["run_id"] and
+                row.get("candidate_id") == run["candidate_id"]
+                for row in matching("super.qualification_completed"))
     else:
         optimization = domain.get("optimization") or {}
         report = optimization.get("report") or {}
         domain_valid = all(report.get(key) for key in (
             "source_snapshot_ref", "simulation_intent_ref", "readback_ref",
             "candidate_id", "candidate_record_ref", "preferred_record_ref",
-        )) and report.get("source_unchanged_verified") is True
+        )) and report.get("source_unchanged_verified") is True and all(
+            row.get("candidate_id") == report["candidate_id"] and
+            row.get("run_id") == optimization.get("run_id")
+            for row in matching("optimization.qualification_completed"))
     return {
         "status": "VERIFIED" if ordered and domain_valid else "INCOMPLETE",
         "missing_events": missing,
