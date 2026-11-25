@@ -577,7 +577,20 @@ class ResearchAgent:
                 contenders[alpha_id]["local_self_rejected"] = (
                     local_self_correlation_state(prefilter, self_limit) == "fail")
         _emit_execution_event(execution_context, "regular.local_self_correlation_completed",
-                              batch_ref=str(batch_dir), results=prefilters)
+                              batch_ref=str(batch_dir), results={
+                                  alpha_id: {
+                                      "status": value.get("status") if isinstance(value, dict) else None,
+                                      "limit": value.get("limit") if isinstance(value, dict) else None,
+                                      "reason_sha256": (hashlib.sha256(
+                                          value["reason"].encode("utf-8")).hexdigest()
+                                          if isinstance(value, dict)
+                                          and isinstance(value.get("reason"), str) else None),
+                                      "ra_details_sha256": (hashlib.sha256(json.dumps(
+                                          value["ra_details"], ensure_ascii=False,
+                                          sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+                                          if isinstance(value, dict)
+                                          and isinstance(value.get("ra_details"), dict) else None),
+                                  } for alpha_id, value in prefilters.items()})
         gate = {}
         for alpha_id, evidence in readback.items():
             preliminary = prelim[alpha_id]
