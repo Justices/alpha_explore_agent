@@ -124,7 +124,7 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
         run = domain.get("super_run") or {}
         domain_valid = all(run.get(key) for key in (
             "run_id", "simulation_intent_ref", "readback_ref",
-            "candidate_id", "candidate_record_ref", "preferred_record_ref"))
+            "candidate_id", "candidate_status", "preferred_status"))
     else:
         optimization = domain.get("optimization") or {}
         report = optimization.get("report") or {}
