@@ -10,6 +10,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -55,6 +56,8 @@ def run_matrix(output_root, *, lead="deepseek", executor="deepseek", python=None
             "--region", "USA", "--delay", "1", "--universe", "TOP3000",
             *options,
         ]
+        started_at = datetime.now(timezone.utc).isoformat()
+        started_clock = time.perf_counter()
         stdout_path = root / (case_name + ".stdout.json")
         stderr_path = root / (case_name + ".stderr.txt")
         try:
@@ -109,12 +112,17 @@ def run_matrix(output_root, *, lead="deepseek", executor="deepseek", python=None
                 "stdout_ref": str(stdout_path), "stdout_sha256": _digest(stdout_path),
                 "stderr_ref": str(stderr_path), "stderr_sha256": _digest(stderr_path),
             }
+        result["command_argv"] = command
+        result["started_at"] = started_at
+        result["finished_at"] = datetime.now(timezone.utc).isoformat()
+        result["duration_ms"] = round((time.perf_counter() - started_clock) * 1000)
         results.append(result)
     summary = {
         "schema_version": 1, "mode": "OFFLINE_ONLY",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "status": ("ACCEPTED" if all(r["status"] == "ACCEPTED" for r in results)
                    else "INCOMPLETE"),
+        "python_executable": str(python),
         "case_count": len(results),
         "accepted_count": sum(r["status"] == "ACCEPTED" for r in results),
         "cases": results,
