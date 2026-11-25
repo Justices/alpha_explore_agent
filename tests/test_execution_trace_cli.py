@@ -11,6 +11,23 @@ from alpha_research.orchestration.event_journal import ExecutionEventJournal
 
 
 class ExecutionTraceCliTests(unittest.TestCase):
+    def test_missing_journal_is_never_reported_as_verified(self):
+        with tempfile.TemporaryDirectory() as directory:
+            task = MainOrchestrator(directory).create(
+                "regular", {"objective": "missing trace", "region": "USA"})
+            journal = ExecutionEventJournal(directory, task["task_id"])
+            journal.path.unlink()
+            output = io.StringIO()
+            with redirect_stdout(output):
+                code = main([
+                    "--state-root", directory,
+                    "orchestration-execution-trace", task["task_id"],
+                ])
+            report = json.loads(output.getvalue())
+            self.assertEqual(code, 2)
+            self.assertEqual(report["status"], "TRACE_INCOMPLETE")
+            self.assertEqual(report["journal_verification"]["status"], "MISSING")
+
     def test_trace_command_verifies_journal_without_model_roles_or_network(self):
         with tempfile.TemporaryDirectory() as directory:
             root = directory
