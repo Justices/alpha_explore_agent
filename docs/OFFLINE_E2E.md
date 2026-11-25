@@ -67,7 +67,7 @@ Super 使用新的空目录并指定 `--workflow super`。Optimization 使用新
 
 `TRACE_VERIFIED` 仅表示事件链及绑定验证通过，不意味着全部外围证据都已齐备。必须分别查看 `evidence_manifest_status` 和模型预算、Session、Domain records 的完整性，不得据此推断真实 Simulation 已完成。
 
-完整只读排查可执行 `orchestration-trace <TASK_ID>`（使用原 Task 所在 State Root）。先保全日志与原始证据，再判断是否能够安全恢复，切勿补写历史事件来伪造连续性。
+完整只读排查可执行 `orchestration-execution-trace <TASK_ID>`（使用原 Task 所在 State Root）。先保全日志与原始证据，再判断是否能够安全恢复，切勿补写历史事件来伪造连续性。
 
 ## 失败与故障演练
 
