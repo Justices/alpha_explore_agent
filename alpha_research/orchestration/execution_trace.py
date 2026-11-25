@@ -130,6 +130,7 @@ def _safe_model_call(path, record):
     )
     row = {key: record[key] for key in allowed if key in record}
     row["record_path"] = str(path)
+    row["record_ref"] = str(path)
     return row
 
 
