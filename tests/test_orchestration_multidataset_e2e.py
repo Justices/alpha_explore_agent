@@ -12,6 +12,8 @@ from alpha_research.orchestration.domain_mock import (
     build_domain_mock_adapter, mock_domain_boundary,
 )
 from alpha_research.orchestration.engine import MainOrchestrator
+from alpha_research.orchestration.event_journal import ExecutionEventJournal
+from alpha_research.orchestration.execution_trace import inspect_execution_trace
 
 
 class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
@@ -56,6 +58,23 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             self.assertFalse(any(command in gateway.calls for command in (
                 "simulate_batch", "simulate_super", "submit_alpha",
             )))
+
+            trace = inspect_execution_trace(root, task["task_id"])
+            self.assertEqual(trace["status"], "TRACE_VERIFIED")
+            self.assertEqual(trace["journal_verification"]["status"], "VERIFIED")
+            self.assertEqual(trace["journal_verification"]["event_count"],
+                             len(trace["events"]))
+            event_types = [event["event_type"] for event in trace["events"]]
+            self.assertIn("regular.campaign_scheduled", event_types)
+            self.assertEqual(event_types.count("regular.batch_started"), 2)
+            self.assertEqual(event_types.count("regular.batch_completed"), 2)
+            self.assertIn("regular.dataset_review_completed", event_types)
+            self.assertIn("regular.campaign_completed", event_types)
+            self.assertIn("task.completed", event_types)
+            self.assertEqual(
+                {row["dataset_id"] for row in trace["domain_evidence"]["campaign"]["completed"]},
+                {"dataset_alpha", "dataset_beta"},
+            )
 
 
 if __name__ == "__main__":
