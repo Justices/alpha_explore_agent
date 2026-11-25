@@ -1176,6 +1176,8 @@ class ResearchAgent:
             return None
 
     def _recover_probes(self, batch_dir, *, completed_only=False, execution_context=None):
+        _emit_execution_event(execution_context, "regular.probe_recovery_started",
+                              batch_ref=str(batch_dir), completed_only=completed_only)
         context_path = batch_dir / "batch_context.json"
         plan_path = batch_dir / "probe_plan.json"
         if not context_path.exists():
@@ -1235,8 +1237,27 @@ class ResearchAgent:
                              "expression": probe["expression"], "dataset": context["dataset_id"],
                              "research": probe["research"]}
                             for index, probe in enumerate(group)]
-                raw = self._simulate(variants, expected_settings, context["dataset_id"], batch_dir, label)
+                _emit_execution_event(execution_context, "regular.probe_recovery_simulation_posting",
+                                      research_id=self.recorder.research_id,
+                                      batch_ref=str(batch_dir), probe_batch=label,
+                                      simulation_intent_ref=str(intent_path))
+                try:
+                    raw = self._simulate(variants, expected_settings, context["dataset_id"], batch_dir, label)
+                except Exception as exc:
+                    _emit_execution_event(execution_context, "regular.probe_recovery_outcome_unknown",
+                                          research_id=self.recorder.research_id,
+                                          batch_ref=str(batch_dir), probe_batch=label,
+                                          simulation_intent_ref=str(intent_path),
+                                          exception_type=type(exc).__name__)
+                    raise
                 atomic_write_json(raw_path, raw)
+                _emit_execution_event(execution_context, "regular.probe_recovery_response_received",
+                                      research_id=self.recorder.research_id,
+                                      batch_ref=str(batch_dir), probe_batch=label,
+                                      response_ref=str(raw_path),
+                                      response_sha256=hashlib.sha256(json.dumps(
+                                          raw, ensure_ascii=False, sort_keys=True,
+                                          separators=(",", ":")).encode("utf-8")).hexdigest())
             rows = raw.get("alpha_results") if isinstance(raw, dict) else None
             if len(group) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
                 rows = [raw]
@@ -1267,6 +1288,14 @@ class ResearchAgent:
             atomic_write_json(intent_path, {
                 "status": "READ_BACK", "expressions": expressions,
                 "settings": expected_settings, "runner": intent.get("runner")})
+            _emit_execution_event(execution_context, "regular.probe_recovery_readback_committed",
+                                  research_id=self.recorder.research_id,
+                                  batch_ref=str(batch_dir), probe_batch=label,
+                                  alpha_ids=alpha_ids, response_ref=str(raw_path),
+                                  simulation_intent_ref=str(intent_path))
+        _emit_execution_event(execution_context, "regular.probe_recovery_completed",
+                              research_id=self.recorder.research_id,
+                              batch_ref=str(batch_dir), recovered_probe_count=len(results))
         return self.run_once(context["objective"], resume_batch_dir=batch_dir,
                              recovered_probe_results=results, cached_context=context,
                              execution_context=execution_context)
