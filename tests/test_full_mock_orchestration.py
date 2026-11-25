@@ -7,6 +7,7 @@ readback and research records; no real BRAIN endpoint can be reached.
 import json
 import sys
 import tempfile
+from uuid import uuid4
 import unittest
 from copy import deepcopy
 from pathlib import Path
@@ -68,11 +69,14 @@ class ScriptedRecorder:
         # This fixture simulates only model decisions. Production budgets are
         # covered by tests/test_model_governance.py with real DecisionRecorder.
         self.model = model
+        self.session_id = uuid4().hex
+        self.call_id = uuid4().hex
 
     def begin_session(self, *, research_id):
         pass
 
     def complete_json(self, task, context, **kwargs):
+        self.call_id = uuid4().hex
         proposal = {
             "selection": "rank(signal_a)", "combo": "rank(signal_b)",
             "hypothesis": "test hypothesis", "rationale": "test rationale",
