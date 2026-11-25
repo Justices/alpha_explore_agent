@@ -496,7 +496,8 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 directory = (path.parent / "dataset_reviews" / campaign_id /
                              _key({"dataset_id": dataset_id}))
                 review = review_dataset(agent, gateway, state_root, directory, request,
-                                        dataset_id, [receipt], [], allow_optimization=False)
+                                        dataset_id, [receipt], [], allow_optimization=False,
+                                        execution_context=execution_context)
                 if review["status"] not in {"no_selection", "optimization_deferred"}:
                     raise ValueError("saved Pilot Dataset review is unfinished")
                 state.setdefault("dataset_reviews", {})[dataset_id] = review
@@ -599,11 +600,13 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                     agent, gateway, state_root, directory, request, dataset_id, receipts,
                     [failure for failure in state.get("failures", [])
                      if items[failure["item_index"]]["dataset_id"] == dataset_id],
-                    allow_optimization=allow_optimization)
+                    allow_optimization=allow_optimization,
+                    execution_context=execution_context)
                 emit_event("regular.dataset_review_completed", {
                     "campaign_id": campaign_id, "dataset_id": dataset_id,
                     "status": reviews[dataset_id].get("status"),
-                    "review_ref": str(directory / "review.json"),
+                    "review_ref": (str(directory / "review.json")
+                                   if (directory / "review.json").is_file() else None),
                 })
                 if reviews[dataset_id]["status"] == "attribution_pending":
                     write_progress(f"{dataset_id} · 数据集归因待补")
