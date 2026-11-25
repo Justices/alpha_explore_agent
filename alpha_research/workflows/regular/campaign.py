@@ -433,6 +433,11 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             raise ValueError("saved Campaign ID does not match its request")
         campaign_id = resume_campaign_id
     research_id = f"regular:campaign:{campaign_id}"
+    emit_callback = (execution_context or {}).get("emit_event")
+    def emit_event(event_type, payload):
+        if callable(emit_callback):
+            emit_callback(event_type, payload)
+
     allow_optimization = (execution_context or {}).get("allow_dataset_optimization", True)
     if execution_context is not None:
         bind_identity = execution_context.get("bind_research_identity")
@@ -568,6 +573,12 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         schedule = schedule[:attempt_limit]
     last_attempt = {items[index]["dataset_id"]: attempt
                     for attempt, index in enumerate(schedule, start=1)}
+    emit_event("regular.campaign_scheduled", {
+        "campaign_id": campaign_id, "dataset_ids": sorted(items_by_dataset),
+        "work_item_count": len(items), "scheduled_batch_count": len(schedule),
+        "batch_limit": attempt_limit,
+        "plan_evidence_ref": str(path.with_name(f"{campaign_id}_scope_plan.json")),
+    })
     reviewed_this_run = set()
 
     def finish_ready_datasets():
@@ -589,6 +600,11 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                     [failure for failure in state.get("failures", [])
                      if items[failure["item_index"]]["dataset_id"] == dataset_id],
                     allow_optimization=allow_optimization)
+                emit_event("regular.dataset_review_completed", {
+                    "campaign_id": campaign_id, "dataset_id": dataset_id,
+                    "status": reviews[dataset_id].get("status"),
+                    "review_ref": str(directory / "review.json"),
+                })
                 if reviews[dataset_id]["status"] == "attribution_pending":
                     write_progress(f"{dataset_id} · 数据集归因待补")
             except Exception as exc:
@@ -596,6 +612,11 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 reviews[dataset_id] = {
                     **saved, "status": saved.get("status", "attribution_pending"),
                     "error": str(exc)}
+                emit_event("regular.dataset_review_blocked", {
+                    "campaign_id": campaign_id, "dataset_id": dataset_id,
+                    "exception_type": type(exc).__name__,
+                    "review_ref": str(directory / "review.json"),
+                })
                 write_progress(f"{dataset_id} · 数据集收尾待恢复 · {type(exc).__name__} · {exc}")
             _checkpoint_campaign(state, state_root, path)
 
@@ -617,6 +638,11 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         state["budget"]["reserved"]["batches"] = 1
         state["status"] = "running"
         _checkpoint_campaign(state, state_root, path)
+        emit_event("regular.batch_started", {
+            "campaign_id": campaign_id, "item_index": index,
+            "dataset_id": item["dataset_id"], "batch_number": used + 1,
+            "batch_limit": attempt_limit, "resume": resume_batch is not None,
+        })
         try:
             run_kwargs = {
                 "fixed_scope": {"region": region, "delay": item["delay"],
@@ -684,6 +710,12 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 _record_attempt_failure(state, str(exc), batch_ref)
                 resume_batch = None
                 _checkpoint_campaign(state, state_root, path)
+                emit_event("regular.batch_failed", {
+                    "campaign_id": campaign_id, "item_index": index,
+                    "dataset_id": item["dataset_id"],
+                    "exception_type": type(exc).__name__,
+                    "batch_ref": str(batch_ref) if batch_ref else None,
+                })
                 write_progress(f"第 {used + 1} 批未完成，已记录失败 · {type(exc).__name__}")
                 continue
             state["status"] = "unresolved"
@@ -693,6 +725,12 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 "item_index": index, "reason": state["error"],
                 "recorded_at": state["updated_at"]})
             _checkpoint_campaign(state, state_root, path)
+            emit_event("regular.batch_blocked", {
+                "campaign_id": campaign_id, "item_index": index,
+                "dataset_id": item["dataset_id"],
+                "exception_type": type(exc).__name__,
+                "batch_ref": str(getattr(getattr(agent, "recorder", None), "batch_dir", "")) or None,
+            })
             raise
         state["completed"].append(receipt)
         write_progress(f"已完成 {len(state['completed'])}/{attempt_limit} 批")
@@ -703,6 +741,14 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         state.pop("error", None)
         state["status"] = "active"
         _checkpoint_campaign(state, state_root, path)
+        emit_event("regular.batch_completed", {
+            "campaign_id": campaign_id, "item_index": index,
+            "dataset_id": item["dataset_id"],
+            "batch_ref": str(batch_dir), "alpha_ids": result["alpha_ids"],
+            "candidate_status": result["candidate_status"],
+            "completed_batch_count": len(state["completed"]),
+            "budget_used": state["budget"]["used"]["batches"],
+        })
     else:
         finish_ready_datasets()
         if agent.stop_flag and agent.stop_flag.exists():
@@ -726,6 +772,15 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
     summary_path = path.with_name(f"{campaign_id}_summary.json")
     write_campaign_summary(state, summary_path)
     write_progress(f"Campaign 复盘已保存 · {summary_path}")
+    emit_event("regular.campaign_completed", {
+        "campaign_id": campaign_id, "status": state["status"],
+        "completed_batch_count": len(state["completed"]),
+        "remaining_work_item_count": len(state["remaining_items"]),
+        "dataset_review_statuses": {
+            key: value.get("status") for key, value in
+            state.get("dataset_reviews", {}).items()},
+        "campaign_state_ref": str(path), "campaign_summary_ref": str(summary_path),
+    })
     return {"campaign_id": campaign_id, "status": state["status"],
             "batches_completed": len(state["completed"]),
             "budget": state["budget"],
