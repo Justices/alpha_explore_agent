@@ -14,13 +14,15 @@ from alpha_research.agents.inspect import inspect_roles
 from alpha_research.agents.doctor import check_registered_roles
 from alpha_research.agents.probe import ModelProbeError
 from alpha_research.agents.governance import ModelCallLedger, ModelBudgetError
-from alpha_research.integrations.model import ModelError
+from alpha_research.integrations.model import DecisionRecorder, ModelError, build_model_client
+from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
+from alpha_research.state.writer_lock import WriterLockError
 
 
 def run_models_command(args, root, registry_path, registry_assignments, *,
                        model_probe):
     try:
-        if args.models_action in {"budget", "acknowledge-unknown"}:
+        if args.models_action in {"budget", "acknowledge-unknown", "reconcile-saved"}:
             if not args.research_id:
                 raise ModelBudgetError("model budget action requires --research-id")
             config_path = args.config or root / "config" / "nastu_quant.json"
@@ -29,14 +31,25 @@ def run_models_command(args, root, registry_path, registry_assignments, *,
                     or not isinstance(config.get("model_governance"), dict)):
                 raise ModelBudgetError(
                     "models budget requires a config with model_governance")
-            ledger = ModelCallLedger(root / "state", config["model_governance"])
-            if args.models_action == "acknowledge-unknown":
-                if not args.call_id or not args.reason:
+            if args.models_action == "reconcile-saved":
+                if not args.call_id or args.allow_model_call:
                     raise ModelBudgetError(
-                        "acknowledge-unknown requires --call-id and --reason")
-                ledger.acknowledge_unknown(
-                    args.research_id, args.call_id, reason=args.reason)
-            result = ledger.status(args.research_id)
+                        "reconcile-saved requires --call-id and runs without --allow-model-call")
+                runtime = prepare_registered_model_runtime(
+                    config, registry_assignments, registry_path)
+                recorder = DecisionRecorder(
+                    build_model_client(runtime["model"]), root / "state",
+                    governance=runtime["model_governance"])
+                result = recorder.reconcile_saved_call(args.research_id, args.call_id)
+            else:
+                ledger = ModelCallLedger(root / "state", config["model_governance"])
+                if args.models_action == "acknowledge-unknown":
+                    if not args.call_id or not args.reason:
+                        raise ModelBudgetError(
+                            "acknowledge-unknown requires --call-id and --reason")
+                    ledger.acknowledge_unknown(
+                        args.research_id, args.call_id, reason=args.reason)
+                result = ledger.status(args.research_id)
         else:
             registered = load_registry(registry_path)
             if args.models_action == "list":
@@ -102,6 +115,10 @@ def run_models_command(args, root, registry_path, registry_assignments, *,
         # credential-bearing exceptions, network payloads, or raw prompts.
         if isinstance(exc, ModelRegistryError):
             print(f"model runtime failed: {exc}", file=sys.stderr)
+            return 2
+        if args.models_action == "reconcile-saved" and isinstance(
+                exc, (ModelError, ModelBudgetError, WriterLockError)):
+            print(f"saved model reconciliation blocked: {exc}", file=sys.stderr)
             return 2
         if isinstance(exc, (OSError, KeyError, ValueError, TypeError, ModelError,
                             TimeoutError)):

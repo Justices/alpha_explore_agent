@@ -20,13 +20,30 @@ class AtomicStoreTests(unittest.TestCase):
         self.file = self.root / "ledger" / "attempts.json"
 
     def leftovers(self):
-        return list(self.file.parent.glob("." + self.file.name + ".tmp-*"))
+        return list(self.file.parent.glob(".json.tmp-*"))
 
     def test_nested_json_round_trip_and_no_temporary_files(self):
         payload = {"description": "中文审计", "calls": [{"id": "C1"}]}
         atomic_write_json(self.file, payload)
         self.assertEqual(json.loads(self.file.read_text(encoding="utf-8")), payload)
         self.assertEqual(self.leftovers(), [])
+
+    def test_deep_record_reuses_directory_without_repeating_long_filename(self):
+        name = "a" * 64 + ".json"
+        directory = self.root / ("b" * (250 - len(str(self.root)) - len(name) - 2))
+        destination = directory / name
+        self.assertEqual(len(str(destination)), 250)
+        replace = os.replace
+
+        def windows_path_limit(source, target):
+            if len(str(source)) >= 260:
+                raise FileNotFoundError("temporary path exceeds Windows path limit")
+            replace(source, target)
+
+        with patch("alpha_research.state.store.os.replace", side_effect=windows_path_limit):
+            atomic_write_json(destination, {"generation": 1})
+        self.assertEqual(json.loads(destination.read_text(encoding="utf-8")), {"generation": 1})
+        self.assertEqual(list(directory.glob(".json.tmp-*")), [])
 
     def test_replace_failure_preserves_previous_state_and_cleans_temporary(self):
         atomic_write_json(self.file, {"generation": 1})

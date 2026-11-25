@@ -4,13 +4,18 @@ Uses only a deterministic fake model, isolated temporary files, and no BRAIN
 or external model service. These tests never submit or simulate an Alpha.
 """
 import json
+import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
 from alpha_research.agents.governance import ModelBudgetError, ModelCallLedger
+from alpha_research.cli import main
 from alpha_research.integrations.model import DecisionRecorder, ModelError
+from alpha_research.integrations.model_journal import ModelCallJournal
 
 
 POLICY = {"max_calls": 5, "max_reported_tokens": 1000, "failover": "manual"}
@@ -35,6 +40,108 @@ class CountingModel:
 
 
 class BudgetRecoveryTests(unittest.TestCase):
+    def test_batch_evidence_copy_uses_short_temporary_name(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            filename = "a" * 32 + ".response.json"
+            directory = root / ("a" * (223 - len(str(root)) - 2 - len(filename)))
+            directory.mkdir()
+            source = root / "response.json"
+            source.write_bytes(b"original response")
+            destination = directory / filename
+            self.assertEqual(len(str(destination)), 223)
+            replace = os.replace
+
+            def windows_path_limit(src, dst, **kwargs):
+                temporary = directory / src
+                if len(str(temporary)) >= 260:
+                    raise FileNotFoundError("temporary file exceeds Windows path limit")
+                return replace(src, dst, **kwargs)
+
+            with patch("os.replace", side_effect=windows_path_limit):
+                ModelCallJournal._copy_batch_evidence(source, destination)
+            self.assertEqual(destination.read_bytes(), source.read_bytes())
+
+    def test_explicit_recovery_finds_dataset_review_owner_and_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve() / "state"
+            model = CountingModel()
+            original = DecisionRecorder(model, root, governance=POLICY)
+            original.begin_session(research_id="R1")
+            owner = root / "research_v1_1" / "campaign_runs" / "dataset_reviews" / "review"
+            original.bind_batch(owner)
+            sync = original.journal.sync_batch_calls
+
+            def interrupt_sync(calls, **kwargs):
+                if calls[0][0]["status"] == "ok":
+                    raise FileNotFoundError("terminal copy failed")
+                return sync(calls, **kwargs)
+
+            with patch.object(original.journal, "sync_batch_calls", side_effect=interrupt_sync):
+                with self.assertRaises(FileNotFoundError):
+                    original.complete_json("review_dataset_results", {"step": 1, "knowledge_pack": {}})
+            manifest_path = owner / "model_call_manifest.json"
+            row = json.loads(manifest_path.read_text(encoding="utf-8"))["calls"][0]
+            call_id = row["call_id"]
+            index_path = root / "logs/model_sessions" / (row["session_id"] + ".json")
+            index = index_path.read_bytes()
+            ledger_path, _ = original.budget._paths("R1")
+            pending = ledger_path.read_bytes()
+            index_path.unlink()
+            with patch.object(model, "complete_json", side_effect=AssertionError("provider called")):
+                with self.assertRaisesRegex(ModelError, "session index"):
+                    original.reconcile_saved_call("R1", call_id)
+                self.assertEqual(pending, ledger_path.read_bytes())
+                index_path.write_bytes(index)
+                response_path = Path(row["global_response_ref"])
+                response = response_path.read_bytes()
+                response_path.write_bytes(b"{}")
+                with self.assertRaisesRegex(ModelError, "integrity seal"):
+                    original.reconcile_saved_call("R1", call_id)
+                self.assertEqual(pending, ledger_path.read_bytes())
+                response_path.write_bytes(response)
+                with self.assertRaisesRegex(ModelError, "does not match the workflow input"):
+                    original.replay_saved_decision(
+                        "R1", call_id, task="review_dataset_results",
+                        batch_dir=owner, context={"step": 2})
+                self.assertEqual(pending, ledger_path.read_bytes())
+                with patch.object(model, "config", {"provider": "mock", "model": "other"}):
+                    with self.assertRaisesRegex(ModelBudgetError, "reserved model identity"):
+                        original.reconcile_saved_call("R1", call_id)
+                self.assertEqual(pending, ledger_path.read_bytes())
+                with patch.object(original.journal, "sync_batch_calls",
+                                  side_effect=FileNotFoundError("copy still unavailable")):
+                    with self.assertRaisesRegex(FileNotFoundError, "copy still unavailable"):
+                        original.reconcile_saved_call("R1", call_id)
+                self.assertEqual(pending, ledger_path.read_bytes())
+                result = original.reconcile_saved_call("R1", call_id)
+                self.assertEqual(original.replay_saved_decision(
+                    "R1", call_id, task="review_dataset_results",
+                    batch_dir=owner, context={"step": 1}),
+                    {"task": "review_dataset_results", "step": 1})
+                snapshot = (manifest_path.read_bytes(), ledger_path.read_bytes(),
+                            original.journal.log_path.read_bytes())
+                config_path = root.parent / "config.json"
+                config_path.write_text(json.dumps({"model_governance": POLICY}), encoding="utf-8")
+                with (patch("alpha_research.cli.Gateway", side_effect=AssertionError("BRAIN called")),
+                      patch("alpha_research.cli_models.build_model_client", return_value=model),
+                      redirect_stdout(StringIO()) as output):
+                    self.assertEqual(main([
+                        "--state-root", str(root.parent), "--config", str(config_path),
+                        "--lead", "deepseek", "--executor", "deepseek",
+                        "models", "reconcile-saved", "--research-id", "R1", "--call-id", call_id,
+                    ]), 0)
+                self.assertEqual(json.loads(output.getvalue()), result)
+                self.assertEqual(snapshot, (manifest_path.read_bytes(), ledger_path.read_bytes(),
+                                            original.journal.log_path.read_bytes()))
+            self.assertEqual(result["batch_ref"], str(owner))
+            self.assertEqual((result["budget"]["attempts"], result["budget"]["unresolved"],
+                              result["budget"]["reported_tokens"]), (1, 0, 10))
+            repaired = json.loads(manifest_path.read_text(encoding="utf-8"))["calls"][0]
+            self.assertTrue(repaired["response_sha256"])
+            self.assertEqual(Path(repaired["response_ref"]).read_bytes(), response)
+            self.assertEqual(index_path.read_bytes(), index)
+
     def make_recorder(self, root, model, research_id="R1"):
         recorder = DecisionRecorder(model, root, governance=POLICY)
         recorder.begin_session(research_id=research_id)

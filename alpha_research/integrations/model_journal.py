@@ -93,8 +93,8 @@ class ModelCallJournal:
     def _copy_batch_evidence(source, destination):
         """Expose only complete copies, never partially written audit files."""
         destination = Path(destination)
-        temporary = destination.with_name(
-            destination.name + ".tmp-" + uuid4().hex)
+        # Leave room for deeply nested Dataset review evidence on Windows.
+        temporary = destination.with_name(".tmp-" + uuid4().hex)
         # Pin the destination directory so a POSIX directory swap cannot
         # redirect either the temporary write or its final atomic rename.
         # Windows has no dir_fd/openat support: use verified paths there.

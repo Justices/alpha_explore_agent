@@ -11,9 +11,26 @@ from pathlib import Path
 from unittest.mock import patch
 
 from alpha_research.integrations.model import DecisionRecorder, ModelError
+from alpha_research.integrations.model_evidence import check_trusted_path
 
 
 POLICY = {"max_calls": 5, "max_reported_tokens": 1000, "failover": "manual"}
+
+
+@unittest.skipUnless(os.name == "nt", "Windows extended-length paths")
+class WindowsResolvedPathTests(unittest.TestCase):
+    def test_resolve_may_return_an_extended_prefix_for_the_same_path(self):
+        for name, resolved_name in (
+                (r"C:\pilot\index.json", r"\\?\C:\pilot\index.json"),
+                (r"\\server\share\index.json", r"\\?\UNC\server\share\index.json")):
+            with self.subTest(name=name):
+                path = Path(name)
+                with patch.object(type(path), "resolve", return_value=Path(resolved_name)):
+                    self.assertEqual(check_trusted_path(path, label="index"), path)
+                other = Path(resolved_name).with_name("different.json")
+                with patch.object(type(path), "resolve", return_value=other):
+                    with self.assertRaisesRegex(ModelError, "escapes trusted evidence path"):
+                        check_trusted_path(path, label="index")
 
 
 class OfflineModel:

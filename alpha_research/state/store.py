@@ -24,8 +24,9 @@ def atomic_write_json(path: Path, data) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     encoded = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False)
-    fd, temporary = tempfile.mkstemp(
-        prefix="." + path.name + ".tmp-", dir=path.parent)
+    # Keep the temporary basename short even when the destination includes
+    # a full evidence hash under deeply nested case directories.
+    fd, temporary = tempfile.mkstemp(prefix=".json.tmp-", dir=path.parent)
     tmp_path = Path(temporary)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

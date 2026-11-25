@@ -50,7 +50,8 @@ def campaign_can_resume(state):
 
 def _needs_dataset_review(receipt, reviews):
     return (bool(receipt.get("attribution_status") or receipt.get("reconciled"))
-            and reviews.get(receipt["dataset_id"], {}).get("status") not in {"complete", "no_selection"})
+            and reviews.get(receipt["dataset_id"], {}).get("status")
+            not in {"complete", "no_selection", "optimization_deferred"})
 
 
 def delete_saved_campaign(state_root, campaign_id):
@@ -401,12 +402,15 @@ def _record_attempt_failure(state, reason, batch_ref=None):
 def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                          category=None, delay=None, universe=None,
                          max_batches=None, ppa_profile=False, execution_context=None,
-                         recovery_batch=None, resume_campaign_id=None):
+                         recovery_batch=None, resume_campaign_id=None,
+                         saved_pilot=False):
     """Execute every eligible scope item by default.
 
     Persist progress before and after each batch. An interrupted batch is
     unresolved until the existing recovery command has reconciled it.
     """
+    if saved_pilot and (recovery_batch is None or gateway is not None):
+        raise ValueError("saved Pilot recovery requires a bound batch and no platform gateway")
     if max_batches is not None and (type(max_batches) is not int or max_batches < 1):
         raise ValueError("max_batches must be positive")
     if not isinstance(objective, str) or not objective.strip():
@@ -429,6 +433,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             raise ValueError("saved Campaign ID does not match its request")
         campaign_id = resume_campaign_id
     research_id = f"regular:campaign:{campaign_id}"
+    allow_optimization = (execution_context or {}).get("allow_dataset_optimization", True)
     if execution_context is not None:
         bind_identity = execution_context.get("bind_research_identity")
         if callable(bind_identity):
@@ -454,6 +459,13 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         if state.get("request") != request:
             raise ValueError("saved Campaign request does not match")
         active_before = state.get("active_item")
+        if saved_pilot and (active_before is not None
+                            or len(state["completed"]) != 1
+                            or state["budget"]["limits"]["batches"] != 1
+                            or state["budget"]["used"]["batches"] != 1
+                            or state["budget"]["reserved"]["batches"] != 0
+                            or state.get("failures")):
+            raise ValueError("saved Pilot requires one settled Campaign receipt")
         if active_before is not None:
             if "failures" not in state and state.get("error"):
                 state["failures"] = [{"item_index": active_before,
@@ -471,6 +483,18 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             if not any(Path(entry["batch_dir"]).resolve() == recovery_batch
                        for entry in state["completed"]):
                 raise ValueError("bound recovery batch is missing from Campaign receipts")
+            if saved_pilot:
+                receipt = state["completed"][0]
+                dataset_id = receipt["dataset_id"]
+                if [dataset_id] != request["dataset_ids"]:
+                    raise ValueError("saved Pilot Dataset differs from its Campaign receipt")
+                directory = (path.parent / "dataset_reviews" / campaign_id /
+                             _key({"dataset_id": dataset_id}))
+                review = review_dataset(agent, gateway, state_root, directory, request,
+                                        dataset_id, [receipt], [], allow_optimization=False)
+                if review["status"] not in {"no_selection", "optimization_deferred"}:
+                    raise ValueError("saved Pilot Dataset review is unfinished")
+                state.setdefault("dataset_reviews", {})[dataset_id] = review
             state.pop("error", None)
             if len(state["completed"]) >= state["budget"]["limits"]["batches"]:
                 state["status"] = "scope_complete" if max_batches is None else "budget_complete"
@@ -478,11 +502,15 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 item for index, item in enumerate(state["items"])
                 if index not in {entry["item_index"] for entry in state["completed"]}]
             _checkpoint_campaign(state, state_root, path)
+            if saved_pilot:
+                write_campaign_summary(state, path.with_name(f"{campaign_id}_summary.json"))
             return {"campaign_id": campaign_id, "status": state["status"],
+                    **({"saved_review_call_id": agent.call_id} if saved_pilot else {}),
                     "batches_completed": len(state["completed"]),
                     "budget": state["budget"], "completed": state["completed"],
                     "remaining_items": state["remaining_items"],
                     "subtasks": state["subtasks"],
+                    "dataset_reviews": state.get("dataset_reviews", {}),
                     "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
                     "unresolved": state["plan"]["unresolved"],
                     "state_path": str(path)}
@@ -559,7 +587,8 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 reviews[dataset_id] = review_dataset(
                     agent, gateway, state_root, directory, request, dataset_id, receipts,
                     [failure for failure in state.get("failures", [])
-                     if items[failure["item_index"]]["dataset_id"] == dataset_id])
+                     if items[failure["item_index"]]["dataset_id"] == dataset_id],
+                    allow_optimization=allow_optimization)
                 if reviews[dataset_id]["status"] == "attribution_pending":
                     write_progress(f"{dataset_id} · 数据集归因待补")
             except Exception as exc:
@@ -681,6 +710,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         elif not state["completed"]:
             state["status"] = "unresolved"
         elif (any(review["status"] not in {"complete", "no_selection"}
+                  and (allow_optimization or review["status"] != "optimization_deferred")
                   for review in state.get("dataset_reviews", {}).values())
               or state["budget"]["used"]["batches"] > len(state["completed"])
               or any(entry.get("field_research_status") == "partial"

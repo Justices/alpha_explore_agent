@@ -223,13 +223,16 @@ class ModelCallLedger:
 
     def reconcile_verified_response(self, research_id, call_id, *,
                                     task, role, backend, backend_sha256,
-                                    success, token_in=None, token_out=None):
+                                    success, token_in=None, token_out=None,
+                                    publish_evidence=None):
         """Idempotently settle a pre-reserved attempt from verified on-disk evidence.
 
         Only the replay verifier may call this after checking the manifest,
         model response digest, audit identity and selected route. This method
         never reserves another attempt and never invokes a provider.
         UNKNOWN remains terminal and cannot be converted into success.
+        Optional evidence publication runs after validation and before releasing
+        the reservation. A failed publication leaves the reservation pending.
         """
         if type(success) is not bool:
             raise ModelBudgetError("verified model outcome must be explicit")
@@ -257,21 +260,24 @@ class ModelCallLedger:
             if attempt["status"] == "UNKNOWN":
                 raise ModelBudgetError(
                     "operator-acknowledged unknown model outcome cannot be reconciled")
-            if attempt["status"] == expected:
+            already_settled = attempt["status"] == expected
+            if already_settled:
                 if (attempt.get("token_in") != token_in
                         or attempt.get("token_out") != token_out):
                     raise ModelBudgetError(
                         "verified model usage conflicts with settled budget")
-                return self._summarize(state)
-            if attempt["status"] != "IN_FLIGHT":
+            elif attempt["status"] != "IN_FLIGHT":
                 raise ModelBudgetError(
                     "verified response conflicts with settled model outcome")
-            attempt.update({
-                "status": expected,
-                "token_in": token_in,
-                "token_out": token_out,
-            })
-            self._write(path, state)
+            if publish_evidence is not None:
+                publish_evidence()
+            if not already_settled:
+                attempt.update({
+                    "status": expected,
+                    "token_in": token_in,
+                    "token_out": token_out,
+                })
+                self._write(path, state)
             return self._summarize(state)
 
     def acknowledge_unknown(self, research_id, call_id, *, reason):

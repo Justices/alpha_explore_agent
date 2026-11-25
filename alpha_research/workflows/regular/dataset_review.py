@@ -163,7 +163,7 @@ def _batch_evidence(agent, dataset_id, receipt):
 
 
 def review_dataset(agent, gateway, state_root, directory, request,
-                   dataset_id, receipts, failures):
+                   dataset_id, receipts, failures, *, allow_optimization=True):
     """Persist review before optional execution; recover existing intent, never repost."""
     directory = _validate_directory(directory, state_root)
     path = directory / "review.json"
@@ -181,7 +181,11 @@ def review_dataset(agent, gateway, state_root, directory, request,
             raise DatasetReviewError("saved Dataset review identity mismatch")
         if review.get("status") in FINAL_STATUSES:
             return copy.deepcopy(review)
+        if review.get("status") == "optimization_deferred" and not allow_optimization:
+            return copy.deepcopy(review)
         if review.get("status") == "optimization_pending":
+            if not allow_optimization:
+                raise DatasetReviewError("Pilot cannot reconcile an optimization intent")
             intent_ref = review.get("optimization_intent_ref")
             if not isinstance(intent_ref, str):
                 raise DatasetReviewError("optimization pending without recovery target")
@@ -266,14 +270,19 @@ def review_dataset(agent, gateway, state_root, directory, request,
     if any(scope.get(key) is not None and settings.get(key) != scope[key]
            for key in ("region", "delay", "universe")):
         raise DatasetReviewError("Dataset optimization source changed user scope")
+    source_record = {"alpha_id": selected, "dataset_id": dataset_id,
+                     "batch_ref": source["batch_ref"], "settings": settings}
+    if not allow_optimization:
+        review.update(status="optimization_deferred", attribution=response, source=source_record)
+        review.pop("error", None)
+        return _save(path, review)
     run_id = uuid4().hex
     intent = (Path(state_root).resolve() / "state" / "research_v1_1" /
               "optimization" / f"{run_id}_simulation_intent.json")
     review.update(
         status="optimization_prepared",
         attribution=response,
-        source={"alpha_id": selected, "dataset_id": dataset_id,
-                "batch_ref": source["batch_ref"], "settings": settings},
+        source=source_record,
         optimization_run_id=run_id,
         optimization_intent_ref=str(intent),
     )

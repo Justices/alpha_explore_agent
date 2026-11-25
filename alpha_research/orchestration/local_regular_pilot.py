@@ -191,6 +191,7 @@ class LocalRegularPilotAdapter:
                 # disabled and cannot consume or collide with that reservation.
                 domain_context = {
                     **context, "allow_diagnostic_simulations": False,
+                    "allow_dataset_optimization": False,
                 }
                 outcome = dispatch(
                     command, args, self.config, self.runner.state_root,
@@ -222,6 +223,7 @@ class LocalRegularPilotAdapter:
         if step == "collect":
             return {
                 "qualification": checkpoints.get("qualify"),
+                "dataset_reviews": checkpoints["execute"].get("dataset_reviews", {}),
                 "pool": pool_snapshot(self.runner.state_root, self.config),
                 "mode": "supervised_local_real_pilot",
                 "production_release_authorized": False,

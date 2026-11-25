@@ -29,7 +29,7 @@ from alpha_research.orchestration.operator_consent import (
 from alpha_research.orchestration.mock_workspace import marker_path
 from alpha_research.orchestration.runtime_config import prepare_registered_model_runtime
 from alpha_research.orchestration.runtime_context import CliRuntimeContext
-from alpha_research.orchestration.recovery import RecoveryCoordinator
+from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
 from alpha_research.config import is_default_config_path, load_config
 from alpha_research.progress import write_progress
 from alpha_research.cli_parser import build_parser, _path_argument
@@ -95,6 +95,26 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "recover-task":
+        try:
+            task = MainOrchestrator(root).load(args.task_id)
+            pilot = (task["checkpoints"].get("validate") or {}).get(
+                "mode") == "supervised_local_real_pilot"
+            if pilot or args.saved_review_call is not None:
+                if not pilot or args.workflow != "regular" or not args.saved_review_call:
+                    raise RecoveryError("Local Regular Pilot recovery requires --saved-review-call")
+                from alpha_research.orchestration.saved_pilot_recovery import recover_saved_pilot
+                with SingleWriterLock(root / "state" / "agent.lock"):
+                    config = load_config(
+                        args.config or root / "config" / "nastu_quant.json", initialize=False)
+                    config = prepare_registered_model_runtime(
+                        config, registry_assignments, registry_path)
+                    outcome = recover_saved_pilot(root, args.task_id, args.saved_review_call, config)
+                print(json.dumps(outcome, ensure_ascii=False))
+                return 0 if outcome["status"] == "COMPLETED" else 2
+        except (OSError, ValueError, KeyError, TypeError, ModelError, WriterLockError) as exc:
+            print(f"Task recovery blocked: {exc}", file=sys.stderr)
+            return 2
     if args.command == "orchestration-e2e-offline":
         # Offline-only command: never construct Gateway, Model SDK, or a
         # ResearchAgent. Its dedicated State Root is permanently mock-only.

@@ -43,9 +43,9 @@ def build_parser():
     models = sub.add_parser(
         "models", help="inspect registered models or explicitly probe one model")
     models.add_argument("models_action", choices=(
-        "list", "inspect", "doctor", "budget", "acknowledge-unknown", "smoke"))
-    models.add_argument("--research-id", help="research ID for budget/acknowledgement")
-    models.add_argument("--call-id", help="unresolved model call ID to acknowledge")
+        "list", "inspect", "doctor", "budget", "reconcile-saved", "acknowledge-unknown", "smoke"))
+    models.add_argument("--research-id", help="research ID for model budget or reconciliation")
+    models.add_argument("--call-id", help="call ID for saved-response reconciliation or acknowledgement")
     models.add_argument("--reason", help="human explanation for unknown outcome")
     models.add_argument("--role", choices=("research_lead", "research_executor", "both"),
                         help="one role or both sequentially with models smoke")
@@ -328,6 +328,8 @@ def build_parser():
     task_recovery.add_argument(
         "--workflow", choices=("regular", "super", "optimization"), required=True)
     task_recovery.add_argument("task_id")
+    task_recovery.add_argument("--saved-review-call", metavar="CALL_ID",
+                               help="finish a Local Regular Pilot entirely from local evidence")
     void = sub.add_parser("void", help="archive an unsubmitted draft")
     void.add_argument("batch_dir", type=_path_argument)
     void.add_argument("--reason", required=True)

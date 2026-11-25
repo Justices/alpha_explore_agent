@@ -5,6 +5,7 @@ The agent depends only on ``complete_json(task, context)``.
 import hashlib
 from contextlib import ExitStack
 import os
+import re
 from threading import RLock
 import time
 from datetime import datetime
@@ -19,7 +20,8 @@ from alpha_research.integrations.model_errors import ModelError
 from alpha_research.integrations.model_metadata import InvocationMetadata
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.integrations.model_journal import ModelCallJournal
-from alpha_research.integrations.model_sessions import index_path as _session_index_path
+from alpha_research.integrations.model_evidence import check_trusted_path, read_trusted_json
+from alpha_research.integrations.model_sessions import index_path as _session_index_path, merge_index
 from alpha_research.integrations.model_replay import replay_batch_call
 from alpha_research.integrations.model_prompts import (
     FIELD_EVIDENCE_KEYS, REQUIRED_FIELD_DIMENSIONS, TASK_INSTRUCTIONS,
@@ -134,8 +136,8 @@ class DecisionRecorder:
     def _batch_call_lock_path(batch_dir):
         return Path(batch_dir) / "model_call.invoke.lock"
 
-    def _research_call_lock_path(self):
-        digest = hashlib.sha256(self.research_id.encode("utf-8")).hexdigest()
+    def _research_call_lock_path(self, research_id):
+        digest = hashlib.sha256(research_id.encode("utf-8")).hexdigest()
         return self.state_root / "logs" / "model_research" / (digest + ".invoke.lock")
 
     @staticmethod
@@ -161,7 +163,7 @@ class DecisionRecorder:
         # response persistence and budget settlement.
         try:
             with ExitStack() as locks:
-                locks.enter_context(SingleWriterLock(self._research_call_lock_path()))
+                locks.enter_context(SingleWriterLock(self._research_call_lock_path(self.research_id)))
                 if self.batch_dir is not None:
                     locks.enter_context(SingleWriterLock(
                         self._batch_call_lock_path(self.batch_dir)))
@@ -170,11 +172,7 @@ class DecisionRecorder:
             raise ModelError(
                 "another model call is active for this research or batch") from exc
 
-    def _execute_model_call(self, task: str, context: dict,
-                            knowledge_pack_ref=None) -> dict:
-        call_id = uuid4().hex
-        context_bytes = _json_bytes(context)
-        context_sha = hashlib.sha256(context_bytes).hexdigest()
+    def _call_route(self, task):
         route_for = getattr(self.model, "route_for", None)
         if callable(route_for):
             binding = route_for(task)
@@ -199,6 +197,91 @@ class DecisionRecorder:
             }
             route_sha = hashlib.sha256(_json_bytes(identity)).hexdigest()
         backend_digest = hashlib.sha256(_json_bytes(config)).hexdigest()
+        return config, selected_role, selected_backend, route_sha, backend_digest
+
+    def reconcile_saved_call(self, research_id, call_id):
+        """Reconcile one successful journaled response without dispatching a model."""
+        report, _ = self._reconcile_saved_call(research_id, call_id)
+        return report
+
+    def replay_saved_decision(self, research_id, call_id, *, batch_dir, task, context):
+        """Recover the exact saved decision for a verified workflow input."""
+        _, decision = self._reconcile_saved_call(
+            research_id, call_id, expected=(batch_dir, task, context))
+        return decision
+
+    def _reconcile_saved_call(self, research_id, call_id, *, expected=None):
+        if (self.budget is None or not isinstance(research_id, str)
+                or not research_id.strip() or not isinstance(call_id, str)
+                or not re.fullmatch(r"[0-9a-f]{32}", call_id)):
+            raise ModelError("saved call reconciliation requires a Research ID and Call ID")
+        lock_path = check_trusted_path(
+            self._research_call_lock_path(research_id), label="research invocation lock")
+        with self._call_lock, SingleWriterLock(lock_path):
+            paths = self.journal.call_paths(call_id)
+            record = read_trusted_json(paths[2], label="global audit")
+            if (not isinstance(record, dict) or record.get("call_id") != call_id
+                    or record.get("research_id") != research_id
+                    or not isinstance(record.get("task"), str)
+                    or not isinstance(record.get("batch_ref"), str)):
+                raise ModelError("saved call audit identity mismatch")
+            batch = check_trusted_path(record["batch_ref"], label="call owner")
+            if not batch.is_relative_to(self.state_root.parent) or not batch.is_dir():
+                raise ModelError("saved call owner is outside the research workspace or missing")
+            lock_path = check_trusted_path(
+                self._batch_call_lock_path(batch), label="batch invocation lock")
+            with SingleWriterLock(lock_path):
+                if expected is not None:
+                    batch_dir, task, context = expected
+                    stored = read_trusted_json(paths[0], label="global context")
+                    if (batch != batch_dir or record["task"] != task
+                            or not isinstance(stored, dict)
+                            or not isinstance(stored.pop("knowledge_pack", None), dict)
+                            or _json_bytes(stored) != _json_bytes(context)):
+                        raise ModelError("saved model decision does not match the workflow input")
+                return self._reconcile_saved_call_locked(research_id, record, batch, paths)
+
+    def _reconcile_saved_call_locked(self, research_id, record, batch, paths):
+        session_id, call_id, task = record["session_id"], record["call_id"], record["task"]
+        try:
+            index = read_trusted_json(_session_index_path(self.journal.logs_root, session_id),
+                                      label="session index")
+        except (OSError, ValueError) as exc:
+            raise ModelError("saved call session index missing or unreadable") from exc
+        # Validate the complete index and reject a missing or different owner.
+        merge_index(index, session_id, research_id, str(batch), [])
+        if not index or not any(row["batch_ref"] == str(batch) and call_id in row["call_ids"]
+                                for row in index["batches"]):
+            raise ModelError("saved call session index does not identify its owner")
+        _, role, backend, route_sha, backend_digest = self._call_route(task)
+        if record.get("agent_role") != role or record.get("agent_backend") != backend:
+            raise ModelError("saved call audit role or backend differs from current configuration")
+
+        def publish_evidence():
+            self.journal.sync_batch_calls(
+                [(record, *paths)], batch_dir=batch, session_id=session_id, research_id=research_id)
+
+        def settle(verified_call_id, payload):
+            self.budget.reconcile_verified_response(
+                research_id, verified_call_id, task=task, role=role,
+                backend=backend, backend_sha256=backend_digest, success=True,
+                token_in=payload.get("token_in"), token_out=payload.get("token_out"),
+                publish_evidence=publish_evidence)
+
+        replay = replay_batch_call(
+            batch, task, record.get("context_sha256"), route_sha,
+            calls_root=self.journal.calls_root, append_event=self.journal.append_event,
+            on_verified=settle, expected_research_id=research_id, expected_call_id=call_id)
+        if replay is None:
+            raise ModelError("saved call is absent from its owner's manifest")
+        return ({"call_id": call_id, "task": task, "batch_ref": str(batch),
+                 "budget": self.budget.status(research_id)}, replay)
+
+    def _execute_model_call(self, task: str, context: dict,
+                            knowledge_pack_ref=None) -> dict:
+        call_id = uuid4().hex
+        context_sha = hashlib.sha256(_json_bytes(context)).hexdigest()
+        config, selected_role, selected_backend, route_sha, backend_digest = self._call_route(task)
 
         def reconcile_verified(recovered_call_id, payload):
             if self.budget is not None:

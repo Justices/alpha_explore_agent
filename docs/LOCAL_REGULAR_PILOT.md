@@ -85,11 +85,24 @@ Expected local pilot states:
   or configuration scope needs correction in a **new** Task.
 - `BLOCKED` during execute: the real provider response may be unknown; the
   Task retains reserved budget, original Research ID and exact recovery target.
-  **Do not re-run the same Task or repost the Simulation**. Use existing
-  domain `recover-task`/receipt reconciliation after verifying BRAIN
-  readback and original intent, not a fresh submit.
+  For an existing `READ_BACK` batch with complete attribution and a saved
+  Dataset review response, recover locally using the original role assignments
+  and the Call ID of `review_dataset_results`.
 - `BLOCKED` during qualify/collect: do not redo execute; inspect the
   persisted result and unresolved deterministic audit.
+
+```powershell
+python -m alpha_research `
+  --state-root "D:\quant\alpha_explore_agent\alpha-research-live" `
+  --lead deepseek --executor deepseek `
+  recover-task --workflow regular "<TASK_ID>" --saved-review-call "<CALL_ID>"
+```
+
+Saved-review recovery checks the original readback and reuses only the exact
+saved review input and response. It runs without BRAIN or a model provider.
+A selected source is recorded with `optimization_deferred`. Executing
+optimization requires a separate workflow, since the Pilot budget covers one
+production Simulation.
 
 ## What this does NOT prove
 

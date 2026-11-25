@@ -16,7 +16,7 @@ from alpha_research.state.sealed import is_sealed_state
 
 def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
                       calls_root, append_event, on_verified=None,
-                      expected_research_id):
+                      expected_research_id, expected_call_id=None):
     if batch_dir is None:
         return None
     if not isinstance(expected_research_id, str) or not expected_research_id.strip():
@@ -66,7 +66,8 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             raise ModelError("recorded model input is unreadable; replay blocked") from exc
         if input_sha != row["context_sha256"]:
             raise ModelError("recorded model input checksum mismatch; replay blocked")
-        if row.get("task") != task or row.get("context_sha256") != context_sha:
+        if (row.get("task") != task or row.get("context_sha256") != context_sha
+                or (expected_call_id is not None and row["call_id"] != expected_call_id)):
             continue
         if record.get("research_id") != expected_research_id:
             raise ModelError("recorded model audit identity mismatch; replay blocked")
@@ -74,11 +75,16 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
             raise ModelError(
                 "recorded model role/backend differs from current configuration; "
                 "replay blocked")
-        response_path = paths["response_ref"]
+        response_path = (paths["global_response_ref"] if expected_call_id is not None
+                         else paths["response_ref"])
         if not response_path.exists():
             response_path = paths["global_response_ref"]
         try:
             payload = read_trusted_json(response_path, label="model response")
+            if expected_call_id is not None and paths["response_ref"].exists():
+                copied = read_trusted_json(paths["response_ref"], label="batch response")
+                if _json_bytes(copied) != _json_bytes(payload):
+                    raise ModelError("batch response differs from original response")
         except (OSError, ValueError, KeyError) as exc:
             raise ModelError(
                 "previous model response is missing or unreadable; retry blocked"
@@ -113,6 +119,9 @@ def replay_batch_call(batch_dir, task, context_sha, route_sha=None, *,
         if record.get("response_sha256"):
             if record["response_sha256"] != response_sha:
                 raise ModelError("recorded model response checksum mismatch")
+        if expected_call_id is not None and (
+                record.get("status") != "ok" or payload["status"] != "ok"):
+            raise ModelError("explicit reconciliation requires a terminal successful audit")
         # Settle the verified original reservation before repairing the audit
         # status. If a conflicting or UNKNOWN ledger rejects reconciliation,
         # no new terminal audit event is written. Both steps are independently

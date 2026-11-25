@@ -67,6 +67,21 @@ def setup_case(root, selection=None):
 
 
 class ReviewSafetyTests(unittest.TestCase):
+    def test_saved_pilot_review_validates_selection_and_defers_optimization(self):
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            agent, directory, receipt, request = setup_case(root, "A1")
+            with patch("alpha_research.workflows.regular.dataset_review.run_optimization",
+                       side_effect=AssertionError("pilot cannot start another simulation")):
+                report = review_dataset(agent, None, root, directory, request, "risk60",
+                                        [receipt], [], allow_optimization=False)
+                again = review_dataset(agent, None, root, directory, request, "risk60",
+                                       [receipt], [], allow_optimization=False)
+            self.assertEqual(report, again)
+            self.assertEqual(report["status"], "optimization_deferred")
+            self.assertEqual(report["source"]["alpha_id"], "A1")
+            self.assertNotIn("optimization_intent_ref", report)
+
     def test_null_selection_is_idempotent_and_does_not_simulate(self):
         with tempfile.TemporaryDirectory() as td:
             root=Path(td)

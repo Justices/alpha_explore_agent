@@ -21,9 +21,19 @@ _CALL_ID = re.compile(r"[0-9a-f]{32}\Z")
 def check_trusted_path(path, *, label):
     """Reject symlinks in the final file or any parent, even when absent."""
     path = Path(path)
-    if not path.is_absolute() or path.resolve() != path:
-        raise ModelError(f"model {label} escapes trusted evidence path")
-    return path
+    if path.is_absolute():
+        resolved = path.resolve()
+        if resolved == path:
+            return path
+        if os.name == "nt" and not path.drive.startswith(("\\\\?\\", "\\\\.\\")):
+            # Windows can retain the extended prefix while another writer
+            # creates the leaf. Accept only an exact alias of the same path.
+            name = str(path)
+            extended = ("\\\\?\\UNC\\" + name[2:] if name.startswith("\\\\")
+                        else "\\\\?\\" + name)
+            if resolved == Path(extended):
+                return path
+    raise ModelError(f"model {label} escapes trusted evidence path")
 
 
 def _check_manifest_leaf(reference, expected, *, label):

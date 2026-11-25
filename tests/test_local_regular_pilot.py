@@ -124,6 +124,7 @@ class TestLocalRegularPilot(unittest.TestCase):
         self.assertEqual(called[0][2]["max_batches"], 1)
         self.assertEqual(called[0][2]["dataset_ids"], ["analyst10"])
         self.assertIs(called[0][3]["allow_diagnostic_simulations"], False)
+        self.assertIs(called[0][3]["allow_dataset_optimization"], False)
         self.assertEqual([x[0] for x in self.gateway.calls], ["simulate_batch"])
         self.assertIs(self.agent.gateway, self.gateway)
         self.assertEqual(self.runner.resume(self.task["task_id"]), done)
@@ -264,6 +265,22 @@ class TestLocalRegularPilot(unittest.TestCase):
         self.assertEqual(result, 2)
         real_gateway.assert_not_called()
         real_model.assert_not_called()
+
+    def test_cli_requires_saved_review_for_a_blocked_pilot_before_live_setup(self):
+        from alpha_research.cli import main
+        self._make_adapter()
+        with patch("alpha_research.orchestration.dispatch.run_regular_campaign",
+                   return_value={"status": "partial"}):
+            task = self.runner.execute(self.task["task_id"])
+        self.assertEqual(task["status"], "BLOCKED")
+        with (patch("alpha_research.cli.Gateway") as gateway,
+              patch("alpha_research.cli.build_model_client") as model):
+            self.assertEqual(main([
+                "--state-root", str(self.root), "recover-task", "--workflow", "regular",
+                self.task["task_id"],
+            ]), 2)
+        gateway.assert_not_called()
+        model.assert_not_called()
 
 
 if __name__ == "__main__":

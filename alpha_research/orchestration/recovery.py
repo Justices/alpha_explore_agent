@@ -257,7 +257,7 @@ class RecoveryCoordinator:
             ) from exc
 
     def recover_task(self, orchestrator, task_id, *, gateway, agent=None, config=None,
-                     expected_workflow=None):
+                     expected_workflow=None, saved_pilot=False):
         """Fail fast on duplicate task recovery before replaying any handler."""
         # Separate from the task's execution lock: reconcile() legitimately
         # acquires that lock after the recovery receipt has been written.
@@ -266,15 +266,20 @@ class RecoveryCoordinator:
             with SingleWriterLock(lock_path):
                 return self._recover_task_locked(
                     orchestrator, task_id, gateway=gateway, agent=agent,
-                    config=config, expected_workflow=expected_workflow)
+                    config=config, expected_workflow=expected_workflow,
+                    saved_pilot=saved_pilot)
         except WriterLockError as exc:
             raise RecoveryError(
                 "another recovery writer is already processing this task") from exc
 
     def _recover_task_locked(self, orchestrator, task_id, *, gateway, agent=None,
-                             config=None, expected_workflow=None):
+                             config=None, expected_workflow=None, saved_pilot=False):
         """Recover a blocked orchestration execute step from its bound domain artifact."""
         task = orchestrator.load(task_id)
+        local_pilot = (task.get("checkpoints", {}).get("validate") or {}).get(
+            "mode") == "supervised_local_real_pilot"
+        if local_pilot != saved_pilot or (saved_pilot and gateway is not None):
+            raise RecoveryError("Local Regular Pilot requires offline saved-review recovery")
         if expected_workflow is not None and task.get("workflow") != expected_workflow:
             raise RecoveryError("orchestration task workflow does not match the requested workflow")
         step = (task.get("failure") or {}).get("step")
@@ -306,7 +311,7 @@ class RecoveryCoordinator:
                 delay=request.get("delay"), universe=request.get("universe"),
                 max_batches=request.get("max_batches", 1),
                 ppa_profile=bool(request.get("ppa_profile", request.get("ppa", False))),
-                recovery_batch=target["ref"])
+                recovery_batch=target["ref"], saved_pilot=saved_pilot)
 
         journal = self.journal_for(target["ref"])
         if (not isinstance(journal, dict) or journal.get("status") != "COMPLETED"
