@@ -206,17 +206,37 @@ def inspect_execution_trace(state_root, task_id):
     model_budget = next(
         (row for row in model_budgets if row["research_id"] == research_id),
         model_budgets[0] if model_budgets else None)
+    for budget_row in model_budgets:
+        if budget_row.get("status") != "VERIFIED":
+            continue
+        expected_ids = {row.get("call_id") for row in budget_row.get("calls", [])
+                        if isinstance(row.get("call_id"), str)}
+        actual_ids = {row.get("call_id") for row in calls
+                      if row.get("research_id") == budget_row["research_id"]
+                      and isinstance(row.get("call_id"), str)}
+        missing_ids = sorted(expected_ids - actual_ids)
+        budget_row["model_record_coverage"] = {
+            "status": "COMPLETE" if not missing_ids else "PARTIAL",
+            "expected_call_count": len(expected_ids),
+            "recorded_call_count": len(expected_ids & actual_ids),
+            "missing_call_ids": missing_ids,
+        }
     session_ids = sorted({row.get("session_id") for row in calls
                           if isinstance(row.get("session_id"), str)})
     sessions = []
     for session_id in session_ids:
         path = root / "state" / "logs" / "model_sessions" / f"{session_id}.json"
         index = _read_object(path, root=root)
+        expected_calls = set(index.get("call_ids", [])) if index else set()
+        actual_calls = {row.get("call_id") for row in calls
+                        if row.get("session_id") == session_id}
         sessions.append({
             "session_id": session_id,
             "status": "READABLE" if index else "MISSING_OR_UNREADABLE",
             "index_ref": str(path),
-            "call_ids": index.get("call_ids", []) if index else [],
+            "call_ids": sorted(expected_calls) if index else [],
+            "missing_call_ids": sorted(expected_calls - actual_calls),
+            "unindexed_call_ids": sorted(actual_calls - expected_calls),
             "batches": index.get("batches", []) if index else [],
         })
 
