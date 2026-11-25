@@ -84,6 +84,7 @@ class TestConfiguredModelClient(unittest.TestCase):
                     ConfiguredModelClient({"provider": "codex_cli"}), Path(root))
                 recorder.begin_session(research_id=research_id)
                 self.assertEqual(recorder.complete_json(task, {}), {"ok": True})
+                self.assertRegex(recorder.call_id, r"^[0-9a-f]{32}$")
             self.assertNotIn("--ephemeral", commands[0])
             self.assertNotIn("resume", commands[1])
             self.assertEqual(commands[2][-2:], ["11111111-1111-4111-8111-111111111111", "-"])
