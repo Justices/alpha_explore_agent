@@ -37,6 +37,7 @@ from alpha_research.cli_orchestration import (
     ORCHESTRATION_COMMANDS, run_orchestration_command, _resolve_simulation_manifest,
 )
 from alpha_research.cli_status import run_status_command
+from alpha_research.orchestration.execution_trace import inspect_execution_trace
 from alpha_research.cli_models import run_models_command
 from alpha_research.cli_probe import PROBE_COMMANDS, run_probe_command
 from alpha_research.cli_knowledge import KNOWLEDGE_COMMANDS, run_knowledge_command
@@ -95,6 +96,14 @@ def main(argv=None):
             ("research_executor", args.executor),
         ) if value is not None
     }
+    if args.command == "orchestration-execution-trace":
+        try:
+            report = inspect_execution_trace(root, args.task_id)
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            print(f"execution trace unavailable: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 0 if report["status"] == "TRACE_VERIFIED" else 2
     if args.command == "recover-task":
         try:
             task = MainOrchestrator(root).load(args.task_id)
