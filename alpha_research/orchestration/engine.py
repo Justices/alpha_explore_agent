@@ -163,7 +163,7 @@ class MainOrchestrator:
             "steps": copy.deepcopy(saved["steps"]),
             "budget": copy.deepcopy(saved["budget"]),
             "failure": ({"step": saved["failure"].get("step"),
-                         "reason": saved["failure"].get("reason")}
+                         "reason_sha256": _hash({"reason": saved["failure"].get("reason")})}
                         if isinstance(saved.get("failure"), dict) else None),
             "checkpoint_names": sorted(saved.get("checkpoints", {})),
         })
@@ -317,7 +317,8 @@ class MainOrchestrator:
                 task = self._transition(task, status="BLOCKED",
                                         failure={"step": step, "reason": reason})
                 self._emit_event(task, "task.step_blocked", step=step, payload={
-                    "reason": reason, "exception_type": type(exc).__name__,
+                    "reason_sha256": _hash({"reason": reason}),
+                    "exception_type": type(exc).__name__,
                     "budget": copy.deepcopy(task["budget"]),
                 })
                 return task
