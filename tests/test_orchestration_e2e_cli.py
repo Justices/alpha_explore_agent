@@ -124,17 +124,28 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(sentinel.read_text(encoding="utf-8"), "important")
         self.assertFalse(marker_path(self.root).exists())
 
-    def test_reject_missing_roles_and_multi_dataset_before_workspace_claim(self):
+    def test_reject_missing_roles_but_accept_bounded_multi_dataset_campaign(self):
         code, _, error = self.invoke(executor="")
         self.assertEqual(code, 2)
         self.assertIn("Lead and Executor", error)
         self.assertFalse(marker_path(self.root).exists())
-        code, _, error = self.invoke(extra=[
+        code, output, error = self.invoke(extra=[
             "--dataset", "analyst10", "--dataset", "analyst11",
+            "--category", "OTHER",
         ])
-        self.assertEqual(code, 2)
-        self.assertIn("at most one", error)
-        self.assertFalse(marker_path(self.root).exists())
+        self.assertEqual(code, 0, error)
+        report = json.loads(output)
+        self.assertEqual(report["status"], "OFFLINE_E2E_PASSED")
+        self.assertEqual(report["expected_domain_attempts"], 2)
+        self.assertEqual(report["scripted_domain_attempts"], 2)
+        self.assertEqual(report["completed_dataset_batches"], 2)
+        task = MainOrchestrator(self.root).load(report["task_id"])
+        self.assertEqual(task["request"]["dataset_ids"], ["analyst10", "analyst11"])
+        self.assertEqual(
+            {row["dataset_id"] for row in task["checkpoints"]["execute"]["completed"]},
+            {"analyst10", "analyst11"},
+        )
+        self.assertTrue(marker_path(self.root).is_file())
 
     def test_external_live_config_is_not_rewritten_by_offline_command(self):
         custom = self.base / "scope.json"
