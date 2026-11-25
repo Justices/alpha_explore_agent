@@ -12,7 +12,7 @@
 - 运行后目录被永久标记 `OFFLINE_DOMAIN_MOCK_ONLY`，不得复用于真实任务。每次重新验收换一个新目录。
 - 配置来自系统默认值，指定 Dataset/Category/Region/Delay/Universe 等 Scope 条件在生效前进行冲突检查；配置文件中固定政策不能覆盖系统默认值。
 
-## Regular（USA / Delay 1 / TOP3000 / analyst10）
+## Regular（USA / Delay 1 / TOP3000 / 单 Dataset 与多 Dataset）
 
 Windows PowerShell：
 
@@ -32,7 +32,23 @@ $E2ERoot = "D:\quant\alpha_explore_agent\.alpha-offline-e2e-01"
 
 成功返回 `status=OFFLINE_E2E_PASSED`，`task_status=COMPLETED`，四个步骤均 `DONE`，Task 预算为 `limit=1,used=1,reserved=0`。返回的 `task_id` 对应永久保存的 Task 文件；`report_path` 是单次验收报告。
 
-成功只代表**离线编排及域接口验证**，并非真实研究有效、真实 Model/Simulation 已运行或已经获准生产发布。
+多 Dataset Campaign 可以在同一个离线 Task 中通过重复 `--dataset` 指定多个 Dataset。当前每个 Dataset 使用 Campaign 既有的 `max_batches=1` 约束，因此该验收验证的是多 Dataset 排程与每 Dataset 一个脚本化批次，不代表多轮迭代已经完成。
+
+示例：
+
+```powershell
+$MultiRoot = "D:\\quant\\alpha_explore_agent\\.alpha-offline-e2e-multi"
+& $Python -m alpha_research `
+  --state-root $MultiRoot `
+  --lead deepseek --executor deepseek `
+  orchestration-e2e-offline `
+  --mode mock --workflow regular `
+  --objective "Regular multi-dataset offline acceptance" `
+  --region USA --delay 1 --universe TOP3000 `
+  --dataset analyst10 --dataset analyst11 --category OTHER
+```
+
+成功报告应显示 `expected_domain_attempts=2`、`scripted_domain_attempts=2`、`completed_dataset_batches=2`，且两个 Dataset 都有各自的 Campaign receipt。成功只代表**离线编排及域接口验证**，并非真实研究有效、真实 Model/Simulation 已运行或已经获准生产发布。
 
 ## 其他工作流
 
