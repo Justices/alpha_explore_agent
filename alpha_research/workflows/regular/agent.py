@@ -1580,10 +1580,38 @@ class ResearchAgent:
                     "status": "PREPARED", "expressions": expressions,
                     "settings": self._platform_settings(scope, probe=True),
                     "runner": runner_ref})
-                raw_probe = self._simulate(
-                    simulation_variants, self._platform_settings(scope, probe=True),
-                    dataset_id, batch_dir, label)
+                _emit_execution_event(execution_context, "regular.probe_simulation_intent_prepared",
+                                      research_id=self.recorder.research_id,
+                                      dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                      probe_batch=label,
+                                      simulation_intent_ref=str(batch_dir / f"{label}_intent.json"),
+                                      expression_count=len(expressions))
+                _emit_execution_event(execution_context, "regular.probe_simulation_posting",
+                                      research_id=self.recorder.research_id,
+                                      dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                      probe_batch=label)
+                try:
+                    raw_probe = self._simulate(
+                        simulation_variants, self._platform_settings(scope, probe=True),
+                        dataset_id, batch_dir, label)
+                except Exception as exc:
+                    _emit_execution_event(execution_context, "regular.probe_simulation_outcome_unknown",
+                                          research_id=self.recorder.research_id,
+                                          dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                          probe_batch=label,
+                                          exception_type=type(exc).__name__,
+                                          simulation_intent_ref=str(batch_dir / f"{label}_intent.json"))
+                    raise
                 atomic_write_json(batch_dir / f"{label}_raw.json", raw_probe)
+                probe_response_sha256 = hashlib.sha256(json.dumps(
+                    raw_probe, ensure_ascii=False, sort_keys=True,
+                    separators=(",", ":")).encode("utf-8")).hexdigest()
+                _emit_execution_event(execution_context, "regular.probe_simulation_response_received",
+                                      research_id=self.recorder.research_id,
+                                      dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                      probe_batch=label,
+                                      response_ref=str(batch_dir / f"{label}_raw.json"),
+                                      response_sha256=probe_response_sha256)
                 if not isinstance(raw_probe, dict) or raw_probe.get("error"):
                     raise ResearchError("diagnostic simulation unresolved; do not resubmit")
                 rows = raw_probe.get("alpha_results") or []
@@ -1604,6 +1632,13 @@ class ResearchAgent:
                 atomic_write_json(batch_dir / f"{label}_intent.json", {
                     "status": "READ_BACK", "expressions": expressions,
                     "settings": probe_settings, "runner": runner_ref})
+                _emit_execution_event(execution_context, "regular.probe_simulation_readback_committed",
+                                      research_id=self.recorder.research_id,
+                                      dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                      probe_batch=label,
+                                      simulation_intent_ref=str(batch_dir / f"{label}_intent.json"),
+                                      response_ref=str(batch_dir / f"{label}_raw.json"),
+                                      response_sha256=probe_response_sha256)
         sources = {field_id: {dimension: set() for dimension in FIELD_EVIDENCE_KEYS}
                    for field_id in core_fields}
         probe_observations = []
