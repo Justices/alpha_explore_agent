@@ -54,6 +54,12 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertTrue(report["research_identity_bound"])
         self.assertTrue(report["recovery_target_bound"])
         self.assertEqual(report["scripted_domain_attempts"], 1)
+        self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
+        self.assertTrue(report["trace_binding_valid"])
+        self.assertGreater(report["trace_event_count"], 0)
+        self.assertEqual(len(report["trace_last_event_sha256"]), 64)
+        self.assertTrue(Path(report["trace_ref"]).is_file())
+        self.assertGreater(report["evidence_file_count"], 0)
         self.assertIn("get_datasets", report["scripted_gateway_commands"])
         self.assertEqual(report["steps"], {
             "validate": "DONE", "execute": "DONE",
@@ -84,6 +90,8 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                 result = json.loads(output)
                 self.assertEqual(result["status"], "OFFLINE_E2E_PASSED")
                 self.assertEqual(result["scripted_domain_attempts"], 1)
+                self.assertEqual(result["trace_status"], "TRACE_VERIFIED")
+                self.assertTrue(Path(result["trace_ref"]).is_file())
                 self.assertIn("simulate_super", result["scripted_gateway_commands"])
                 self.assertFalse(result["brain_simulation_invoked"])
                 self.assertFalse(result["provider_model_invoked"])
@@ -114,6 +122,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(code, 2, error)
         report = json.loads(output)
         self.assertEqual(report["status"], "OFFLINE_E2E_BLOCKED")
+        self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
         self.assertEqual(report["scripted_domain_attempts"], 1)
         self.assertFalse(report["automatic_retry_allowed"])
         task = MainOrchestrator(self.root).load(report["task_id"])
@@ -158,6 +167,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(report["expected_domain_attempts"], 2)
         self.assertEqual(report["scripted_domain_attempts"], 2)
         self.assertEqual(report["completed_dataset_batches"], 2)
+        self.assertEqual(report["trace_status"], "TRACE_VERIFIED")
         task = MainOrchestrator(self.root).load(report["task_id"])
         self.assertEqual(task["request"]["dataset_ids"], ["analyst10", "analyst11"])
         self.assertEqual(
