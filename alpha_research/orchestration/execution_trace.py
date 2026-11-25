@@ -434,7 +434,7 @@ def inspect_execution_trace(state_root, task_id):
                 candidate = store.get("candidate", candidate_id)
                 if candidate:
                     candidate_rows.append(candidate)
-            except KeyError:
+            except (KeyError, FileNotFoundError):
                 pass
             try:
                 preferred = store.get("preferred", candidate_id)
