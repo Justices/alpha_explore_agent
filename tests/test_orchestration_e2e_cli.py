@@ -75,6 +75,14 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertEqual(task["request"]["dataset_ids"], ["analyst10"])
         self.assertEqual(task["request"]["category"], "OTHER")
         self.assertEqual(task["checkpoints"]["execute"]["batches_completed"], 1)
+        self.assertEqual(
+            task["checkpoints"]["execute"]["dataset_reviews"]["analyst10"]["status"],
+            "no_selection",
+        )
+        self.assertTrue(
+            list((self.root / "state" / "research_v1_1" / "campaign_runs" /
+                  "dataset_reviews").rglob("review.json")),
+        )
         self.assertEqual(task["result"]["qualification"]["completed"][0][
             "alpha_ids"], ["OFFLINE_REGULAR_ALPHA_0001"])
         self.assertEqual(json.loads(Path(report["report_path"]).read_text(
