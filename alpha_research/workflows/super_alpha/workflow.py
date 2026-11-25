@@ -17,6 +17,8 @@ from alpha_research.qualification.service import CandidateQualificationService
 
 def _emit(execution_context, event_type, **payload):
     callback = (execution_context or {}).get("emit_event")
+    if isinstance(payload.get("run_id"), str):
+        payload.setdefault("research_id", "super:" + payload["run_id"])
     if callable(callback):
         callback(event_type, payload)
 
