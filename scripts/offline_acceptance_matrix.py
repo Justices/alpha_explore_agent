@@ -32,6 +32,10 @@ def _digest(path):
 def run_matrix(output_root, *, lead="deepseek", executor="deepseek", python=None):
     """Run every case, never reusing an existing research/acceptance directory."""
     root = Path(output_root).expanduser().resolve()
+    from alpha_research.state.paths import default_state_root
+    if root == default_state_root().resolve() or root.name in {
+            ".alpha-runtime", "alpha-research-live"}:
+        raise ValueError("live research state root is forbidden for offline acceptance")
     if root.exists() and (not root.is_dir() or any(root.iterdir())):
         raise ValueError("acceptance output root must be new or empty")
     if not lead or not executor:
