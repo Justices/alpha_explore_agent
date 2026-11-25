@@ -390,11 +390,22 @@ def inspect_execution_trace(state_root, task_id):
         domain["qualification_records"]["status"] = "UNREADABLE"
 
     intent_refs = set()
+    intent_context = {}
     for event in events:
         payload = event.get("payload") or {}
+        event_type = event.get("event_type", "")
+        inferred_workflow = (event_type.split(".", 1)[0]
+                             if event_type.startswith(("regular.", "super.", "optimization."))
+                             else None)
         for key, value in payload.items():
             if key.endswith("_ref") and isinstance(value, str):
                 intent_refs.add(value)
+                if "intent" in key and inferred_workflow in {"regular", "super", "optimization"}:
+                    intent_context[value] = {
+                        "workflow": inferred_workflow,
+                        "batch_ref": payload.get("batch_ref"),
+                        "probe_batch": payload.get("probe_batch"),
+                    }
     if domain.get("campaign"):
         intent_refs.update(row.get("intent_ref") for row in
                            domain["campaign"].get("batch_intents", [])
@@ -415,9 +426,13 @@ def inspect_execution_trace(state_root, task_id):
         except (OSError, RuntimeError):
             continue
         intent = _read_object(path, root=root)
-        if intent and intent.get("workflow") in ("regular", "super", "optimization"):
+        inferred = intent_context.get(ref, {})
+        workflow = (intent.get("workflow") if intent else None) or inferred.get("workflow")
+        if intent and workflow in ("regular", "super", "optimization"):
             body = {
-                "workflow": intent.get("workflow"),
+                "workflow": workflow,
+                "batch_ref": inferred.get("batch_ref"),
+                "probe_batch": inferred.get("probe_batch"),
                 "status": intent.get("status"),
                 "run_id": intent.get("run_id"),
                 "batch_id": intent.get("batch_id"),
