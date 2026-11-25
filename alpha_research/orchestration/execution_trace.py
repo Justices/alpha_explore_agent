@@ -16,6 +16,61 @@ def _read_object(path):
     return value if isinstance(value, dict) else None
 
 
+def _evidence_manifest(root, references):
+    """Hash referenced files and bounded batch artifacts without exposing contents."""
+    root = Path(root).resolve()
+    rows = []
+    seen = set()
+    total_bytes = 0
+    truncated = False
+    allowed_batch_bytes = 256 * 1024 * 1024
+    for reference in sorted(value for value in references
+                             if isinstance(value, str) and value):
+        candidate = Path(reference)
+        if not candidate.is_absolute():
+            candidate = root / candidate
+        try:
+            path = candidate.resolve(strict=True)
+            if not path.is_relative_to(root) or path.is_symlink():
+                continue
+        except (OSError, RuntimeError):
+            continue
+        targets = []
+        if path.is_file():
+            targets = [path]
+        elif path.is_dir() and path.is_relative_to(root / "runs"):
+            for child in sorted(path.rglob("*")):
+                if child.is_symlink() or not child.is_file():
+                    continue
+                try:
+                    resolved = child.resolve(strict=True)
+                    if resolved.is_relative_to(root):
+                        targets.append(resolved)
+                except (OSError, RuntimeError):
+                    continue
+                if len(targets) >= 500:
+                    truncated = True
+                    break
+        for target in targets:
+            key = str(target)
+            if key in seen:
+                continue
+            try:
+                size = target.stat().st_size
+                if total_bytes + size > allowed_batch_bytes:
+                    truncated = True
+                    break
+                digest = hashlib.sha256(target.read_bytes()).hexdigest()
+            except OSError:
+                continue
+            seen.add(key)
+            total_bytes += size
+            rows.append({"path": key, "name": target.name,
+                         "size_bytes": size, "sha256": digest})
+    return {"files": rows, "file_count": len(rows),
+            "total_bytes": total_bytes, "truncated": truncated}
+
+
 def _safe_model_call(path, record):
     allowed = (
         "call_id", "ts", "task", "agent_role", "agent_backend", "model",
@@ -227,6 +282,44 @@ def inspect_execution_trace(state_root, task_id):
                 path.read_bytes()).hexdigest()
             domain["simulation_intents"].append(body)
 
+    evidence_refs = set()
+    for event in events:
+        payload = event.get("payload") or {}
+        evidence_refs.update(
+            value for key, value in payload.items()
+            if key.endswith("_ref") and isinstance(value, str))
+    for row in calls:
+        evidence_refs.update(row.get(key) for key in (
+            "context_ref", "response_ref", "record_ref",
+            "knowledge_pack_ref", "batch_ref") if isinstance(row.get(key), str))
+    for row in sessions:
+        evidence_refs.add(row["index_ref"])
+    if domain.get("campaign"):
+        evidence_refs.add(domain["campaign"]["campaign_state_ref"])
+        evidence_refs.add(domain["campaign"]["campaign_summary_ref"])
+        for row in domain["campaign"].get("batch_intents", []):
+            evidence_refs.update(row.get(key) for key in ("batch_ref", "intent_ref")
+                                 if isinstance(row.get(key), str))
+        for row in domain["campaign"].get("dataset_reviews", {}).values():
+            if isinstance(row.get("review_ref"), str):
+                evidence_refs.add(row["review_ref"])
+    if domain.get("super_run"):
+        evidence_refs.update(value for key, value in
+                             domain["super_run"].items()
+                             if key.endswith("_ref") and isinstance(value, str))
+    if domain.get("optimization"):
+        optimization = domain["optimization"]
+        if isinstance(optimization.get("report_ref"), str):
+            evidence_refs.add(optimization["report_ref"])
+        for group in ("report", "branch", "source"):
+            evidence_refs.update(
+                value for key, value in (optimization.get(group) or {}).items()
+                if key.endswith("_ref") and isinstance(value, str))
+    target_ref = (task.get("recovery_target") or {}).get("ref")
+    if isinstance(target_ref, str):
+        evidence_refs.add(target_ref)
+    evidence_manifest = _evidence_manifest(root, evidence_refs)
+
     return {
         "schema_version": 1,
         "status": ("TRACE_VERIFIED" if verification["status"] == "VERIFIED"
@@ -248,5 +341,6 @@ def inspect_execution_trace(state_root, task_id):
         "events": events,
         "model_calls": calls,
         "model_sessions": sessions,
+        "evidence_manifest": evidence_manifest,
         "domain_evidence": domain,
     }
