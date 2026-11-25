@@ -157,6 +157,10 @@ def inspect_execution_trace(state_root, task_id):
         for key, value in payload.items():
             if key.endswith("_ref") and isinstance(value, str):
                 intent_refs.add(value)
+    if domain.get("campaign"):
+        intent_refs.update(row.get("intent_ref") for row in
+                           domain["campaign"].get("batch_intents", [])
+                           if isinstance(row.get("intent_ref"), str))
     recovery_target = task.get("recovery_target") or {}
     if recovery_target.get("kind") == "simulation_intent":
         intent_refs.add(recovery_target.get("ref"))
