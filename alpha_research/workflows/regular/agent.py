@@ -486,10 +486,13 @@ class ResearchAgent:
                                   "checks": {"checks": (
                                       is_data.get("checks") if isinstance(is_data, dict)
                                       else None)}}
+        readback_sha256 = hashlib.sha256(json.dumps(
+            readback, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
         _emit_execution_event(execution_context, "regular.readback_completed",
                               batch_ref=str(batch_dir), alpha_ids=alpha_ids,
                               readback_count=len(readback),
-                              readback_ref=str(Path(batch_dir) / "readback.json"))
+                              readback_sha256=readback_sha256)
         scope = prereg["scope"]
         simulation_settings = (simulation_settings or prereg.get("simulation_settings")
                                or self._platform_settings(scope))
