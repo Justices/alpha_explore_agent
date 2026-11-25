@@ -18,6 +18,12 @@ from alpha_research.qualification.service import CandidateQualificationService
 from alpha_research.simulation.intent import create_simulation_intent, transition_simulation_intent
 
 
+def _emit(execution_context, event_type, **payload):
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        callback(event_type, payload)
+
+
 class OptimizationError(ValueError):
     pass
 
@@ -221,6 +227,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         bind_identity = execution_context.get("bind_research_identity")
         if callable(bind_identity):
             bind_identity(f"optimization:{run_id}")
+    _emit(execution_context, "optimization.research_started",
+          run_id=run_id, source_alpha_id=alpha_id, region=region)
     root = Path(state_root).resolve()
     work_dir = root / "state" / "research_v1_1" / "optimization"
     intent_path = work_dir / f"{run_id}_simulation_intent.json"
@@ -229,6 +237,12 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     gateway.call("set_case", case_key=run_id, run_id=run_id)
     source_info = prepare_source(gateway, state_root, alpha_id=alpha_id,
                                  objective=objective, region=region)
+    _emit(execution_context, "optimization.source_snapshot_captured",
+          run_id=run_id, source_alpha_id=alpha_id,
+          source_ref=source_info["source_ref"],
+          snapshot_ref=source_info["snapshot_ref"],
+          details_sha256=source_info["details_sha256"],
+          source_properties_sha256=source_info["source_properties_sha256"])
     details = json.loads(Path(source_info["snapshot_ref"]).read_text(encoding="utf-8"))
     settings = _effective_settings(details)
     family = source_info["source_type"]
@@ -266,12 +280,18 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     pack = knowledge.build_pack("optimize_alpha", context)
     pack_path = root / "state" / "research_v1_1" / "optimization" / f"{run_id}_knowledge.json"
     atomic_write_json(pack_path, pack)
+    _emit(execution_context, "optimization.knowledge_pack_persisted",
+          run_id=run_id, knowledge_pack_ref=str(pack_path),
+          dataset_id=dataset_id)
     recorder = DecisionRecorder(
         model, root / "state", governance=config.get("model_governance")
     )
     recorder.begin_session(research_id=f"optimization:{run_id}")
     proposal = recorder.complete_json("optimize_alpha", {**context, "knowledge_pack": pack},
                                       knowledge_pack_ref=str(pack_path))
+    _emit(execution_context, "optimization.proposal_generated",
+          run_id=run_id, model_session_id=recorder.session_id,
+          proposal_sha256=_digest(proposal), knowledge_pack_ref=str(pack_path))
     for key in ("rationale", "hypothesis", "failure_criterion"):
         if not isinstance(proposal.get(key), str) or not proposal[key].strip():
             raise OptimizationError(f"optimization proposal lacks {key}")
@@ -306,6 +326,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         validate_super_expressions(selection, combo, operators)
         research = {key: proposal[key] for key in
                     ("hypothesis", "rationale", "failure_criterion")}
+    _emit(execution_context, "optimization.proposal_validated",
+          run_id=run_id, source_type=family, dataset_id=dataset_id,
+          validation_status="PASS", source_fields_count=len(source_fields))
     if stop_flag is not None and stop_flag.exists():
         raise OptimizationError("research stopped before optimization simulation")
     branch_info = create_branch(
@@ -314,6 +337,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         effective_settings=settings)
     store = ResearchRecordStore(state_root)
     branch = store.get("candidate_branch", branch_info["branch_id"])
+    _emit(execution_context, "optimization.candidate_branch_created",
+          run_id=run_id, branch_id=branch_info["branch_id"],
+          source_alpha_id=alpha_id, branch_ref=branch_info["branch_ref"])
     prereg_path = root / "state" / "research_v1_1" / "optimization" / f"{run_id}_prereg.json"
     atomic_write_json(prereg_path, {"source": source_info, "proposal": proposal,
                                     "dataset_id": dataset_id, "settings": settings,
@@ -353,6 +379,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
         batch_id=batch_id, request=request, settings=settings)
+    _emit(execution_context, "optimization.simulation_intent_prepared",
+          run_id=run_id, batch_id=batch_id,
+          simulation_intent_ref=str(intent_path), branch_id=branch["branch_id"])
     if execution_context is not None:
         bind_target = execution_context.get("bind_recovery_target")
         if callable(bind_target):
@@ -362,6 +391,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     _put_advanced(store, branch)
     transition_simulation_intent(
         intent_path, expected_status="PREPARED", status="POSTING")
+    _emit(execution_context, "optimization.simulation_posting",
+          run_id=run_id, batch_id=batch_id,
+          simulation_intent_ref=str(intent_path))
     branch.update(status="simulation_posting")
     _put_advanced(store, branch)
     try:
@@ -388,6 +420,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         intent_path, expected_status="POSTING", status="RESPONSE_RECEIVED",
         response_sha256=hashlib.sha256(response_bytes).hexdigest(),
         response_ref=str(response_path))
+    _emit(execution_context, "optimization.simulation_response_received",
+          run_id=run_id, batch_id=batch_id, response_ref=str(response_path),
+          response_sha256=hashlib.sha256(response_bytes).hexdigest())
     rows = result.get("results") if isinstance(result, dict) else None
     if not isinstance(rows, list) or len(rows) != 1 or not isinstance(rows[0], dict) or not rows[0].get("alpha_id"):
         transition_simulation_intent(
@@ -401,6 +436,10 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     transition_simulation_intent(
         intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
         receipt_ref=str(readback_path))
+    _emit(execution_context, "optimization.simulation_readback_completed",
+          run_id=run_id, batch_id=batch_id,
+          candidate_alpha_id=rows[0]["alpha_id"],
+          readback_ref=str(readback_path))
     # Re-read the source definition after simulation. Performance metrics may
     # change independently, so compare only identity, family, settings and code.
     latest_source = gateway.call("get_alpha_details", alpha_id=alpha_id)
@@ -415,6 +454,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         _put_advanced(store, branch)
         raise OptimizationError(
             "source Alpha definition could not be verified unchanged after simulation")
+    _emit(execution_context, "optimization.source_integrity_verified",
+          run_id=run_id, source_alpha_id=alpha_id,
+          source_properties_sha256=source_info["source_properties_sha256"])
     audit_path = prereg_path.with_name(f"{run_id}_audit.json")
     audit = record_pending_audit(
         rows[0]["details"], workflow="optimization", source=details)
@@ -454,6 +496,14 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     report["preferred_status"] = qualification["preferred"]["status"]
     report["candidate_record_ref"] = qualification["candidate_ref"]
     report["preferred_record_ref"] = qualification["preferred_ref"]
+    _emit(execution_context, "optimization.qualification_completed",
+          run_id=run_id, source_alpha_id=alpha_id,
+          candidate_alpha_id=rows[0]["alpha_id"],
+          candidate_id=qualification["candidate_id"],
+          candidate_status=qualification["candidate_status"],
+          preferred_status=qualification["preferred"]["status"],
+          candidate_ref=qualification["candidate_ref"],
+          preferred_ref=qualification["preferred_ref"])
     atomic_write_json(report_path, report)
     branch.update(status="candidate_evaluated", receipt_ref=str(readback_path),
                   simulation_intent_ref=str(intent_path), response_ref=str(response_path),
