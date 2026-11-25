@@ -444,6 +444,10 @@ def build_parser():
                          help="explicitly attest one signal row per universe instrument/date")
     package.add_argument("--weights-exhaustive", action="store_true",
                          help="explicitly attest complete portfolio weights for all included dates")
+    trace = sub.add_parser(
+        "orchestration-execution-trace",
+        help="verify and inspect the complete local Task/model/domain evidence chain; read-only")
+    trace.add_argument("task_id")
     sub.add_parser("status", help="inspect local state without platform access")
     sync_cache = sub.add_parser("sync-backtest-cache", help="index completed BRAIN IS and OS history")
     sync_cache.add_argument("--brain-credentials-stdin", action="store_true", help=argparse.SUPPRESS)
