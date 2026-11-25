@@ -9,6 +9,19 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.state.sealed import is_sealed_state
 
 
+def _collect_values(value, target_key):
+    found = set()
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if key == target_key and isinstance(child, str) and child:
+                found.add(child)
+            found.update(_collect_values(child, target_key))
+    elif isinstance(value, list):
+        for child in value:
+            found.update(_collect_values(child, target_key))
+    return found
+
+
 def _collect_references(value):
     refs = set()
     if isinstance(value, dict):
@@ -404,12 +417,31 @@ def inspect_execution_trace(state_root, task_id):
         alpha_id = (domain.get("optimization") or {})["report"].get("candidate_alpha_id")
         if isinstance(alpha_id, str):
             candidate_alpha_ids.add(alpha_id)
+    candidate_ids = set()
+    for event in events:
+        candidate_ids.update(_collect_values(event.get("payload") or {}, "candidate_id"))
+    if (domain.get("super_run") or {}).get("candidate_id"):
+        candidate_ids.add((domain.get("super_run") or {})["candidate_id"])
+    for optimization in domain.get("optimization_runs", []):
+        candidate_id = (optimization.get("report") or {}).get("candidate_id")
+        if isinstance(candidate_id, str):
+            candidate_ids.add(candidate_id)
     try:
         store = ResearchRecordStore(root)
-        candidate_rows = [row for row in store.list("candidate")
-                          if row.get("alpha_id") in candidate_alpha_ids]
-        preferred_rows = [row for row in store.list("preferred")
-                          if row.get("alpha_id") in candidate_alpha_ids]
+        candidate_rows, preferred_rows = [], []
+        for candidate_id in sorted(candidate_ids):
+            try:
+                candidate = store.get("candidate", candidate_id)
+                if candidate:
+                    candidate_rows.append(candidate)
+            except KeyError:
+                pass
+            try:
+                preferred = store.get("preferred", candidate_id)
+                if preferred:
+                    preferred_rows.append(preferred)
+            except KeyError:
+                pass
         def qualification_summary(row):
             return {key: row.get(key) for key in (
                 "candidate_id", "alpha_id", "workflow", "status",
