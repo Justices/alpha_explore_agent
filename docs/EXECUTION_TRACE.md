@@ -40,7 +40,7 @@ Task 事件链只保存执行身份、阶段、状态、业务 ID、证据引用
 - Super/Optimization 的提案、校验、分支、Simulation Intent、POST、Readback、源完整性和 Qualification 里程碑；
 - Domain dispatch 的开始和完成。
 
-模型调用仍由现有 Model Journal 记录；执行链通过 Research ID、Session ID、Batch Ref 和模型调用记录关联，不复制 Prompt/Response 内容。
+模型调用仍由现有 Model Journal 记录；执行链通过 Research ID、Session ID、Batch Ref 和模型调用记录关联，不复制 Prompt/Response 内容。一个 Regular Campaign Task 可以包含多个 Dataset 子任务以及独立 Optimization Research ID；事件的 Research ID 按领域运行标识关联，Task 的主 Research Identity 保持兼容，追踪命令会汇总该 Task 事件链中出现的全部 Research ID 与各自的 Model Budget Ledger。
 
 ## 3. 只读追踪命令
 
@@ -54,7 +54,7 @@ $Python = "D:\quant-venv\Scripts\python.exe"
 该命令：
 1. 读取 Task；
 2. 完整验证该 Task 的事件 Hash 链；
-3. 依据 Research ID 关联 Model Call Records、Session Index 和 sealed Model Budget Ledger（Attempt 状态及 Token 结算）；
+3. 依据事件链中的全部 Research ID 关联 Model Call Records、Session Index 和 sealed Model Budget Ledger（Attempt 状态及 Token 结算），包括 Regular Campaign 内部派生的 Optimization 子流程；
 4. 读取对应 Campaign / Super / Optimization 记录；
 5. 解析已引用 Simulation Intent 的状态和响应/Readback 引用；
 6. 输出结构化 JSON，并提供 evidence_manifest（文件路径、大小、SHA-256；批次目录仅列文件元数据，不输出内容），不调用模型、不访问 BRAIN、不修改研究状态。
