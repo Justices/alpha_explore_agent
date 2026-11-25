@@ -13,6 +13,7 @@ from alpha_research.orchestration.domain_mock import (
 )
 from alpha_research.orchestration.engine import MainOrchestrator
 from alpha_research.orchestration.execution_trace import inspect_execution_trace
+from alpha_research.orchestration.execution_trace import inspect_execution_trace
 
 
 class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
@@ -52,6 +53,14 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
                 {"dataset_alpha", "dataset_beta"},
             )
             self.assertEqual(agent.calls, 2)
+            trace = inspect_execution_trace(root, task["task_id"])
+            self.assertEqual(trace["status"], "TRACE_VERIFIED")
+            event_types = [event["event_type"] for event in trace["events"]]
+            self.assertEqual(event_types.count("regular.batch_started"), 2)
+            self.assertEqual(event_types.count("regular.batch_completed"), 2)
+            self.assertIn("regular.campaign_completed", event_types)
+            self.assertEqual(trace["domain_evidence"]["campaign"]["campaign_id"],
+                             execution["campaign_id"])
             self.assertIsNotNone(completed["research_identity"])
             self.assertIsNotNone(completed["recovery_target"])
             self.assertFalse(any(command in gateway.calls for command in (
