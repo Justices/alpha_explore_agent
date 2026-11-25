@@ -38,7 +38,7 @@ def inspect_execution_trace(state_root, task_id):
     research_id = (task.get("research_identity") or {}).get("research_id")
 
     calls = []
-    calls_root = root / "logs" / "model_calls"
+    calls_root = root / "state" / "logs" / "model_calls"
     if calls_root.exists() and research_id:
         for path in sorted(calls_root.glob("*.record.json")):
             record = _read_object(path)
@@ -49,7 +49,7 @@ def inspect_execution_trace(state_root, task_id):
                           if isinstance(row.get("session_id"), str)})
     sessions = []
     for session_id in session_ids:
-        path = root / "logs" / "model_sessions" / f"{session_id}.json"
+        path = root / "state" / "logs" / "model_sessions" / f"{session_id}.json"
         index = _read_object(path)
         sessions.append({
             "session_id": session_id,
