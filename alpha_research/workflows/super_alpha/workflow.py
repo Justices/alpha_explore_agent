@@ -15,6 +15,12 @@ from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.service import CandidateQualificationService
 
 
+def _emit(execution_context, event_type, **payload):
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        callback(event_type, payload)
+
+
 def prepare_super_run(gateway, state_root: Path, *, region: str,
                       objective: str, delay: int | None = None,
                       run_id: str | None = None):
@@ -119,9 +125,16 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         if callable(bind_identity):
             bind_identity(f"super:{run_id}")
     gateway.call("set_case", case_key=run_id, run_id=run_id)
+    _emit(execution_context, "super.research_started", run_id=run_id,
+          region=region, delay=delay)
     prepared = prepare_super_run(
         gateway, state_root, region=region, objective=objective,
         delay=delay, run_id=run_id)
+    _emit(execution_context, "super.platform_preflight_completed",
+          run_id=run_id, status=prepared.get("status"),
+          record_ref=prepared.get("record_ref"),
+          eligible_alpha_count=prepared.get("eligible_alpha_count"),
+          unresolved_count=prepared.get("unresolved_count"))
     run_path = Path(prepared["record_ref"])
     run = json.loads(run_path.read_text(encoding="utf-8"))
     store = ResearchRecordStore(state_root)
@@ -157,6 +170,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     rule_pack = knowledge.build_pack("construct_super", context)
     pack_path = run_path.with_name(f"{run_id}_knowledge_pack.json")
     atomic_write_json(pack_path, rule_pack)
+    _emit(execution_context, "super.knowledge_pack_persisted",
+          run_id=run_id, knowledge_pack_ref=str(pack_path))
     recorder = DecisionRecorder(
         model, root / "state", governance=config.get("model_governance")
     )
@@ -164,6 +179,11 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     proposal = recorder.complete_json(
         "construct_super", {**context, "knowledge_pack": rule_pack},
         knowledge_pack_ref=str(pack_path))
+    _emit(execution_context, "super.proposal_generated", run_id=run_id,
+          model_session_id=recorder.session_id,
+          proposal_sha256=__import__("hashlib").sha256(json.dumps(
+              proposal, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
+          knowledge_pack_ref=str(pack_path))
     for key in ("selection", "combo", "hypothesis", "rationale",
                 "failure_criterion"):
         if not isinstance(proposal.get(key), str) or not proposal[key].strip():
@@ -189,6 +209,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         "registered_at": datetime.now(timezone.utc).isoformat()}
     prereg_path = run_path.with_name(f"{run_id}_{batch_id}_prereg.json")
     atomic_write_json(prereg_path, prereg)
+    _emit(execution_context, "super.proposal_validated", run_id=run_id,
+          batch_id=batch_id, validation_status="PASS", prereg_ref=str(prereg_path))
     run["prereg_ref"] = str(prereg_path)
     run["batch_id"] = batch_id
     intent_path = run_path.with_name(f"{run_id}_{batch_id}_simulation_intent.json")
@@ -222,6 +244,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     create_simulation_intent(
         intent_path, workflow="super", run_id=run_id, batch_id=batch_id,
         request=request, settings=settings)
+    _emit(execution_context, "super.simulation_intent_prepared",
+          run_id=run_id, batch_id=batch_id, simulation_intent_ref=str(intent_path))
     if execution_context is not None:
         bind_target = execution_context.get("bind_recovery_target")
         if callable(bind_target):
@@ -236,6 +260,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
                            "used": {"experiments": 0}})
     transition_simulation_intent(
         intent_path, expected_status="PREPARED", status="POSTING")
+    _emit(execution_context, "super.simulation_posting",
+          run_id=run_id, batch_id=batch_id, simulation_intent_ref=str(intent_path))
     run["status"] = "simulation_posting"
     atomic_write_json(run_path, run)
     persist_shared(status="simulation_posting")
@@ -275,12 +301,17 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["runner"] = result.get("runner")
     run["readback_ref"] = str(run_path.with_name(f"{run_id}_{batch_id}_readback.json"))
     atomic_write_json(Path(run["readback_ref"]), rows[0])
+    _emit(execution_context, "super.simulation_readback_completed",
+          run_id=run_id, batch_id=batch_id, alpha_id=run["alpha_id"],
+          readback_ref=run["readback_ref"])
     transition_simulation_intent(
         intent_path, expected_status="RESPONSE_RECEIVED", status="READ_BACK",
         receipt_ref=run["readback_ref"])
     audit_path = run_path.with_name(f"{run_id}_{batch_id}_audit.json")
     atomic_write_json(audit_path, record_pending_audit(
         rows[0]["details"], workflow="super"))
+    _emit(execution_context, "super.audit_persisted",
+          run_id=run_id, alpha_id=run["alpha_id"], audit_ref=str(audit_path))
     run["audit_ref"] = str(audit_path)
     run["status"] = "simulated_pending_audit"
     atomic_write_json(run_path, run)
@@ -292,6 +323,13 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
                            "readback": run["readback_ref"], "audit": str(audit_path),
                            "prereg": str(prereg_path)},
             fallback_details=rows[0].get("details"))
+    _emit(execution_context, "super.qualification_completed",
+          run_id=run_id, alpha_id=run["alpha_id"],
+          candidate_id=qualification["candidate_id"],
+          candidate_status=qualification["candidate_status"],
+          preferred_status=qualification["preferred"]["status"],
+          candidate_ref=qualification["candidate_ref"],
+          preferred_ref=qualification["preferred_ref"])
     run["status"] = "candidate_evaluated"
     run["candidate_id"] = qualification["candidate_id"]
     run["candidate_status"] = qualification["candidate_status"]
