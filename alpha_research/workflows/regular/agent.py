@@ -1719,6 +1719,14 @@ class ResearchAgent:
                 "proposal": proposal, "operator_names": used_operators,
                 "exact_operator_notes": exact_operator_notes,
                 "related_evidence": related_evidence}, batch_dir=batch_dir)
+            _emit_execution_event(execution_context, "regular.proposal_refined",
+                                  research_id=self.recorder.research_id,
+                                  dataset_id=dataset_id, batch_ref=str(batch_dir),
+                                  model_session_id=self.recorder.session_id,
+                                  model_call_id=self.recorder.call_id,
+                                  proposal_sha256=hashlib.sha256(json.dumps(
+                                      proposal, ensure_ascii=False, sort_keys=True,
+                                      separators=(",", ":")).encode("utf-8")).hexdigest())
             proposal.pop("field_report", None)
         if remedy_reference is not None:
             proposed_tags = proposal.get("mechanism_tags")
