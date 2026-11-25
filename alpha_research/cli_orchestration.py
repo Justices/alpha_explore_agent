@@ -57,9 +57,11 @@ from alpha_research.orchestration.execution_identity import (
 from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
 from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
 from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
+from alpha_research.orchestration.execution_trace import inspect_execution_trace
 
 
-ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
+ORCHESTRATION_COMMANDS = frozenset({"orchestration-execution-trace",
+                        "orchestration-local-pilot-readiness",
                         "orchestration-prepare", "orchestration-handoff",
                         "orchestration-recovery-check", "orchestration-run",
                         "orchestration-domain-mock",
@@ -108,6 +110,10 @@ def _resolve_simulation_manifest(orchestrator, task_id, manifest_path):
 def run_orchestration_command(args, root, registry_assignments, registry_path, *,
                               verify_external_consent, reserve_consent_for_audit):
     try:
+        if args.command == "orchestration-execution-trace":
+            result = inspect_execution_trace(root, args.task_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if set(registry_assignments) != {"research_lead", "research_executor"}:
             raise OrchestrationError(
                 "both --lead and --executor registrations are required")
