@@ -282,6 +282,7 @@ class DecisionRecorder:
     def _execute_model_call(self, task: str, context: dict,
                             knowledge_pack_ref=None) -> dict:
         call_id = uuid4().hex
+        self.call_id = call_id
         context_sha = hashlib.sha256(_json_bytes(context)).hexdigest()
         config, selected_role, selected_backend, route_sha, backend_digest = self._call_route(task)
 
