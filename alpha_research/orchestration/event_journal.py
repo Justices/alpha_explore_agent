@@ -48,7 +48,7 @@ class ExecutionEventJournal:
             raw = self.path.read_text(encoding="utf-8")
         except OSError as exc:
             raise ExecutionEventJournalError("execution event journal is unreadable") from exc
-        if not raw or not raw.endswith("\\n"):
+        if not raw or not raw.endswith("\n"):
             raise ExecutionEventJournalError(
                 "execution event journal is empty or has an incomplete trailing record")
         rows = []
