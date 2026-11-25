@@ -14,6 +14,7 @@ from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.orchestration.offline_adapter import MockWorkflowAdapter
 from alpha_research.orchestration.engine import OrchestrationError
 from alpha_research.state.records import offline_mock_record_scope
+from alpha_research.state.store import atomic_write_json
 
 
 class DomainMockGateway:
@@ -75,6 +76,14 @@ class RegularMockAgent:
         self.stop_flag = Path(state_root) / "state" / "stop.flag"
         self.lost_response = lost_response
         self.calls = 0
+        self.recorder = SimpleNamespace(session_id="OFFLINE_SESSION",
+                                        call_id="OFFLINE_REVIEW_CALL")
+
+    def _decide(self, task, context, **kwargs):
+        if task != "review_dataset_results":
+            raise OrchestrationError("unsupported offline Regular review task")
+        return {"summary": "Synthetic review: no verified candidate selected",
+                "selection": None}
 
     def run_once(self, objective, *, dataset_id, **kwargs):
         self.calls += 1
@@ -83,17 +92,32 @@ class RegularMockAgent:
                  f"offline_mock_batch_{self.calls:04d}")
         batch.mkdir(parents=True, exist_ok=True)
         intent = batch / "simulation_intent.json"
-        intent.write_text('{"workflow":"regular","mode":"offline_domain_mock"}',
-                          encoding="utf-8")
+        alpha_id = f"OFFLINE_REGULAR_ALPHA_{self.calls:04d}"
+        atomic_write_json(intent, {
+            "workflow": "regular", "mode": "offline_domain_mock",
+            "status": "READ_BACK", "alpha_ids": [alpha_id],
+            "settings": scope,
+        })
+        atomic_write_json(batch / "prereg.json", {
+            "dataset_id": dataset_id,
+            "variants": [{"expression": "rank(signal_a)"}],
+            "simulation_settings": scope,
+        })
+        atomic_write_json(batch / "results.json", {
+            "alpha_ids": [alpha_id], "attribution_status": "complete",
+            "attribution": {"summary": "Synthetic batch attribution"},
+            "readback": {alpha_id: {"details": {"id": alpha_id,
+                "is": {"sharpe": 0.2, "fitness": 0.1}}}},
+        })
         context = kwargs.get("execution_context")
         if context is not None:
             context["bind_recovery_target"]("regular_batch", batch)
         if self.lost_response:
             raise RuntimeError("injected lost Regular mock batch response")
-        alpha_id = f"OFFLINE_REGULAR_ALPHA_{self.calls:04d}"
         return {
             "batch_dir": str(batch),
             "alpha_ids": [alpha_id],
+            "attribution_status": "complete",
             "candidate_status": {alpha_id: "EVIDENCE_PENDING"},
         }
 
@@ -163,11 +187,8 @@ def mock_domain_boundary(region):
         # ContextVar-scoped provenance protects concurrent workflows from
         # process-wide ResearchRecordStore monkey patches.
         stack.enter_context(offline_mock_record_scope())
-        # Campaign review is a model-mediated attribution step; replace it in
-        # this standalone offline integration without suppressing scheduling.
-        stack.enter_context(patch(
-            "alpha_research.workflows.regular.campaign.review_dataset",
-            return_value={"status": "no_selection", "mode": "offline_domain_mock"}))
+        # Regular Dataset review executes its real evidence checks against
+        # synthetic prereg, intent, readback and attribution records.
         for module in ("alpha_research.workflows.super_alpha.workflow",
                        "alpha_research.workflows.optimization.workflow"):
             stack.enter_context(patch(module + ".KnowledgeService", DomainMockKnowledge))
