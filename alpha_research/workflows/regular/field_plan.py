@@ -14,6 +14,12 @@ from alpha_research.workflows.regular.errors import ResearchError
 from alpha_research.workflows.regular.field_catalog import _field_summaries
 
 
+def _emit(execution_context, event_type, **payload):
+    callback = (execution_context or {}).get("emit_event")
+    if callable(callback):
+        callback(event_type, payload)
+
+
 class FieldPlanWorkflow:
     def __init__(self, agent):
         # Agent is injected as the owner of simulation permissions and
@@ -21,7 +27,8 @@ class FieldPlanWorkflow:
         self.agent = agent
 
     def construct(self, batch_dir, context, core_fields, field_rows,
-                              catalog, operators, operator_catalog, prior_case):
+                              catalog, operators, operator_catalog, prior_case,
+                              *, execution_context=None):
         dataset_id = context["dataset_id"]
         description = context["dataset_selection"].get("description")
         settings = self.agent._platform_settings(context["scope"])
@@ -55,6 +62,15 @@ class FieldPlanWorkflow:
                     request["prior_campaign_findings"] = context["prior_research"]
                 try:
                     response = self.agent._decide("construct_field_expressions", request, batch_dir=batch_dir)
+                    _emit(execution_context, "regular.field_expression_proposal_generated",
+                          research_id=self.agent.recorder.research_id,
+                          dataset_id=dataset_id, batch_ref=str(batch_dir),
+                          target_field_ids=targets, attempt=attempt + 1,
+                          model_session_id=self.agent.recorder.session_id,
+                          model_call_id=self.agent.recorder.call_id,
+                          proposal_sha256=hashlib.sha256(json.dumps(
+                              response, ensure_ascii=False, sort_keys=True,
+                              separators=(",", ":")).encode("utf-8")).hexdigest())
                     rows = response.get("fields") if isinstance(response, dict) else None
                     if not isinstance(rows, list):
                         raise ResearchError("field construction must return a fields list")
@@ -128,15 +144,28 @@ class FieldPlanWorkflow:
                 "target_field_ids": core_fields, "variants": variants,
                 "validation": validation, "field_failures": failures}
         atomic_write_json(batch_dir / "field_research_plan.json", plan)
+        _emit(execution_context, "regular.field_plan_persisted",
+              research_id=self.agent.recorder.research_id,
+              dataset_id=dataset_id, batch_ref=str(batch_dir),
+              target_field_count=len(core_fields), variant_count=len(variants),
+              failure_count=len(failures),
+              field_plan_ref=str(batch_dir / "field_research_plan.json"),
+              field_plan_sha256=hashlib.sha256(
+                  (batch_dir / "field_research_plan.json").read_bytes()).hexdigest())
         write_progress(f"{dataset_id} · 已保存 {len(core_fields)} 个字段的设计结果 · "
                        f"{len(variants)} 条表达式通过校验 · {len(failures)} 项未通过")
-        return self.agent._execute_field_plan(batch_dir, context)
+        return self.agent._execute_field_plan(
+            batch_dir, context, execution_context=execution_context)
 
-    def execute(self, batch_dir, context):
+    def execute(self, batch_dir, context, *, execution_context=None):
         plan_path = batch_dir / "field_research_plan.json"
         plan_bytes = plan_path.read_bytes()
         plan = json.loads(plan_bytes)
         digest = hashlib.sha256(plan_bytes).hexdigest()
+        _emit(execution_context, "regular.field_plan_execution_started",
+              research_id=context.get("research_id"), dataset_id=context.get("dataset_id"),
+              batch_ref=str(batch_dir), field_plan_ref=str(plan_path),
+              field_plan_sha256=digest, planned_variant_count=len(plan.get("variants", [])))
         dataset_id, scope = context["dataset_id"], context["scope"]
         settings = plan["simulation_settings"]
         if plan["dataset_id"] != dataset_id or settings != self.agent._platform_settings(scope):
@@ -166,6 +195,11 @@ class FieldPlanWorkflow:
                 if child.exists() and any(child.iterdir()):
                     raise ResearchError("execution group is missing its saved context")
                 atomic_write_json(context_path, child_context)
+            _emit(execution_context, "regular.field_execution_group_started",
+                  research_id=context.get("research_id"), dataset_id=dataset_id,
+                  batch_ref=str(batch_dir), child_batch_ref=str(child),
+                  execution_group=index, variant_count=len(group),
+                  field_plan_ref=str(plan_path), child_context_ref=str(context_path))
             intent_path = child / "simulation_intent.json"
             failure_path = child / "execution_failure.json"
             intent = read_json(intent_path, default={})
@@ -174,7 +208,7 @@ class FieldPlanWorkflow:
                 continue
             try:
                 if intent_path.exists():
-                    result = self.agent.recover(child)
+                    result = self.agent.recover(child, execution_context=execution_context)
                 else:
                     self.agent.gateway.call("set_case", case_key=case_key, run_id=run_id)
                     # The child references the saved plan. Its audit calls have their own
@@ -205,7 +239,9 @@ class FieldPlanWorkflow:
                     }
                     runner_variants = [self.agent._production_runner_variant(proposal, item, dataset_id, number)
                                        for number, item in enumerate(group, start=1)]
-                    result = self.agent._execute_production(child, prereg, runner_variants, case_key, run_id)
+                    result = self.agent._execute_production(
+                        child, prereg, runner_variants, case_key, run_id,
+                        execution_context=execution_context)
             except Exception as exc:
                 if self.agent.stop_flag and self.agent.stop_flag.exists():
                     stopped = True
@@ -213,11 +249,22 @@ class FieldPlanWorkflow:
                 failure = {"group": index, "batch_dir": str(child), "reason": str(exc)}
                 atomic_write_json(failure_path, failure)
                 failures.append(failure)
+                _emit(execution_context, "regular.field_execution_group_blocked",
+                      research_id=context.get("research_id"), dataset_id=dataset_id,
+                      batch_ref=str(batch_dir), child_batch_ref=str(child),
+                      execution_group=index, exception_type=type(exc).__name__,
+                      failure_ref=str(failure_path))
                 write_progress(f"{dataset_id} · 回测组 {index} 未完成 · {type(exc).__name__} · {child}")
                 continue
             completed.append({"batch_dir": str(child), "alpha_ids": result["alpha_ids"],
                               "candidate_status": result["candidate_status"],
                               "attribution_status": result.get("attribution_status", "complete")})
+            _emit(execution_context, "regular.field_execution_group_completed",
+                  research_id=context.get("research_id"), dataset_id=dataset_id,
+                  batch_ref=str(batch_dir), child_batch_ref=str(child),
+                  execution_group=index, alpha_ids=result["alpha_ids"],
+                  candidate_status=result["candidate_status"],
+                  attribution_status=result.get("attribution_status", "complete"))
         self.agent._begin_session(context["research_id"])
         self.agent.recorder.bind_batch(batch_dir)
         alpha_ids = list(dict.fromkeys(alpha for child in completed for alpha in child["alpha_ids"]))
@@ -245,5 +292,12 @@ class FieldPlanWorkflow:
                   "execution_failures": failures, "child_batches": completed,
                   "field_plan_ref": str(plan_path)}
         atomic_write_json(batch_dir / "results.json", result)
+        _emit(execution_context, "regular.field_plan_execution_completed",
+              research_id=context.get("research_id"), dataset_id=dataset_id,
+              batch_ref=str(batch_dir), field_plan_ref=str(plan_path),
+              results_ref=str(batch_dir / "results.json"),
+              status=status, child_batch_count=len(completed),
+              failure_count=len(failures), alpha_ids=alpha_ids,
+              child_batch_refs=[row["batch_dir"] for row in completed])
         return result
 
