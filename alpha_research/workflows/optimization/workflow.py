@@ -412,6 +412,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             intent_path, expected_status="POSTING", status="OUTCOME_UNKNOWN")
         branch.update(status="outcome_unknown")
         _put_advanced(store, branch)
+        _emit(execution_context, "optimization.simulation_outcome_unknown",
+              run_id=run_id, batch_id=batch_id, branch_id=branch["branch_id"],
+              simulation_intent_ref=str(intent_path))
         raise
     response_bytes = json.dumps(result, ensure_ascii=False, sort_keys=True,
                                 default=str).encode("utf-8")
