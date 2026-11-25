@@ -282,7 +282,10 @@ def inspect_execution_trace(state_root, task_id):
                 path.read_bytes()).hexdigest()
             domain["simulation_intents"].append(body)
 
-    evidence_refs = set()
+    evidence_refs = {
+        str(root / "state" / "research_v1_1" / "orchestration" /
+            f"{task_id}.json")
+    }
     for event in events:
         payload = event.get("payload") or {}
         evidence_refs.update(
