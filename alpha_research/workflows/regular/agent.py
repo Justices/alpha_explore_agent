@@ -686,6 +686,21 @@ class ResearchAgent:
         for alpha_id, verdict in gate.items():
             if contenders.get(alpha_id, {}).get("status") == "PAIRWISE_CONFLICT":
                 verdict["status"] = "PAIRWISE_CONFLICT"
+        _emit_execution_event(execution_context, "regular.qualification_records_persisted",
+                              batch_ref=str(batch_dir),
+                              records={alpha_id: {
+                                  "candidate_id": verdict.get("candidate_id"),
+                                  "candidate_status": verdict.get("status"),
+                                  "candidate_record_ref": verdict.get("candidate_record_ref"),
+                                  "preferred_record_ref": verdict.get("preferred_record_ref"),
+                                  "preferred_status": verdict.get("preferred_status"),
+                              } for alpha_id, verdict in gate.items()},
+                              canonical_audit_ref=next((
+                                  verdict.get("canonical_audit", {}).get("audit_path")
+                                  for verdict in gate.values()
+                                  if isinstance(verdict.get("canonical_audit"), dict)
+                                  and isinstance(verdict["canonical_audit"].get("audit_path"), str)),
+                                  None))
         case["contenders"] = contenders
         atomic_write_json(batch_dir / "gate.json", gate)
         _emit_execution_event(execution_context, "regular.correlation_gate_completed",
