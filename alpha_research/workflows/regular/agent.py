@@ -1117,7 +1117,9 @@ class ResearchAgent:
         if len(expressions) == 1 and isinstance(raw, dict) and raw.get("alpha_id"):
             rows = [raw]
         if not isinstance(rows, list) or len(rows) != len(expressions):
-            raw = self._resume_canonical_batch(intent, batch_dir, raw_path, "production")
+            raw = self._resume_canonical_batch(
+                intent, batch_dir, raw_path, "production",
+                execution_context=execution_context)
             rows = raw.get("alpha_results") if isinstance(raw, dict) else None
         if isinstance(rows, list) and len(rows) == len(expressions):
             alpha_ids = [row.get("alpha_id") for row in rows
@@ -1155,20 +1157,35 @@ class ResearchAgent:
                 return recent
         raise ResearchError("account listing incomplete; recovery remains pending")
 
-    def _resume_canonical_batch(self, intent, batch_dir, raw_path, label):
+    def _resume_canonical_batch(self, intent, batch_dir, raw_path, label, *,
+                                execution_context=None):
         runner = intent.get("runner") if isinstance(intent, dict) else None
         if not isinstance(runner, dict):
             return None
+        _emit_execution_event(execution_context, "regular.canonical_runner_resume_started",
+                              batch_ref=str(batch_dir), probe_batch=label,
+                              runner_run_id=runner.get("run_id"),
+                              simulation_intent_ref=str(Path(batch_dir) / f"{label}_intent.json")
+                                  if label != "production" else str(Path(batch_dir) / "simulation_intent.json"))
         try:
             raw = self._normalize_runner_result(
                 self.gateway.call("resume_simulation_batch", **runner))
             atomic_write_json(raw_path, raw)
+            _emit_execution_event(execution_context, "regular.canonical_runner_resume_completed",
+                                  batch_ref=str(batch_dir), probe_batch=label,
+                                  response_ref=str(raw_path),
+                                  response_sha256=hashlib.sha256(json.dumps(
+                                      raw, ensure_ascii=False, sort_keys=True,
+                                      separators=(",", ":")).encode("utf-8")).hexdigest())
             atomic_write_json(Path(batch_dir) / f"{label}_runner_recovery.json", {
                 "status": "RESUMED", "runner": runner,
                 "result_rows": len(raw["alpha_results"]),
                 "recovered_at": datetime.now().astimezone().isoformat()})
             return raw
         except Exception as exc:
+            _emit_execution_event(execution_context, "regular.canonical_runner_resume_blocked",
+                                  batch_ref=str(batch_dir), probe_batch=label,
+                                  exception_type=type(exc).__name__)
             atomic_write_json(Path(batch_dir) / f"{label}_runner_recovery.json", {
                 "status": "UNRESOLVED", "runner": runner,
                 "reason": f"{type(exc).__name__}: {str(exc)[:1000]}",
@@ -1264,7 +1281,9 @@ class ResearchAgent:
             if not isinstance(rows, list) or len(rows) != len(group):
                 if completed_only:
                     raise ResearchError("completed diagnostic probe result is unavailable")
-                raw = self._resume_canonical_batch(intent, batch_dir, raw_path, label)
+                raw = self._resume_canonical_batch(
+                    intent, batch_dir, raw_path, label,
+                    execution_context=execution_context)
                 rows = raw.get("alpha_results") if isinstance(raw, dict) else None
             if not isinstance(rows, list) or len(rows) != len(group):
                 if recent is None:
