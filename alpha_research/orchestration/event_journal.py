@@ -62,9 +62,13 @@ class ExecutionEventJournal:
                     f"execution event journal has invalid JSON at line {number}") from exc
             if not isinstance(row, dict):
                 raise ExecutionEventJournalError("execution event must be an object")
+            required = {"schema_version", "sequence", "event_id", "occurred_at",
+                        "task_id", "workflow", "research_id", "step", "event_type",
+                        "payload", "previous_event_sha256", "event_sha256"}
             supplied = row.get("event_sha256")
             body = {key: value for key, value in row.items() if key != "event_sha256"}
-            if (type(row.get("schema_version")) is not int
+            if (not required.issubset(row)
+                    or type(row.get("schema_version")) is not int
                     or row.get("schema_version") != SCHEMA_VERSION
                     or row.get("task_id") != self.task_id
                     or type(row.get("sequence")) is not int
