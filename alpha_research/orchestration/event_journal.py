@@ -42,7 +42,17 @@ class ExecutionEventJournal:
         self.lock_path = self.path.with_suffix(".lock")
         self.task_id = task_id
 
+    def _check_safe_paths(self):
+        """Reject symlinked journal/lock roots before any read or append."""
+        for path in (self.root.parent.parent, self.root.parent, self.root):
+            if path.is_symlink() or (path.exists() and not path.is_dir()):
+                raise ExecutionEventJournalError("execution event directory is unsafe")
+        if (self.path.is_symlink() or self.lock_path.is_symlink()
+                or (self.path.exists() and not self.path.is_file())):
+            raise ExecutionEventJournalError("execution event journal path is unsafe")
+
     def _read_verified(self):
+        self._check_safe_paths()
         if not self.path.exists():
             return []
         try:
@@ -110,9 +120,11 @@ class ExecutionEventJournal:
             _canonical(payload)
         except (TypeError, ValueError) as exc:
             raise ExecutionEventJournalError("event payload must be finite JSON") from exc
+        self._check_safe_paths()
         self.root.mkdir(parents=True, exist_ok=True)
         try:
             with SingleWriterLock(self.lock_path):
+                self._check_safe_paths()
                 rows = self._read_verified()
                 body = {
                     "schema_version": SCHEMA_VERSION,
