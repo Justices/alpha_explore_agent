@@ -15,6 +15,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
+
+
 CASES = (
     ("regular_single", "regular", ["--dataset", "analyst10"]),
     ("regular_multi", "regular",
@@ -64,6 +69,7 @@ def run_matrix(output_root, *, lead="deepseek", executor="deepseek", python=None
             response = subprocess.run(
                 command, capture_output=True, text=True, encoding="utf-8",
                 errors="replace", check=False, timeout=180,
+                cwd=str(REPOSITORY_ROOT),
             )
             stdout_path.write_text(response.stdout, encoding="utf-8")
             stderr_path.write_text(response.stderr, encoding="utf-8")
