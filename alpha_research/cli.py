@@ -267,7 +267,7 @@ def main(argv=None):
         gateway = Gateway()
     agent = None
     if args.command in {"run-super", "run-optimization"}:
-        agent = SimpleNamespace(model=model)
+        agent = SimpleNamespace(model=model, stop_flag=stop_signals)
     elif args.command not in {"plan-regular", "plan-optimization", "plan-super", "recover-research",
                               "sync-backtest-cache", "tag-alpha"} and not (
             args.command in {"recover-workflow", "recover-task"} and args.workflow != "regular"):
