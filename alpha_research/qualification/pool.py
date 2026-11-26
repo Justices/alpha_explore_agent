@@ -15,10 +15,14 @@ def _hash(value):
         default=str).encode("utf-8")).hexdigest()
 
 
-def evidence_hash(details, correlations, failures, pending):
-    """Bind a verdict to exactly the details, correlations and gate findings."""
-    return _hash({"details": details, "correlations": correlations,
-                  "failures": sorted(failures), "pending": sorted(pending)})
+def evidence_hash(details, correlations, failures, pending, *, gate=None,
+                  preferred=None):
+    """Bind the full two-stage assessment, not only its terminal verdict."""
+    return _hash({
+        "details": details, "correlations": correlations,
+        "failures": sorted(failures), "pending": sorted(pending),
+        "gate_evidence": gate or {}, "preferred_evaluation": preferred or {},
+    })
 
 
 def policy_hash(config):

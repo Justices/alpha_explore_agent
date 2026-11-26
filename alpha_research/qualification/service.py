@@ -117,13 +117,24 @@ class CandidateQualificationService:
         preferred = evaluate_preferred(details, candidate_status=status, config=self.config)
         metrics = preferred.get("metrics", {})
         now = _now()
-        fingerprint = evidence_hash(details, correlations, failures, pending)
+        gate_evidence = {
+            "status": gate.get("status"),
+            "ra_fail_count": gate.get("ra_fail_count"),
+            "correlation_allowed": gate.get("correlation_allowed"),
+            "thresholds": self.config.get("gate") or {},
+            "ppa_eligibility": gate.get("ppa_eligibility"),
+            "failures": failures, "pending": pending,
+        }
+        fingerprint = evidence_hash(
+            details, correlations, failures, pending,
+            gate=gate_evidence, preferred=preferred)
         configured_policy = policy_hash(self.config)
         candidate = {
             "schema_version": 1, "candidate_id": candidate_id, "alpha_id": alpha_id,
             "workflow": workflow, "source_ref": str(source_ref),
             "candidate_ref": str(candidate_ref), "status": status,
             "failures": failures, "pending": pending, "metrics": metrics,
+            "gate_evidence": gate_evidence,
             "correlations": correlations or {}, "evidence_refs": evidence_refs or {},
             "preferred_status": preferred["status"],
             "evidence_sha256": fingerprint, "policy_sha256": configured_policy,
@@ -136,8 +147,10 @@ class CandidateQualificationService:
             "workflow": workflow, "source_ref": str(source_ref),
             "candidate_ref": str(candidate_ref), "status": preferred["status"],
             "failures": preferred.get("failures", []), "pending": preferred.get("pending", []),
-            "metrics": metrics, "evidence_sha256": fingerprint,
-            "policy_sha256": configured_policy,
+            "metrics": metrics, "thresholds": preferred.get("thresholds", {}),
+            "informational_metrics": preferred.get("informational_metrics", []),
+            "qualified": preferred.get("qualified") is True,
+            "evidence_sha256": fingerprint, "policy_sha256": configured_policy,
             "evidence_refs": {**(evidence_refs or {}), "candidate_record": str(candidate_path)},
             "created_at": _now(), "updated_at": _now(),
         }
@@ -231,8 +244,16 @@ class CandidateQualificationService:
                     "PENDING_FULL_GATE", "RA_UNAVAILABLE", "POLICY_STALE",
                     "EVALUATION_PENDING", "EVIDENCE_PENDING"}
                 else "EVIDENCE_PENDING")
-        corr = {"prod": (correlations or {}).get("prod"),
-                "self": (correlations or {}).get("self"), "pairwise": pairwise or {}}
+        expected_ids = (sorted(set(expected_pairwise_ids or []))
+                        if ra_state == "pass" else [])
+        pairwise_values = pairwise if isinstance(pairwise, dict) else {}
+        corr = {
+            "prod": (correlations or {}).get("prod"),
+            "self": (correlations or {}).get("self"),
+            "pairwise": {key: pairwise_values[key] for key in expected_ids
+                         if key in pairwise_values},
+            "expected_pairwise_ids": expected_ids,
+        }
         refs = dict(evidence_refs or {})
         refs.setdefault("alpha_details", str(source_ref))
         return self._persist(workflow=workflow, alpha_id=alpha_id,
