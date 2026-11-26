@@ -312,12 +312,29 @@ the research state if you need to resume Codex threads. For a service that
 does not depend on desktop logins, register the intended HTTPS LLM API
 backends and select their IDs through the `--lead` and `--executor` flags.
 
-The Workbench loads the same model registry as the CLI, showing Lead and
-Executor dropdowns for both new campaigns and their recovery. The local server
-verifies model availability and governance before launching a child process.
-If the registry is not bundled, pass `--registry /path/to/model_registry.json`
-to `workbench/serve.py`. The server never exposes API key values through
-the registry listing and does not select a provider implicitly.
+The Workbench loads the same model registry as the CLI and provides Lead and
+Executor selection for all three live research workflows:
+
+- **Regular** launches multi-Dataset Campaigns, with optional Category,
+  Delay, Universe, batch budget, and PPA Profile constraints.
+- **Super** launches the BRAIN-native Selection / Combo workflow with a
+  bounded 1–20 iteration budget.
+- **Optimization** launches an independent candidate branch from a required
+  source Alpha ID, also with a bounded 1–20 iteration budget.
+
+The local server verifies model availability and governance before launching
+a child process. Regular Campaigns can be resumed with their original model
+selection. Super and Optimization expose explicit Simulation Intent recovery;
+recovery reconciles platform receipts and never automatically reposts an
+unknown Simulation. The server never exposes API key values through the
+registry listing and does not select a provider implicitly. If the registry
+is not bundled, pass `--registry /path/to/model_registry.json` to
+`workbench/serve.py`.
+
+When running in project mode, hand-entered research cases and Alpha evidence
+are stored under `<state-root>/state/workbench/records.json`; the standalone
+HTML file continues to use browser storage. JSON import/export remains
+available in both modes.
 
 The current Workbench is for one operator. It binds to loopback, checks the
 local Host and Origin, and keeps browser BRAIN credentials in memory for up to
