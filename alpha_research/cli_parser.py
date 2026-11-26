@@ -294,6 +294,8 @@ def build_parser():
     planning.add_argument("--category")
     planning.add_argument("--delay", type=int)
     planning.add_argument("--universe")
+    planning.add_argument("--brain-credentials-stdin", action="store_true",
+                          help=argparse.SUPPRESS)
     campaign = sub.add_parser("run-campaign", help="execute a bounded Regular Campaign")
     campaign_target = campaign.add_mutually_exclusive_group(required=True)
     campaign_target.add_argument("--objective")
@@ -313,6 +315,8 @@ def build_parser():
     optimization.add_argument("--alpha-id", required=True)
     optimization.add_argument("--objective")
     optimization.add_argument("--region")
+    optimization.add_argument("--brain-credentials-stdin", action="store_true",
+                               help=argparse.SUPPRESS)
     optimization_run = sub.add_parser(
         "run-optimization", help="simulate one independent Alpha optimization candidate")
     optimization_run.add_argument("--alpha-id", required=True)
@@ -328,6 +332,8 @@ def build_parser():
     super_plan.add_argument("--region")
     super_plan.add_argument("--objective", required=True)
     super_plan.add_argument("--delay", type=int)
+    super_plan.add_argument("--brain-credentials-stdin", action="store_true",
+                            help=argparse.SUPPRESS)
     super_run = sub.add_parser(
         "run-super", help="execute one native Super research experiment")
     super_run.add_argument("--region")
