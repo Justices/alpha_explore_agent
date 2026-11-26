@@ -186,6 +186,10 @@ class CandidatePool:
         # failure, pending recheck or changed policy.
         latest = sorted(matches, key=lambda row:
                         (row["updated_at"], row["candidate_id"]))[-1]
+        # A staged two-phase publication is not a reusable assessment. Its
+        # Preferred companion may be missing or only partially committed.
+        if latest.get("status") == "EVALUATION_PENDING":
+            return None
         if (latest.get("evidence_sha256") == evidence_sha256
                 and latest.get("policy_sha256") == policy_sha256):
             return latest
