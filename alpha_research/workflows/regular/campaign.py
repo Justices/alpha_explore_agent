@@ -872,5 +872,6 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
             "unresolved": state["plan"]["unresolved"],
             "state_path": str(path), "summary_path": str(summary_path),
+            "iteration_session_id": campaign_id,
             "iteration_ref": str(iteration_ledger.path),
             "iterations_completed": iteration_ledger.record["budget"]["used"]}

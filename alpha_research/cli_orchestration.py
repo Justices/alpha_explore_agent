@@ -58,6 +58,7 @@ from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapt
 from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
 from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
 from alpha_research.orchestration.recovery import RecoveryCoordinator
+from alpha_research.orchestration.research_p12_admission import inspect_p12_production_admission
 
 
 ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
@@ -91,6 +92,7 @@ ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
                         "orchestration-simulation-recovery-audit",
                         "orchestration-recovery-takeover",
                         "orchestration-release-gate",
+                        "orchestration-p12-admission-audit",
                         "orchestration-simulation-dispatch-audit"})
 
 
@@ -273,6 +275,13 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
             result = inspect_production_release_gate(
                 orchestrator, args.task_id,
                 effective, policy, config_source=config_source,
+                platform_read_evidence_id=args.platform_read_evidence_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "orchestration-p12-admission-audit":
+            result = inspect_p12_production_admission(
+                orchestrator, args.task_id, effective, policy,
+                config_source=config_source,
                 platform_read_evidence_id=args.platform_read_evidence_id)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0

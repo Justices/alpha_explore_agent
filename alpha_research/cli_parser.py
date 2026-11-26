@@ -245,6 +245,11 @@ def build_parser():
         "orchestration-release-gate",
         help="integrated read-only production release checklist; NEVER authorize")
     release_gate.add_argument("task_id")
+    p12_audit = sub.add_parser(
+        "orchestration-p12-admission-audit",
+        help="final read-only P9-P12 production admission audit; NEVER authorize or dispatch")
+    p12_audit.add_argument("task_id")
+    p12_audit.add_argument("--platform-read-evidence-id")
     release_gate.add_argument(
         "--platform-read-evidence-id",
         help="local BRAIN read-only observation ID; NEVER production authority")
