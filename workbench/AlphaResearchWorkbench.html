@@ -3,8 +3,8 @@
 [hidden]{display:none!important}.dialog-actions{margin-top:16px}.detail+.actions,.grid+.actions{margin-top:12px}
 </style></head>
 <body><aside class="sidebar"><div class="brand"><span class="logo">α</span><div>ALPHA LAB<small>量化研究工作台</small></div></div><div class="navlabel">研究空间</div><nav aria-label="工作台导航"><button data-view="board" class="active"><span>▦</span> 研究总览</button><button data-view="cases"><span>◈</span> 研究任务</button><button data-view="compare"><span>▥</span> 指标对比</button><button data-view="audit"><span>◎</span> 审核与优选</button></nav><div class="sidebarfoot"><span class="dot"></span> 证据记录模式<small>WorldQuant BRAIN · Research</small></div></aside>
-<div class="main"><header><div>研究空间 <span class="sep">/</span> <strong id="crumb">研究总览</strong></div><div class="header-actions"><span id="credential-status" role="status"></span><span id="launch-status" role="status"></span><button id="import" class="quiet">导入</button><button id="export" class="quiet">导出</button><button id="new-case">＋ 新建研究记录</button><button id="brain-credentials" hidden>BRAIN 凭证</button><button class="primary" id="launch-campaign" hidden>启动 Regular 研究</button></div></header>
-<main><section class="hero"><div class="eyebrow">WORLDQUANT BRAIN / RESEARCH DESK</div><h1 id="heading">Alpha 研究工作台</h1><p id="description">管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。</p></section><div id="content"></div><footer>ALPHA LAB <span>·</span> 浏览器保存研究记录，使用 JSON 导入与导出迁移。平台审计结果由 Agent 提供。</footer></main></div>
+<div class="main"><header><div>研究空间 <span class="sep">/</span> <strong id="crumb">研究总览</strong></div><div class="header-actions"><span id="credential-status" role="status"></span><span id="launch-status" role="status"></span><button id="import" class="quiet">导入</button><button id="export" class="quiet">导出</button><button id="new-case">＋ 新建研究记录</button><button id="brain-credentials" hidden>BRAIN 凭证</button><button class="primary" id="launch-campaign" hidden>启动 Regular</button><button id="launch-super" hidden>启动 Super</button><button id="launch-optimization" hidden>启动 Alpha 优化</button></div></header>
+<main><section class="hero"><div class="eyebrow">WORLDQUANT BRAIN / RESEARCH DESK</div><h1 id="heading">Alpha 研究工作台</h1><p id="description">管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。</p></section><div id="content"></div><footer>ALPHA LAB <span>·</span> 项目模式将研究记录保存到 state-root；独立文件模式保存在当前浏览器。支持 JSON 导入与导出，平台审计结果由 Agent 提供。</footer></main></div>
 <dialog id="editor"><form id="form"><div class="dialog-head"><h2 id="form-title"></h2><button type="button" id="close" class="quiet" aria-label="关闭">✕</button></div><div id="fields"></div><p id="form-error" role="alert"></p><div class="dialog-actions"><button type="button" id="cancel" class="quiet">取消</button><button class="primary" type="submit">保存记录</button></div></form></dialog><input id="file" type="file" accept=".json,application/json" hidden><div id="toast" role="status"></div><script>"use strict";
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"})[c]);
@@ -44,7 +44,7 @@ async function refreshModels(){
 
 async function refreshCredentials(){
  const credentials=$("#brain-credentials");
- const launch=$("#launch-campaign");
+ const launchButtons=["#launch-campaign","#launch-super","#launch-optimization"].map($);
  const status=$("#credential-status");
  try{
    const response=await fetch("/api/credentials",{cache:"no-store"});
@@ -52,11 +52,11 @@ async function refreshCredentials(){
    if(!response.ok||typeof data?.configured!=="boolean")throw Error(credentialEndpointUnavailable);
    credentials.textContent=data.configured?"BRAIN 凭证已设置":"BRAIN 凭证";
    credentials.hidden=false;
-   launch.hidden=false;
+   launchButtons.forEach(button=>button.hidden=false);
    status.textContent="";
  }catch(error){
    credentials.hidden=true;
-   launch.hidden=true;
+   launchButtons.forEach(button=>button.hidden=true);
    status.textContent=error instanceof TypeError
      ?"暂时无法连接本地工作台服务，请检查启动地址。"
      :error.message;
@@ -67,12 +67,20 @@ function showLaunchState(state){
  const previous=launchState?.status;
  const previouslyStopping=launchState?.stop_requested;
  launchState=state;
- const messages={idle:"",running:state.stop_requested?"正在终止研究":"Regular 研究运行中",
+ const workflowLabels={regular:"Regular",super:"Super",optimization:"Alpha 优化",
+                       super_recovery:"Super 回执核对",optimization_recovery:"优化回执核对"};
+ const workflowLabel=workflowLabels[state.workflow]||"研究任务";
+ const resultId=state.campaign_id||state.run_id||state.branch_id||
+                state.candidate_alpha_id||state.alpha_id||state.primary_id;
+ const resultStatus=state.result_status||state.campaign_status;
+ const messages={idle:"",running:state.stop_requested?"正在终止研究":workflowLabel+" 执行中",
                  failed:"研究进程异常退出"+(Number.isInteger(state.exit_code)?"（退出码 "+state.exit_code+"）":"")};
  $("#launch-status").textContent=state.status==="exited"
-   ? "Campaign "+[state.campaign_id,state.campaign_status].filter(Boolean).join(" · ")
+   ? workflowLabel+" · "+[resultId,resultStatus].filter(Boolean).join(" · ")
    : messages[state.status]||"启动状态待核实";
- $("#launch-campaign").disabled=launchSubmitting||state.status==="running";
+ ["#launch-campaign","#launch-super","#launch-optimization"].forEach(selector=>{
+   $(selector).disabled=launchSubmitting||state.status==="running";
+ });
  if(previous==="running"&&state.status!=="running")refreshAgent();
  if(view==="cases"&&(previous!==state.status||previouslyStopping!==state.stop_requested))render();
  const log=$("#launch-events");
@@ -142,7 +150,7 @@ let data=empty();
 try { const saved=localStorage.getItem(key); if(saved) data=JSON.parse(saved); } catch {}
 let view="board", selected=new Set(), filters={}, editing, toastTimer;
 const tag=(s,t="")=>'<span class="tag '+t+'">'+esc(s)+'</span>';
-const button=(label, action, id="", css="")=>'<button type="button" class="'+css+'" data-act="'+action+'" data-id="'+esc(id)+'">'+esc(label)+'</button>';
+const button=(label, action, id="", css="", workflow="")=>'<button type="button" class="'+css+'" data-act="'+action+'" data-id="'+esc(id)+'"'+(workflow?' data-workflow="'+esc(workflow)+'"':"")+'>'+esc(label)+'</button>';
 const text=(v)=>typeof v==="string" && v.trim().length>0;
 const numeric=(v)=>typeof v==="number" && Number.isFinite(v);
 const num=(v)=>numeric(v)?String(v):"—";
@@ -150,7 +158,48 @@ const workflow=(c)=>labels[c.workflow]+(c.ppa?" · PPA":"");
 const findCase=(id)=>data.cases.find(c=>c.id===id);
 const fieldSet=(value)=>String(value??"").split(/[,，\n]+/).map(v=>v.trim()).filter(Boolean);
 function notify(message){$("#toast").textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("#toast").textContent="",4500);}
-function persist(next){localStorage.setItem(key,JSON.stringify(next));data=next;}
+async function saveWorkbenchRecords(next){
+ const response=await fetch("/api/workbench-records",{method:"POST",
+   headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
+ const result=await readWorkbenchJson(response);
+ if(!response.ok)throw Error(result.error||"无法保存项目工作台记录");
+}
+async function persist(next){
+ if(localAgent)await saveWorkbenchRecords(next);
+ data=next;
+ try{localStorage.setItem(key,JSON.stringify(next));}catch{}
+}
+function validateWorkbenchRecords(value){
+ if(value?.version!==1||!Array.isArray(value.cases)||!Array.isArray(value.alphas))
+   throw Error("项目工作台记录格式无效");
+ for(const c of value.cases)checkCase(c);
+ for(const a of value.alphas)checkAlpha(a,value.cases.find(c=>c.id===a.caseId));
+ return value;
+}
+async function loadWorkbenchRecords(){
+ if(!localAgent)return;
+ try{
+   const response=await fetch("/api/workbench-records",{cache:"no-store"});
+   const remote=await readWorkbenchJson(response);
+   if(!response.ok)throw Error(remote.error||"项目记录不可读取");
+   validateWorkbenchRecords(remote);
+   let local=empty();
+   try{
+     const saved=localStorage.getItem(key);
+     if(saved)local=validateWorkbenchRecords(JSON.parse(saved));
+   }catch{}
+   if(!remote.cases.length&&!remote.alphas.length&&(local.cases.length||local.alphas.length)){
+     await saveWorkbenchRecords(local);
+     data=local;
+   }else{
+     data=remote;
+   }
+   try{localStorage.setItem(key,JSON.stringify(data));}catch{}
+   render();
+ }catch(error){
+   notify("项目记录同步失败："+error.message);
+ }
+}
 function raPassed(a){return a.raCount===0 && a.raFinal==="pass" && text(a.raRef);}
 function review(a,c){
   const m=a.metrics??{}, pending=[];
@@ -206,10 +255,26 @@ function runtimeTasks(){
     !running&&row.resumable?button("恢复研究","resume-research",row.campaign_id):"",
     !running?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
  ]);
+ const domainRecords=[
+   ...(agentStatus?.v11_super_runs||[]).map(row=>({kind:"Super",workflow:"super",row})),
+   ...(agentStatus?.v11_candidate_branches||[]).map(row=>({kind:"优化候选分支",workflow:"optimization",row}))
+ ];
+ const domainRows=domainRecords.map(({kind,workflow,row})=>[
+   esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
+   esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
+   !running&&row.simulation_intent_ref
+     ?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow)
+     :"—"
+ ]);
+ const domainTable=domainRows.length
+   ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
+     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","恢复核对"],domainRows)
+   :"";
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
    (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+
-   (running&&!launchState.stop_requested?button("终止研究","stop-research",launchState.launch_id):"")+'</p>'+
+   (running&&!launchState.stop_requested&&!String(launchState.workflow||"").endsWith("_recovery")
+      ?button("终止研究","stop-research",launchState.launch_id):"")+'</p>'+
    '<div class="details"><div><h3>执行日志</h3><pre class="detail" id="launch-events" aria-label="执行日志" '+
    'style="max-height:22rem;overflow:auto;margin:0">'+esc(launchEvents())+'</pre></div></div>':"";
  const config=agentStatus?.research_config;
@@ -222,14 +287,15 @@ function runtimeTasks(){
    ' <code>'+esc(config.path)+'</code></p>':"";
  const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次","操作"],rows):
    launchState?.status==="running"
-     ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。Campaign 记录写入后会自动显示。")
-     : blank("暂无 CLI Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
- return panel("Agent 执行任务",latest+snapshots+warning+records,
+     ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。")
+     : blank("暂无 Regular Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
+ return panel("Agent 执行任务",latest+snapshots+warning+records+domainTable,
               button("刷新 Agent 状态","agent-refresh"));
 }
 
 async function researchAction(action,id,selection={}){
  if(action==="delete"&&!window.confirm("删除这项研究及其本地文件？此操作无法撤销。"))return;
+ if(action==="recover"&&!window.confirm("将核对该 Simulation Intent 的平台回执。不会自动重发 Simulation。是否继续？"))return;
  try{
    const response=await fetch("/api/research",{method:"POST",headers:{"Content-Type":"application/json"},
      body:JSON.stringify({action,id,...selection})});
@@ -322,23 +388,47 @@ function field(k,label,value="",type="text",required=false,items=null){
 }
 const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
 const section=(s)=>'<h3 class="section">'+s+'</h3>';
-async function launchForm(){
+async function launchForm(workflow="regular"){
  try{
   await refreshModels();
  }catch(error){notify(error.message||"注册中心不可用");return;}
- show("启动 Regular Campaign",
-   '<p>每个组合先筛选 Instrument Coverage 和 Date Coverage 均 ≥50%、Alpha 数量 ≤800 的字段，再随机抽取最多 100 个。校验通过的表达式分组回测。</p>'+
-   grid(field("lead","研究 Lead / 构建模型",launchState?.lead||"","text",true,modelOptions),
-        field("executor","研究 Executor / 归因模型",launchState?.executor||"","text",true,modelOptions),
-        field("region","Region","", "text",true),
-        field("dataset_ids","Dataset ID（留空时依次处理可用 Dataset，多个用逗号分隔）"),
-        field("category","Category"),
-        field("delay","Delay",1,"number"),
-        field("universe","Universe"),
-        field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
-        field("objective","研究目标","","area",true)), {kind:"launch"});
+ const shared=[
+   field("lead","研究 Lead / 构建模型",launchState?.lead||"","text",true,modelOptions),
+   field("executor","研究 Executor / 归因模型",launchState?.executor||"","text",true,modelOptions)
+ ];
+ let title,description,fields;
+ if(workflow==="regular"){
+   title="启动 Regular Campaign";
+   description='<p>Regular 支持多 Dataset Campaign；已填写的 Dataset、Category、Delay、Universe 均作为硬约束，留空项由 Agent 探索。PPA 是可选 Profile。</p>';
+   fields=grid(...shared,
+     field("region","Region","", "text",true),
+     field("dataset_ids","Dataset ID（留空时探索可用 Dataset；多个用逗号分隔）"),
+     field("category","Category"),field("delay","Delay",1,"number"),
+     field("universe","Universe"),
+     field("max_batches","每个 Dataset 的批次预算（留空使用 Agent 默认预算）","", "number"),
+     field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
+     field("objective","研究目标","","area",true));
+ }else if(workflow==="super"){
+   title="启动 Super Alpha 研究";
+   description='<p>Super 使用 BRAIN 原生 Selection / Combo 机制。Region 必填；Delay 可留空以采用配置范围。每轮独立研究，遇到 Preferred 或未解决证据时提前停止。</p>';
+   fields=grid(...shared,field("region","Region","", "text",true),
+     field("delay","Delay（可选）","","number"),
+     field("max_iterations","最大迭代轮数（1–20）",1,"number",true),
+     field("objective","研究目标","","area",true));
+ }else{
+   title="启动指定 Alpha 优化";
+   description='<p>优化任务会读取来源 Alpha 的定义与设置，并在独立候选分支中研究。来源 Alpha ID 必填；Region 可留空，若填写必须与来源快照及固定范围一致。</p>';
+   fields=grid(...shared,field("alpha_id","来源 Alpha ID","", "text",true),
+     field("region","Region（可选，需与来源快照一致）"),
+     field("max_iterations","最大迭代轮数（1–20）",1,"number",true),
+     field("objective","优化目标","","area",true));
+ }
+ show(title,description+fields,{kind:"launch",workflow});
  const form=$("#form").elements;
- form.delay.readOnly=true;
+ if(workflow==="regular")form.delay.readOnly=true;
+ const budget=form.max_iterations||form.max_batches;
+ if(budget){budget.min=1;budget.max=workflow==="regular"?"":20;budget.step=1;}
+ if(workflow==="super"&&form.delay){form.delay.min=0;form.delay.step=1;}
 }
 
 async function resumeForm(campaignId){
@@ -390,16 +480,27 @@ async function saveCredentials(form){
 
 async function launchCampaign(form){
  if(launchSubmitting)return;
- const mode=editing;
+ const mode=editing, workflow=mode.workflow||"regular";
  const fields=Object.fromEntries(new FormData(form));
- const request={region:fields.region.trim(),objective:fields.objective.trim(),
-                lead:fields.lead,executor:fields.executor,ppa:fields.ppa==="yes"};
- const datasetIds=fields.dataset_ids.split(/[,，]/).map(id=>id.trim()).filter(Boolean);
- if(datasetIds.length)request.dataset_ids=datasetIds;
- for(const key of ["category","universe"]){
-   if(fields[key].trim())request[key]=fields[key].trim();
+ const request={workflow,objective:(fields.objective||"").trim(),
+                lead:fields.lead,executor:fields.executor};
+ if(workflow==="regular"){
+   request.region=(fields.region||"").trim();
+   request.ppa=fields.ppa==="yes";
+   const datasetIds=(fields.dataset_ids||"").split(/[,，]/).map(id=>id.trim()).filter(Boolean);
+   if(datasetIds.length)request.dataset_ids=datasetIds;
+   for(const key of ["category","universe"])if((fields[key]||"").trim())request[key]=fields[key].trim();
+   if(fields.delay!=="")request.delay=Number(fields.delay);
+   if(fields.max_batches!=="")request.max_batches=Number(fields.max_batches);
+ }else if(workflow==="super"){
+   request.region=(fields.region||"").trim();
+   if(fields.delay!=="")request.delay=Number(fields.delay);
+   request.max_iterations=Number(fields.max_iterations||1);
+ }else{
+   request.alpha_id=(fields.alpha_id||"").trim();
+   if((fields.region||"").trim())request.region=fields.region.trim();
+   request.max_iterations=Number(fields.max_iterations||1);
  }
- if(fields.delay!=="")request.delay=Number(fields.delay);
  launchSubmitting=true;
  const save=form.querySelector('button[type="submit"]');
  save.disabled=true;
@@ -496,7 +597,7 @@ function checkAlpha(a,c){
    for(const k of ["category","delay","universe"])if(c[k]!=null&&a[k]!=null&&c[k]!==a[k])throw Error("有效 "+k+" 与用户硬约束冲突。");
  }
 }
-function submit(e){
+async function submit(e){
  if(editing?.kind==="credentials"){
    e.preventDefault();
    saveCredentials(e.currentTarget);
@@ -537,7 +638,7 @@ function submit(e){
      checkAlpha(a,findCase(a.caseId));
      next.alphas=next.alphas.filter(x=>x.id!==a.id).concat(a);
    }
-   persist(next);dialog.close();render();notify("记录已保存");
+   await persist(next);dialog.close();render();notify(localAgent?"记录已保存到项目状态目录":"记录已保存到当前浏览器");
  }catch(err){$("#form-error").textContent=err.message;}
 }
 function inspectCase(c){
@@ -551,7 +652,7 @@ function addComparison(id){if(!id)return;if(selected.size>=4&&!selected.has(id))
 document.addEventListener("click",e=>{
  const b=e.target.closest("button");if(!b)return;
  if(b.dataset.view){view=b.dataset.view;render();return;}
- const {act,id}=b.dataset;
+ const {act,id,workflow}=b.dataset;
  if(!act)return;
  const a=data.alphas.find(x=>x.id===id),c=findCase(id);
  switch(act){
@@ -560,6 +661,7 @@ document.addEventListener("click",e=>{
  case "stop-research":researchAction("stop",id);return;
  case "delete-research":researchAction("delete",id);return;
  case "research-summary":showResearchSummary(id);return;
+ case "recover-workflow":researchAction("recover",id,{workflow});return;
  case "new-case":caseForm();return;
  case "edit-case":caseForm(c);return;
  case "case":inspectCase(c);return;
@@ -585,7 +687,9 @@ document.addEventListener("change",e=>{
 $("#form").addEventListener("input",syncGate);
 $("#form").addEventListener("submit",submit);
 $("#new-case").onclick=()=>caseForm();
-$("#launch-campaign").onclick=launchForm;
+$("#launch-campaign").onclick=()=>launchForm("regular");
+$("#launch-super").onclick=()=>launchForm("super");
+$("#launch-optimization").onclick=()=>launchForm("optimization");
 $("#brain-credentials").onclick=credentialsForm;
 $("#close").onclick=$("#cancel").onclick=()=>dialog.close();
 $("#import").onclick=()=>$("#file").click();
@@ -611,11 +715,12 @@ $("#file").onchange=async(e)=>{
    };
    const cases=merge(data.cases,incoming.cases,checkCase);
    const alphas=merge(data.alphas,incoming.alphas,a=>checkAlpha(a,cases.find(c=>c.id===a.caseId)));
-   persist({version:1,cases,alphas});render();notify("已合并导入研究记录");
+   await persist({version:1,cases,alphas});render();notify("已合并导入研究记录");
  }catch(err){notify("导入失败。"+err.message);}
 };
 render();
 if(localAgent){
+ loadWorkbenchRecords();
  refreshAgent();
  refreshLaunch();
  refreshCredentials();
