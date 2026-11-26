@@ -1860,7 +1860,8 @@ class ResearchAgent:
                                   proposal, ensure_ascii=False, sort_keys=True,
                                   separators=(",", ":")).encode("utf-8")).hexdigest(),
                               variant_count=len(proposal.get("variants", []))
-                                  if isinstance(proposal.get("variants"), list) else None)
+                                  if isinstance(proposal.get("variants"), list) else None,
+                              prior_campaign_finding_count=len(prior_research or []))
         proposal.pop("field_report", None)
         proposed_expressions = [row.get("expression") for row in proposal.get("variants", [])
                                 if isinstance(row, dict) and isinstance(row.get("expression"), str)]
