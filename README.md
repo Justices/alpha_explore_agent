@@ -322,10 +322,12 @@ Executor selection for all three live research workflows:
 - **Optimization** launches an independent candidate branch from a required
   source Alpha ID, also with a bounded 1–20 iteration budget.
 
-Each workflow form also provides a **read-only preflight**. Regular preflight
-checks the requested scope and Dataset combinations; Super preflight inspects
-the platform-native pool and settings; Optimization preflight captures the
-source Alpha snapshot. These preflights do not invoke Simulation. Live research
+Each workflow form also provides a **preflight**. Regular preflight calls
+`set_case` to establish the BRAIN case context before checking the requested
+scope and Dataset combinations; the UI asks for confirmation and this step
+does not invoke Simulation. Super preflight inspects the platform-native pool
+and settings. Optimization preflight captures the source Alpha snapshot.
+None of these preflights submits an Alpha or invokes Simulation. Live research
 requires a separate explicit confirmation in the UI.
 
 The local server verifies model availability and governance before launching
