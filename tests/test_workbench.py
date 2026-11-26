@@ -15,7 +15,7 @@ from workbench import serve
 
 
 class WorkbenchArgumentTests(unittest.TestCase):
-    def test_regular_arguments_preserve_user_scope_and_ppа_profile(self):
+    def test_regular_arguments_preserve_user_scope_and_ppa_profile(self):
         workflow, args, primary = serve.research_arguments({
             "workflow": "regular", "region": "USA", "objective": "quality",
             "dataset_ids": ["analyst10", "fundamental6"], "category": "Financial",
