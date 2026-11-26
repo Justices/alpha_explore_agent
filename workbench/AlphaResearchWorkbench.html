@@ -471,7 +471,7 @@ async function launchForm(workflow="regular"){
    field("executor","研究 Executor / 归因模型",launchState?.executor||"","text",true,modelOptions)
  ];
  let title,description,fields;
- const liveWarning='<p class="toolbar">注意：启动实际研究会调用 BRAIN 平台，可能发起真实 Simulation；系统不会自动提交 Alpha。建议先执行只读预检，确认 Region、范围和预算后再启动。</p>';
+ const liveWarning='<p class="toolbar">注意：启动实际研究会调用 BRAIN 平台，可能发起真实 Simulation；系统不会自动提交 Alpha。建议先执行范围预检。Regular 预检会调用 set_case 建立 BRAIN Case 上下文，但不会发起 Simulation。</p>';
  if(workflow==="regular"){
    title="启动 Regular Campaign";
    description='<p>Regular 支持多 Dataset Campaign；已填写的 Dataset、Category、Delay、Universe 均作为硬约束，留空项由 Agent 探索。PPA 是可选 Profile。</p>';
@@ -502,7 +502,7 @@ async function launchForm(workflow="regular"){
  const actions=$("#form .dialog-actions");
  const planButton=document.createElement("button");
  planButton.type="button";planButton.id="preflight";planButton.className="quiet";
- planButton.textContent="只读预检";
+ planButton.textContent="范围预检";
  actions.insertBefore(planButton,actions.lastElementChild);
  planButton.addEventListener("click",()=>planResearch($("#form"),planButton));
  const form=$("#form").elements;
@@ -562,6 +562,7 @@ async function saveCredentials(form){
 async function planResearch(form,button){
  if(launchSubmitting)return;
  const workflow=editing.workflow||"regular";
+ if(workflow==="regular"&&!window.confirm("Regular 范围预检会调用 BRAIN set_case 建立 Case 上下文，但不会发起 Simulation 或提交 Alpha。确认继续？"))return;
  const fields=Object.fromEntries(new FormData(form));
  const request={workflow};
  if(workflow==="regular"){
@@ -591,7 +592,7 @@ async function planResearch(form,button){
    if(response.status===401)refreshCredentials();
    if(!response.ok)throw Error(result.error||"只读预检请求被拒绝");
    showLaunchState(result);
-   $("#form-error").textContent="只读预检已启动；不会发起 Simulation。请查看页面顶部状态和研究任务中的执行日志。";
+   $("#form-error").textContent="范围预检已启动；不会发起 Simulation。请查看页面顶部状态和研究任务中的执行日志。";
    await refreshLaunch();
  }catch(error){
    $("#form-error").textContent=error.message||"预检状态待核实";
