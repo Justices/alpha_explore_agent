@@ -490,11 +490,11 @@ async function launchCampaign(form){
    const datasetIds=(fields.dataset_ids||"").split(/[,，]/).map(id=>id.trim()).filter(Boolean);
    if(datasetIds.length)request.dataset_ids=datasetIds;
    for(const key of ["category","universe"])if((fields[key]||"").trim())request[key]=fields[key].trim();
-   if(fields.delay!=="")request.delay=Number(fields.delay);
+   if(fields.delay!==undefined&&fields.delay!=="")request.delay=Number(fields.delay);
    if(fields.max_batches!=="")request.max_batches=Number(fields.max_batches);
  }else if(workflow==="super"){
    request.region=(fields.region||"").trim();
-   if(fields.delay!=="")request.delay=Number(fields.delay);
+   if(fields.delay!==undefined&&fields.delay!=="")request.delay=Number(fields.delay);
    request.max_iterations=Number(fields.max_iterations||1);
  }else{
    request.alpha_id=(fields.alpha_id||"").trim();
