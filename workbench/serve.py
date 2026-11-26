@@ -268,12 +268,16 @@ def handler_for(agent_args, port):
                     if workflow == "regular":
                         outcome["campaign_status"] = report["status"]
                     for key in (
-                        "campaign_id", "run_id", "branch_id", "source_alpha_id",
-                        "candidate_alpha_id", "alpha_id", "iteration_session_id",
-                        "iterations_completed", "iteration_budget", "iteration_stop_reason",
-                        "iteration_ref", "record_ref", "report_ref", "simulation_intent_ref",
-                        "receipt_ref", "readback_ref", "audit_ref", "candidate_status",
-                        "preferred_status",
+                        "campaign_id", "run_id", "branch_id", "branch_ref",
+                        "source_alpha_id", "candidate_alpha_id", "candidate_id",
+                        "candidate_ref", "preferred_ref", "alpha_id", "batch_id",
+                        "iteration_session_id", "iterations_completed", "iteration_budget",
+                        "iteration_stop_reason", "iteration_ref", "record_ref", "report_ref",
+                        "simulation_intent_ref", "receipt_ref", "readback_ref", "audit_ref",
+                        "candidate_status", "preferred_status", "proposal_sha256",
+                        "candidate_definition_sha256", "eligible_alpha_count",
+                        "unresolved_count", "simulation_invoked", "alpha_submission_invoked",
+                        "source_unchanged_verified",
                     ):
                         value = report.get(key)
                         if isinstance(value, (str, int, float, bool, dict)):
