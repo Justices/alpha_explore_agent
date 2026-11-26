@@ -194,7 +194,21 @@ class CandidatePool:
         # Preferred companion may be missing or only partially committed.
         if latest.get("status") == "EVALUATION_PENDING":
             return None
-        if (latest.get("evidence_sha256") == evidence_sha256
+        try:
+            preferred = self.store.get("preferred", latest["candidate_id"])
+        except (FileNotFoundError, KeyError):
+            return None
+        same_preferred_lineage = (
+            preferred.get("candidate_id") == latest.get("candidate_id")
+            and preferred.get("alpha_id") == latest.get("alpha_id")
+            and preferred.get("workflow") == latest.get("workflow")
+            and preferred.get("source_ref") == latest.get("source_ref")
+            and preferred.get("candidate_ref") == latest.get("candidate_ref")
+            and preferred.get("evidence_sha256") == latest.get("evidence_sha256")
+            and preferred.get("policy_sha256") == latest.get("policy_sha256")
+            and preferred.get("status") != "PENDING_PREFERRED")
+        if (same_preferred_lineage
+                and latest.get("evidence_sha256") == evidence_sha256
                 and latest.get("policy_sha256") == policy_sha256):
             return latest
         return None
