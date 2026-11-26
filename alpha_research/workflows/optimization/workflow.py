@@ -64,6 +64,32 @@ def _source_properties_digest(details):
     return _digest(_source_properties(details))
 
 
+def _prior_optimization_findings(store, source_info, *, limit=5):
+    """Return bounded outcomes for the same immutable source definition only."""
+    if type(limit) is not int or limit < 1:
+        raise OptimizationError("optimization feedback limit must be positive")
+    source_alpha_id = source_info.get("alpha_id")
+    source_digest = source_info.get("source_properties_sha256")
+    if not isinstance(source_alpha_id, str) or not isinstance(source_digest, str):
+        raise OptimizationError("optimization feedback requires a verified source identity")
+    rows = [
+        row for row in store.list("candidate_branch")
+        if row.get("source_alpha_id") == source_alpha_id
+        and row.get("source_properties_sha256") == source_digest
+    ]
+    rows.sort(key=lambda row: (row.get("updated_at", ""), row.get("created_at", "")),
+              reverse=True)
+    return [{
+        "branch_id": row["branch_id"],
+        "objective": row.get("objective"),
+        "rationale": row.get("rationale"),
+        "changes": row.get("changes", []),
+        "status": row.get("status"),
+        "receipt_ref": row.get("receipt_ref"),
+        "audit_ref": row.get("audit_ref"),
+    } for row in rows[:limit]]
+
+
 def _put_advanced(store, record):
     """Persist a branch transition with a strictly increasing timestamp."""
     previous = store.get("candidate_branch", record["branch_id"])
@@ -271,9 +297,12 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         source_expression = None
         source_fields = []
     knowledge = KnowledgeService(root / "state", root / "runs", config)
+    store = ResearchRecordStore(state_root)
+    prior_optimization_findings = _prior_optimization_findings(store, source_info)
     context = {"objective": objective, "source_alpha": details,
                "source_type": family, "source_fields": source_fields,
                "verified_dataset_id": dataset_id,
+               "prior_optimization_findings": prior_optimization_findings,
                "live_operator_catalog": operators}
     if selection_evidence is not None:
         context["dataset_attribution_selection_reason"] = selection_evidence
@@ -338,7 +367,6 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         state_root, source_ref=source_info["source_ref"], objective=objective,
         rationale=proposal["rationale"], changes=proposal["changes"],
         effective_settings=settings)
-    store = ResearchRecordStore(state_root)
     branch = store.get("candidate_branch", branch_info["branch_id"])
     _emit(execution_context, "optimization.candidate_branch_created",
           run_id=run_id, branch_id=branch_info["branch_id"],
