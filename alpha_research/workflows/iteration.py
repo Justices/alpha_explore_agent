@@ -234,22 +234,25 @@ class IterationLedger:
             value = result.get(key)
             if isinstance(value, str) and value and value not in alpha_ids:
                 alpha_ids.append(value)
+        rows = self.record.setdefault("reconciliations", [])
+        existing = next((row for row in rows
+                         if row.get("recovery_ref") == recovery_ref), None)
+        result_sha256 = _hash(result)
+        if existing is not None:
+            if (existing.get("round_key") != target["round_key"]
+                    or existing.get("result_sha256") != result_sha256
+                    or existing.get("status") != "RECOVERED"):
+                raise IterationError("recovery reconciliation cannot be overwritten")
+            return self.record
         reconciliation = {
             "round_key": target["round_key"], "recovery_ref": recovery_ref,
-            "status": "RECOVERED", "result_sha256": _hash(result),
+            "status": "RECOVERED", "result_sha256": result_sha256,
             "candidate_status": result.get("candidate_status"),
             "preferred_status": result.get("preferred_status"),
             "alpha_ids": alpha_ids, "evidence_refs": refs,
             "created_at": _now(),
         }
         reconciliation["reconciliation_sha256"] = _hash(reconciliation)
-        rows = self.record.setdefault("reconciliations", [])
-        existing = next((row for row in rows
-                         if row.get("recovery_ref") == recovery_ref), None)
-        if existing is not None:
-            if existing.get("reconciliation_sha256") != reconciliation["reconciliation_sha256"]:
-                raise IterationError("recovery reconciliation cannot be overwritten")
-            return self.record
         rows.append(reconciliation)
         if self.record["budget"]["used"] >= self.record["budget"]["limit"]:
             self.record["status"] = "COMPLETED"
