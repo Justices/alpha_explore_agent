@@ -291,6 +291,8 @@ class MainOrchestrator:
                         self.bind_research_identity(task_id, research_id),
                     "bind_recovery_target": lambda kind, reference:
                         self.bind_recovery_target(task_id, kind, reference),
+                    "get_recovery_target": lambda:
+                        self.load(task_id).get("recovery_target"),
                     "emit_event": lambda event_type, payload=None:
                         self._emit_event(
                             self.load(task_id), event_type, step=step,

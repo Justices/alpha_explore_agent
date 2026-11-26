@@ -103,6 +103,38 @@ def _failure_signature(result, state_root=None):
     })
 
 
+def _orchestration_target_state(state_root, execution_context):
+    """Return a known recovery state, or None when no authoritative resolver exists."""
+    resolver = (execution_context or {}).get("get_recovery_target")
+    if not callable(resolver):
+        return None
+    try:
+        target = resolver()
+    except Exception:
+        return None
+    if not isinstance(target, dict) or not isinstance(target.get("ref"), str):
+        return "NO_TARGET"
+    path = Path(target["ref"]).expanduser()
+    if path.is_symlink() or path.parent.is_symlink():
+        return "UNVERIFIED"
+    path = path.resolve()
+    root = Path(state_root).resolve()
+    if not path.is_relative_to(root):
+        return "UNVERIFIED"
+    if target.get("kind") == "regular_batch":
+        if not path.is_dir():
+            return "UNVERIFIED"
+        path = path / "simulation_intent.json"
+    elif target.get("kind") != "simulation_intent":
+        return "UNVERIFIED"
+    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+        return "UNVERIFIED"
+    intent = read_json(path)
+    if not isinstance(intent, dict):
+        return "UNVERIFIED"
+    return intent.get("status") or "UNVERIFIED"
+
+
 class IterationLedger:
     """Append-only round ledger with a pinned request and finite budget."""
 
@@ -322,13 +354,36 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
             if not isinstance(result, dict):
                 raise IterationError("domain workflow returned a non-object result")
         except Exception as exc:
-            ledger.record_round(
-                round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
-                reason=type(exc).__name__, started_at=started,
-                completed_at=_now())
-            ledger.mark_recovery_pending(
-                "iteration_failed_recovery_or_manual_review_required:" +
-                type(exc).__name__)
+            target_state = _orchestration_target_state(
+                state_root, execution_context)
+            if target_state in {"POSTING", "OUTCOME_UNKNOWN",
+                                "RESPONSE_RECEIVED", "READ_BACK"}:
+                ledger.record_round(
+                    round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
+                    reason=type(exc).__name__, started_at=started,
+                    completed_at=_now())
+                ledger.mark_recovery_pending(
+                    "iteration_failed_recovery_or_manual_review_required:" +
+                    type(exc).__name__)
+            elif target_state is None:
+                # Direct CLI has no Task-bound target resolver. Preserve the
+                # explicit manual recovery path; never guess whether POST began.
+                ledger.record_round(
+                    round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
+                    reason=type(exc).__name__, started_at=started,
+                    completed_at=_now())
+                ledger.mark_recovery_pending(
+                    "iteration_failed_recovery_or_manual_review_required:" +
+                    type(exc).__name__)
+            else:
+                ledger.record_round(
+                    round_key="iteration:" + str(number), status="FAILED",
+                    reason=type(exc).__name__, started_at=started,
+                    completed_at=_now())
+                ledger.finish(
+                    "BLOCKED",
+                    "iteration_failed_without_recoverable_dispatch:" +
+                    type(exc).__name__)
             raise
 
         evidence = _candidate_evidence(result, state_root)
