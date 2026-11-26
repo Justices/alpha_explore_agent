@@ -284,13 +284,19 @@ function runtimeTasks(){
    ...(agentStatus?.v11_optimization_sources||[]).map(row=>({kind:"优化来源快照",workflow:"optimization",row})),
    ...(agentStatus?.v11_candidate_branches||[]).map(row=>({kind:"优化候选分支",workflow:"optimization",row}))
  ];
- const domainRows=domainRecords.map(({kind,workflow,row})=>[
-   esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
-   esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
-   !running&&row.simulation_intent_ref
-     ?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow)
-     :"—"
+ const recoverableStates=new Set([
+   "simulation_posting","outcome_unknown","response_received","read_back",
+   "simulated_pending_audit","source_integrity_unresolved"
  ]);
+ const domainRows=domainRecords.map(({kind,workflow,row})=>{
+   const state=String(row.status||"").toLowerCase();
+   const canRecover=!running&&row.simulation_intent_ref&&recoverableStates.has(state);
+   return [
+     esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
+     esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
+     canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):"—"
+   ];
+ });
  const domainTable=domainRows.length
    ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
      table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","恢复核对"],domainRows)
