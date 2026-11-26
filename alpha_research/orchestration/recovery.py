@@ -7,6 +7,7 @@ a new simulation request.
 """
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -159,9 +160,17 @@ class RecoveryCoordinator:
         evidence = []
         for value in refs:
             evidence_path = Path(value).expanduser()
-            if evidence_path.is_symlink() or evidence_path.parent.is_symlink():
-                raise RecoveryError("manual takeover evidence cannot be a symlink")
+            if not evidence_path.is_absolute():
+                evidence_path = Path.cwd() / evidence_path
+            evidence_path = Path(os.path.abspath(evidence_path))
             resolved_evidence = evidence_path.resolve()
+            cursor = evidence_path
+            while cursor != cursor.parent:
+                if cursor.is_symlink():
+                    raise RecoveryError("manual takeover evidence cannot traverse symlinks")
+                if cursor == self.state_root:
+                    break
+                cursor = cursor.parent
             if (not resolved_evidence.is_relative_to(self.state_root)
                     or not resolved_evidence.is_file()):
                 raise RecoveryError("manual takeover evidence must be an existing file inside state root")
@@ -173,6 +182,7 @@ class RecoveryCoordinator:
             raise RecoveryError("TAKE_OVER requires at least one verifiable evidence file")
 
         manual_root = self.journal_root / "manual"
+        manual_root.mkdir(parents=True, exist_ok=True)
         manual_path = manual_root / f"{journal_path.stem}.json"
         try:
             with SingleWriterLock(manual_path.with_suffix(".lock")):
@@ -195,10 +205,17 @@ class RecoveryCoordinator:
                         "decisions": [],
                         "created_at": _now(),
                     }
-                if (record.get("recovery_journal_sha256") !=
-                        _sha256_bytes(journal_path.read_bytes())
-                        or record.get("task_id") != journal.get("task_id")):
-                    raise RecoveryError("manual takeover lineage changed; review the journal")
+                if (record.get("schema_version") != 1
+                        or record.get("recovery_id") != journal.get("recovery_id")
+                        or record.get("workflow") != workflow
+                        or record.get("target_ref") != str(resolved)
+                        or record.get("recovery_journal_ref") != str(journal_path)
+                        or record.get("recovery_journal_sha256") !=
+                            _sha256_bytes(journal_path.read_bytes())
+                        or record.get("task_id") != journal.get("task_id")
+                        or not isinstance(record.get("decisions"), list)
+                        or len(record["decisions"]) >= 1000):
+                    raise RecoveryError("manual takeover lineage changed or journal limit reached")
                 entry = {
                     "decision_id": _canonical_sha256({
                         "recovery_id": journal["recovery_id"],
