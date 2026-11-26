@@ -436,8 +436,11 @@ def inspect_p12_production_admission(orchestrator, task_id, model_config,
         "P12_PRODUCTION_DISPATCH_REMAINS_DISABLED",
     })
     reconciliation = any(
-        "RECONCILIATION" in item or "RECOVERY_NOT_CLOSED" in item
-        or "RECOVERY_TARGET_UNVERIFIED" in item for item in blockers)
+        "RECONCILIATION" in item
+        or item.startswith(("P12_RECOVERY_", "P12_MANUAL_TAKEOVER_",
+                            "P12_ITERATION_RECOVERY_",
+                            "P12_ITERATION_RECONCILIATION_"))
+        for item in blockers)
     report = {
         "schema_version": 1, "task_id": task_id,
         "workflow": task.get("workflow"),
