@@ -471,6 +471,7 @@ async function launchForm(workflow="regular"){
    field("executor","研究 Executor / 归因模型",launchState?.executor||"","text",true,modelOptions)
  ];
  let title,description,fields;
+ const liveWarning='<p class="toolbar">注意：启动实际研究会调用 BRAIN 平台，可能发起真实 Simulation；系统不会自动提交 Alpha。建议先执行只读预检，确认 Region、范围和预算后再启动。</p>';
  if(workflow==="regular"){
    title="启动 Regular Campaign";
    description='<p>Regular 支持多 Dataset Campaign；已填写的 Dataset、Category、Delay、Universe 均作为硬约束，留空项由 Agent 探索。PPA 是可选 Profile。</p>';
@@ -497,7 +498,7 @@ async function launchForm(workflow="regular"){
      field("max_iterations","最大迭代轮数（1–20）",1,"number",true),
      field("objective","优化目标","","area",true));
  }
- show(title,description+fields,{kind:"launch",workflow});
+ show(title,liveWarning+description+fields,{kind:"launch",workflow});
  const actions=$("#form .dialog-actions");
  const planButton=document.createElement("button");
  planButton.type="button";planButton.id="preflight";planButton.className="quiet";
@@ -604,6 +605,7 @@ async function planResearch(form,button){
 
 async function launchCampaign(form){
  if(launchSubmitting)return;
+ if(!window.confirm("即将启动真实 BRAIN 研究，可能发起 Simulation；系统不会自动提交 Alpha。确认已核对研究范围和预算并继续？"))return;
  const mode=editing, workflow=mode.workflow||"regular";
  const fields=Object.fromEntries(new FormData(form));
  const request={workflow,objective:(fields.objective||"").trim(),
