@@ -10,7 +10,10 @@ from itertools import zip_longest
 from pathlib import Path
 
 from alpha_research.workflows.regular.scope import discover_regular_scope, regular_delay
-from alpha_research.workflows.regular.campaign_report import prior_campaign_findings, write_campaign_summary
+from alpha_research.workflows.regular.campaign_report import (
+    current_campaign_findings, prior_campaign_findings, write_campaign_summary,
+)
+from alpha_research.workflows.iteration import IterationLedger, _hash as _iteration_hash
 from alpha_research.workflows.regular.dataset_review import review_dataset
 from alpha_research.qualification.ppa import ppa_requested
 from alpha_research.state.store import (
@@ -566,6 +569,69 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         items_by_dataset.setdefault(item["dataset_id"], []).append(index)
     dataset_slots = list(items_by_dataset.values())
     attempt_limit = state["budget"]["limits"]["batches"]
+    iteration_ledger = IterationLedger(
+        state_root, session_id=campaign_id, workflow="regular",
+        objective=objective,
+        scope={"region": region, "dataset_ids": dataset_ids,
+               "category": category, "delay": delay,
+               "universe": universe, "ppa_profile": bool(ppa_profile)},
+        source_ref=str(path), max_iterations=attempt_limit)
+
+    def sync_iteration_ledger():
+        attempts = []
+        for receipt in state.get("completed", []):
+            batch_ref = receipt.get("batch_dir")
+            if not isinstance(batch_ref, str) or not batch_ref:
+                continue
+            batch = Path(batch_ref)
+            result = read_json(batch / "results.json", default={})
+            prereg = read_json(batch / "prereg.json", default={})
+            context = read_json(batch / "batch_context.json", default={})
+            proposal = prereg.get("proposal")
+            variants = prereg.get("variants")
+            proposal_sha = (_iteration_hash(proposal)
+                            if isinstance(proposal, dict) else None)
+            definition_sha = (_iteration_hash([
+                row.get("expression") for row in variants if isinstance(row, dict)])
+                if isinstance(variants, list) else None)
+            gate_rows = [row for row in (result.get("gate") or {}).values()
+                         if isinstance(row, dict)]
+            candidate_status = (
+                "CANDIDATE" if any(row.get("status") == "CANDIDATE"
+                                   for row in gate_rows) else
+                next((row.get("status") for row in gate_rows), None))
+            attempts.append((receipt.get("completed_at") or "", {
+                "round_key": batch_ref, "status": "COMPLETED",
+                "candidate_status": candidate_status,
+                "alpha_ids": receipt.get("alpha_ids", []),
+                "proposal_sha256": proposal_sha,
+                "definition_sha256": definition_sha,
+                "evidence_refs": {
+                    "batch": batch_ref,
+                    "results": str(batch / "results.json"),
+                    "preregistration": str(batch / "prereg.json")},
+                "started_at": context.get("started_at") or receipt.get("completed_at"),
+                "completed_at": receipt.get("completed_at"),
+            }))
+        for failure in state.get("failures", []):
+            attempt = failure.get("attempt")
+            if type(attempt) is not int:
+                continue
+            reason = failure.get("reason") or "unresolved_attempt"
+            evidence_refs = ({"batch": failure["batch_ref"]}
+                             if isinstance(failure.get("batch_ref"), str) else {})
+            attempts.append((failure.get("recorded_at") or "", {
+                "round_key": f"failure:{failure.get('item_index')}:{attempt}",
+                "status": "FAILED", "reason": str(reason)[:300],
+                "failure_signature_sha256": _iteration_hash({"reason": reason}),
+                "evidence_refs": evidence_refs,
+                "started_at": failure.get("started_at") or failure.get("recorded_at"),
+                "completed_at": failure.get("recorded_at"),
+            }))
+        for _, entry in sorted(attempts, key=lambda value: value[0]):
+            iteration_ledger.record_round(**entry)
+
+    sync_iteration_ledger()
     if max_batches is None:
         schedule = list(range(attempt_limit))
     else:
@@ -672,7 +738,8 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 proof = fresh_dataset_proofs.get((item["dataset_id"], item["delay"], item["universe"]))
                 if proof is not None:
                     run_kwargs["dataset_scope_proof"] = proof
-                prior = history[(item["dataset_id"], item["region"], item["delay"], item["universe"])]
+                prior = (current_campaign_findings(state, item, limit=3) +
+                         history[(item["dataset_id"], item["region"], item["delay"], item["universe"])])[:3]
                 if prior:
                     run_kwargs["prior_research"] = prior
                 result = agent.run_once(objective, dataset_id=item["dataset_id"], **run_kwargs)
@@ -713,6 +780,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
                 _record_attempt_failure(state, str(exc), batch_ref)
                 resume_batch = None
                 _checkpoint_campaign(state, state_root, path)
+                sync_iteration_ledger()
                 emit_event("regular.batch_failed", {
                     "campaign_id": campaign_id, "item_index": index,
                     "dataset_id": item["dataset_id"],
@@ -744,6 +812,7 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         state.pop("error", None)
         state["status"] = "active"
         _checkpoint_campaign(state, state_root, path)
+        sync_iteration_ledger()
         emit_event("regular.batch_completed", {
             "campaign_id": campaign_id, "item_index": index,
             "dataset_id": item["dataset_id"],
@@ -772,6 +841,13 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
         item for index, item in enumerate(items)
         if index not in {entry["item_index"] for entry in state["completed"]}]
     _checkpoint_campaign(state, state_root, path)
+    sync_iteration_ledger()
+    if not campaign_can_resume(state):
+        terminal_status = (
+            "STOPPED" if state["status"] == "user_stopped" else
+            "BLOCKED" if state["status"] == "unresolved" else
+            "PARTIAL" if state["status"] == "partial" else "COMPLETED")
+        iteration_ledger.finish(terminal_status, state.get("error") or state["status"])
     summary_path = path.with_name(f"{campaign_id}_summary.json")
     write_campaign_summary(state, summary_path)
     write_progress(f"Campaign 复盘已保存 · {summary_path}")
