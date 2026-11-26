@@ -14,6 +14,59 @@ from unittest.mock import patch
 from workbench import serve
 
 
+class WorkbenchArgumentTests(unittest.TestCase):
+    def test_regular_arguments_preserve_user_scope_and_ppа_profile(self):
+        workflow, args, primary = serve.research_arguments({
+            "workflow": "regular", "region": "USA", "objective": "quality",
+            "dataset_ids": ["analyst10", "fundamental6"], "category": "Financial",
+            "delay": 1, "universe": "TOP3000", "max_batches": 2, "ppa": True,
+        })
+        self.assertEqual(workflow, "regular")
+        self.assertIsNone(primary)
+        self.assertEqual(args, [
+            "run-campaign", "--region=USA", "--objective=quality",
+            "--max-batches=2", "--category=Financial", "--delay=1",
+            "--universe=TOP3000", "--dataset=analyst10",
+            "--dataset=fundamental6", "--ppa",
+        ])
+
+    def test_super_arguments_are_bounded_and_keep_native_scope(self):
+        workflow, args, primary = serve.research_arguments({
+            "workflow": "super", "region": "USA", "objective": "selection research",
+            "delay": 1, "max_iterations": 4,
+        })
+        self.assertEqual(workflow, "super")
+        self.assertIsNone(primary)
+        self.assertEqual(args, [
+            "run-super", "--region=USA", "--objective=selection research",
+            "--max-iterations=4", "--delay=1",
+        ])
+
+    def test_optimization_requires_source_alpha_and_returns_it_as_primary_id(self):
+        workflow, args, primary = serve.research_arguments({
+            "workflow": "optimization", "alpha_id": "YPaepL9o",
+            "objective": "reduce turnover", "region": "USA", "max_iterations": 3,
+        })
+        self.assertEqual(workflow, "optimization")
+        self.assertEqual(primary, "YPaepL9o")
+        self.assertEqual(args, [
+            "run-optimization", "--alpha-id=YPaepL9o",
+            "--objective=reduce turnover", "--max-iterations=3", "--region=USA",
+        ])
+
+    def test_invalid_workflow_budgets_and_unknown_fields_are_rejected(self):
+        invalid = [
+            {"workflow": "super", "region": "USA", "objective": "x", "max_iterations": 0},
+            {"workflow": "optimization", "alpha_id": "A", "objective": "x", "max_iterations": 21},
+            {"workflow": "optimization", "alpha_id": "A", "objective": "x", "surprise": True},
+            {"workflow": "super", "region": "USA", "objective": "x", "delay": -1},
+            {"workflow": "unknown", "region": "USA", "objective": "x"},
+        ]
+        for request in invalid:
+            with self.subTest(request=request), self.assertRaises(ValueError):
+                serve.research_arguments(request)
+
+
 class WorkbenchLaunchTests(unittest.TestCase):
     def test_launch_keeps_scope_and_rejects_cross_origin_and_duplicate_start(self):
         entered = threading.Event()
