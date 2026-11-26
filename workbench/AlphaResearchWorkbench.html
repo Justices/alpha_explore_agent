@@ -70,13 +70,29 @@ function showLaunchState(state){
  const workflowLabels={regular:"Regular",super:"Super",optimization:"Alpha 优化",
                        super_recovery:"Super 回执核对",optimization_recovery:"优化回执核对"};
  const workflowLabel=workflowLabels[state.workflow]||"研究任务";
- const resultId=state.campaign_id||state.run_id||state.branch_id||
-                state.candidate_alpha_id||state.alpha_id||state.primary_id;
- const resultStatus=state.result_status||state.campaign_status;
+ const resultId=state.campaign_id||
+   (state.workflow==="optimization"?state.branch_id:null)||
+   state.run_id||state.candidate_alpha_id||state.alpha_id||state.primary_id;
+ const resultStatus=state.candidate_status
+   ? "Candidate "+state.candidate_status+" / Preferred "+(state.preferred_status||"待评估")
+   : state.result_status||state.campaign_status;
+ const stopReasons={
+   iteration_budget_exhausted:"迭代预算耗尽",
+   preferred_candidate_reached:"已达到 Preferred",
+   qualification_or_execution_evidence_unresolved:"执行或审核证据待补",
+   user_stop_requested:"用户终止",
+   duplicate_candidate_definition:"重复候选阻断",
+   no_progress_repeated_failure_signature:"连续迭代无进展",
+   independent_authorization_handoff:"等待独立授权"
+ };
+ const iterationText=Number.isInteger(state.iterations_completed)
+   ? "完成 "+state.iterations_completed+" 轮"+
+     (state.iteration_stop_reason?" · "+(stopReasons[state.iteration_stop_reason]||state.iteration_stop_reason):"")
+   : "";
  const messages={idle:"",running:state.stop_requested?"正在终止研究":workflowLabel+" 执行中",
                  failed:"研究进程异常退出"+(Number.isInteger(state.exit_code)?"（退出码 "+state.exit_code+"）":"")};
  $("#launch-status").textContent=state.status==="exited"
-   ? workflowLabel+" · "+[resultId,resultStatus].filter(Boolean).join(" · ")
+   ? workflowLabel+" · "+[resultId,resultStatus,iterationText].filter(Boolean).join(" · ")
    : messages[state.status]||"启动状态待核实";
  ["#launch-campaign","#launch-super","#launch-optimization"].forEach(selector=>{
    $(selector).disabled=launchSubmitting||state.status==="running";
