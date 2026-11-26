@@ -68,11 +68,14 @@ function showLaunchState(state){
  const previouslyStopping=launchState?.stop_requested;
  launchState=state;
  const workflowLabels={regular:"Regular",super:"Super",optimization:"Alpha 优化",
+                       regular_plan:"Regular 范围预检",super_plan:"Super 平台预检",
+                       optimization_plan:"Alpha 来源预检",
                        super_recovery:"Super 回执核对",optimization_recovery:"优化回执核对"};
  const workflowLabel=workflowLabels[state.workflow]||"研究任务";
  const resultId=state.campaign_id||
    (state.workflow==="optimization"?state.branch_id:null)||
-   state.run_id||state.candidate_alpha_id||state.alpha_id||state.primary_id;
+   state.plan_id||state.source_id||state.run_id||
+   state.candidate_alpha_id||state.alpha_id||state.primary_id;
  const resultStatus=state.candidate_status
    ? "Candidate "+state.candidate_status+" / Preferred "+(state.preferred_status||"待评估")
    : state.result_status||state.campaign_status;
@@ -89,14 +92,29 @@ function showLaunchState(state){
    ? "完成 "+state.iterations_completed+" 轮"+
      (state.iteration_stop_reason?" · "+(stopReasons[state.iteration_stop_reason]||state.iteration_stop_reason):"")
    : "";
+ const planDetails=[
+   Number.isInteger(state.dataset_count)?"Dataset "+state.dataset_count:"",
+   Number.isInteger(state.combination_count)?"组合 "+state.combination_count:"",
+   Number.isInteger(state.eligible_alpha_count)?"可用 Alpha "+state.eligible_alpha_count:"",
+   Number.isInteger(state.unresolved_count)?"待核实 "+state.unresolved_count:"",
+   state.coverage_complete===true?"范围完整":state.coverage_complete===false?"范围未完整":"",
+   state.source_type?"来源类型 "+state.source_type:"",
+   state.region?"Region "+state.region:""
+ ].filter(Boolean).join(" / ");
  const messages={idle:"",running:state.stop_requested?"正在终止研究":workflowLabel+" 执行中",
                  failed:"研究进程异常退出"+(Number.isInteger(state.exit_code)?"（退出码 "+state.exit_code+"）":"")};
  $("#launch-status").textContent=state.status==="exited"
-   ? workflowLabel+" · "+[resultId,resultStatus,iterationText].filter(Boolean).join(" · ")
+   ? workflowLabel+" · "+[resultId,resultStatus,iterationText,planDetails].filter(Boolean).join(" · ")
    : messages[state.status]||"启动状态待核实";
  ["#launch-campaign","#launch-super","#launch-optimization"].forEach(selector=>{
    $(selector).disabled=launchSubmitting||state.status==="running";
  });
+ if(dialog.open&&editing?.kind==="launch"){
+   const submit=$("#form").querySelector('button[type="submit"]');
+   const preflight=$("#preflight");
+   if(submit)submit.disabled=launchSubmitting||state.status==="running";
+   if(preflight)preflight.disabled=launchSubmitting||state.status==="running";
+ }
  if(previous==="running"&&state.status!=="running")refreshAgent();
  if(view==="cases"&&(previous!==state.status||previouslyStopping!==state.stop_requested))render();
  const log=$("#launch-events");
@@ -317,7 +335,9 @@ function runtimeTasks(){
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
    (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+
-   (running&&!launchState.stop_requested&&!String(launchState.workflow||"").endsWith("_recovery")
+   (running&&!launchState.stop_requested&&
+      !String(launchState.workflow||"").endsWith("_recovery")&&
+      !String(launchState.workflow||"").endsWith("_plan")
       ?button("终止研究","stop-research",launchState.launch_id):"")+'</p>'+
    '<div class="details"><div><h3>执行日志</h3><pre class="detail" id="launch-events" aria-label="执行日志" '+
    'style="max-height:22rem;overflow:auto;margin:0">'+esc(launchEvents())+'</pre></div></div>':"";
@@ -442,7 +462,9 @@ const section=(s)=>'<h3 class="section">'+s+'</h3>';
 async function launchForm(workflow="regular"){
  try{
   await refreshModels();
- }catch(error){notify(error.message||"注册中心不可用");return;}
+ }catch(error){
+  notify("模型注册中心不可用；仍可执行只读预检，启动研究前需修复模型注册中心。");
+ }
  const shared=[
    field("lead","研究 Lead / 构建模型",launchState?.lead||"","text",true,modelOptions),
    field("executor","研究 Executor / 归因模型",launchState?.executor||"","text",true,modelOptions)
@@ -475,6 +497,12 @@ async function launchForm(workflow="regular"){
      field("objective","优化目标","","area",true));
  }
  show(title,description+fields,{kind:"launch",workflow});
+ const actions=$("#form .dialog-actions");
+ const planButton=document.createElement("button");
+ planButton.type="button";planButton.id="preflight";planButton.className="quiet";
+ planButton.textContent="只读预检";
+ actions.insertBefore(planButton,actions.lastElementChild);
+ planButton.addEventListener("click",()=>planResearch($("#form"),planButton));
  const form=$("#form").elements;
  if(workflow==="regular")form.delay.readOnly=true;
  const budget=form.max_iterations||form.max_batches;
@@ -526,6 +554,50 @@ async function saveCredentials(form){
      form.elements.password.value="";
      save.disabled=false;
    }
+ }
+}
+
+async function planResearch(form,button){
+ if(launchSubmitting)return;
+ const workflow=editing.workflow||"regular";
+ const fields=Object.fromEntries(new FormData(form));
+ const request={workflow};
+ if(workflow==="regular"){
+   request.region=(fields.region||"").trim();
+   request.delay=Number(fields.delay||1);
+   const datasetIds=(fields.dataset_ids||"").split(/[,，]/).map(id=>id.trim()).filter(Boolean);
+   if(datasetIds.length)request.dataset_ids=datasetIds;
+   for(const key of ["category","universe"])if((fields[key]||"").trim())request[key]=fields[key].trim();
+ }else if(workflow==="super"){
+   request.region=(fields.region||"").trim();
+   request.objective=(fields.objective||"").trim();
+   if(fields.delay!==undefined&&fields.delay!=="")request.delay=Number(fields.delay);
+ }else{
+   request.alpha_id=(fields.alpha_id||"").trim();
+   if((fields.objective||"").trim())request.objective=fields.objective.trim();
+   if((fields.region||"").trim())request.region=fields.region.trim();
+ }
+ launchSubmitting=true;
+ const save=form.querySelector('button[type="submit"]');
+ button.disabled=true;
+ save.disabled=true;
+ $("#form-error").textContent="";
+ try{
+   const response=await fetch("/api/plan",{method:"POST",
+     headers:{"Content-Type":"application/json"},body:JSON.stringify(request)});
+   const result=await readWorkbenchJson(response);
+   if(response.status===401)refreshCredentials();
+   if(!response.ok)throw Error(result.error||"只读预检请求被拒绝");
+   showLaunchState(result);
+   $("#form-error").textContent="只读预检已启动；不会发起 Simulation。请查看页面顶部状态和研究任务中的执行日志。";
+   await refreshLaunch();
+ }catch(error){
+   $("#form-error").textContent=error.message||"预检状态待核实";
+ }finally{
+   launchSubmitting=false;
+   button.disabled=launchState?.status==="running";
+   save.disabled=launchState?.status==="running";
+   await refreshLaunch();
  }
 }
 
