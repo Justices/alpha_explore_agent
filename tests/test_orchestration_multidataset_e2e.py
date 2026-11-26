@@ -103,7 +103,8 @@ class RegularMultiDatasetOrchestrationTests(unittest.TestCase):
             evidence_names = {row["name"] for row in trace["evidence_manifest"]["files"]}
             self.assertIn("simulation_intent.json", evidence_names)
             self.assertIn(task["task_id"] + ".json", evidence_names)
-            self.assertEqual(evidence_names.count("review.json"), 2)
+            self.assertEqual(sum(row["name"] == "review.json" for row in
+                                 trace["evidence_manifest"]["files"]), 2)
 
 
 if __name__ == "__main__":
