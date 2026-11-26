@@ -3,6 +3,7 @@
 This report identifies blockers only. It cannot grant permissions, arm a live
 session, submit an Alpha, or dispatch a Simulation.
 """
+import hashlib
 from pathlib import Path
 
 from alpha_research.orchestration.release_gate import inspect_production_release_gate
@@ -59,18 +60,34 @@ def _inspect_iteration(state_root, task, result):
         return {"status": "INVALID", "blockers": ["P12_ITERATION_LEDGER_UNREADABLE"]}
     request, rounds, budget = record.get("request"), record.get("rounds"), record.get("budget")
     blockers = []
-    if (record.get("schema_version") != 1 or not isinstance(request, dict)
+    session_id = result.get("iteration_session_id")
+    if (record.get("schema_version") != 1
+            or record.get("workflow") != task.get("workflow")
+            or record.get("session_id") != session_id
+            or not isinstance(request, dict)
             or record.get("request_sha256") != _hash(request)
-            or record.get("session_id") != result.get("iteration_session_id")
             or request.get("workflow") != task.get("workflow")
             or request.get("objective") != (task.get("request") or {}).get("objective")
+            or type(request.get("max_iterations")) is not int
             or not isinstance(rounds, list) or not isinstance(budget, dict)
             or type(budget.get("limit")) is not int
             or type(budget.get("used")) is not int
-            or budget["used"] != len(rounds)
-            or not 0 <= budget["used"] <= budget["limit"]):
+            or type(budget.get("reserved")) is not int
+            or budget.get("limit") != request.get("max_iterations")
+            or budget.get("used") != len(rounds)
+            or not 1 <= budget.get("limit", 0)
+            or not 0 <= budget.get("used", -1) <= budget.get("limit", 0)):
         blockers.append("P12_ITERATION_LEDGER_CONTRACT_INVALID")
+    if isinstance(budget, dict) and budget.get("reserved") != 0:
+        blockers.append("P12_ITERATION_BUDGET_RESERVATION_UNSETTLED")
+    if not isinstance(session_id, str) or len(session_id) != 32:
+        blockers.append("P12_ITERATION_SESSION_ID_INVALID")
     else:
+        try:
+            int(session_id, 16)
+        except ValueError:
+            blockers.append("P12_ITERATION_SESSION_ID_INVALID")
+    if isinstance(rounds, list):
         seen = set()
         for index, row in enumerate(rounds, start=1):
             if not isinstance(row, dict):
@@ -78,9 +95,12 @@ def _inspect_iteration(state_root, task, result):
                 break
             digest = row.get("round_sha256")
             body = {key: value for key, value in row.items() if key != "round_sha256"}
-            if (row.get("round") != index or not isinstance(row.get("round_key"), str)
-                    or row["round_key"] in seen or not isinstance(digest, str)
-                    or not _HEX64.fullmatch(digest) or _hash(body) != digest):
+            if (row.get("round") != index
+                    or not isinstance(row.get("round_key"), str)
+                    or not row["round_key"] or row["round_key"] in seen
+                    or not isinstance(row.get("status"), str) or not row["status"]
+                    or not isinstance(digest, str) or not _HEX64.fullmatch(digest)
+                    or _hash(body) != digest):
                 blockers.append("P12_ITERATION_ROUND_INTEGRITY_FAILED")
                 break
             seen.add(row["round_key"])
@@ -97,8 +117,12 @@ def _inspect_iteration(state_root, task, result):
         body = {key: value for key, value in reconciliation.items()
                 if key != "reconciliation_sha256"}
         round_key = reconciliation.get("round_key")
+        recovery_ref = reconciliation.get("recovery_ref")
+        result_digest = reconciliation.get("result_sha256")
         if (not isinstance(round_key, str) or round_key in reconciled_keys
                 or reconciliation.get("status") != "RECOVERED"
+                or not isinstance(recovery_ref, str) or not recovery_ref
+                or not isinstance(result_digest, str) or not _HEX64.fullmatch(result_digest)
                 or not isinstance(digest, str) or not _HEX64.fullmatch(digest)
                 or _hash(body) != digest
                 or not any(row.get("round_key") == round_key
@@ -113,6 +137,8 @@ def _inspect_iteration(state_root, task, result):
             blockers.append("P12_ITERATION_RECOVERY_UNRECONCILED")
     if record.get("status") != "COMPLETED":
         blockers.append("P12_ITERATION_NOT_COMPLETED")
+    if not isinstance(record.get("stop_reason"), str) or not record["stop_reason"].strip():
+        blockers.append("P12_ITERATION_STOP_REASON_MISSING")
     if not rounds:
         blockers.append("P12_ITERATION_HAS_NO_ROUNDS")
     return {
@@ -125,7 +151,6 @@ def _inspect_iteration(state_root, task, result):
         "budget": budget, "stop_reason": record.get("stop_reason"),
         "blockers": sorted(set(blockers)),
     }
-
 
 def _inspect_candidate_governance(state_root, config, result):
     alpha_ids = _alpha_ids(result)
@@ -190,9 +215,12 @@ def _inspect_recovery(state_root, task):
     coordinator = RecoveryCoordinator(state_root)
     blockers, inspected, journal_refs = [], [], []
     seen = set()
-    latest_journal_ref = None
     expected_kind = ("regular_batch" if task.get("workflow") == "regular"
                      else "simulation_intent")
+    if isinstance(current, dict) and history:
+        if (history[-1].get("ref") != current.get("ref")
+                or history[-1].get("kind") != current.get("kind")):
+            blockers.append("P12_RECOVERY_CURRENT_TARGET_HISTORY_MISMATCH")
     for entry in history:
         if not isinstance(entry, dict) or not isinstance(entry.get("ref"), str):
             blockers.append("P12_RECOVERY_TARGET_HISTORY_MALFORMED")
@@ -207,33 +235,116 @@ def _inspect_recovery(state_root, task):
             continue
         try:
             path = coordinator._resolve_target(reference)
-            workflow, resolved, intent, _ = coordinator._inspect(path)
-        except (RecoveryError, OSError, ValueError):
+            workflow, resolved, intent, target_fingerprint = coordinator._inspect(path)
+        except (RecoveryError, OSError, ValueError, TypeError):
             blockers.append("P12_RECOVERY_TARGET_UNVERIFIED")
             inspected.append({"target_ref": reference, "status": "UNVERIFIED"})
             continue
-        intent_status = intent.get("status")
+        if workflow != task.get("workflow"):
+            blockers.append("P12_RECOVERY_TARGET_WORKFLOW_MISMATCH")
+        intent_status = intent.get("status") if isinstance(intent, dict) else None
         if intent_status != "READ_BACK":
             blockers.append("P12_RECOVERY_INTENT_NOT_READ_BACK")
         journal_path = coordinator._journal_path(workflow, resolved)
-        journal = read_json(journal_path) if journal_path.is_file() else None
-        if journal_path.is_file() and not isinstance(journal, dict):
-            blockers.append("P12_RECOVERY_JOURNAL_UNREADABLE")
+        journal = None
+        if journal_path.is_symlink():
+            blockers.append("P12_RECOVERY_JOURNAL_SYMLINK")
+        elif journal_path.is_file():
+            journal = read_json(journal_path)
+            if not isinstance(journal, dict):
+                blockers.append("P12_RECOVERY_JOURNAL_UNREADABLE")
+                journal = None
         if isinstance(journal, dict):
             journal_refs.append(str(journal_path))
-            latest_journal_ref = str(journal_path)
+            expected_task_id = task.get("task_id")
+            if (journal.get("schema_version") != 1
+                    or journal.get("recovery_id") != journal_path.stem
+                    or journal.get("workflow") != workflow
+                    or journal.get("target_ref") != str(resolved)
+                    or journal.get("target_fingerprint") != target_fingerprint
+                    or journal.get("task_id") != expected_task_id
+                    or journal.get("step") != "execute"):
+                blockers.append("P12_RECOVERY_JOURNAL_LINEAGE_MISMATCH")
             if journal.get("status") != "COMPLETED":
                 blockers.append("P12_RECOVERY_NOT_CLOSED")
+            saved_result = journal.get("result")
+            if (not isinstance(saved_result, dict)
+                    or journal.get("result_sha256") != fingerprint_json(saved_result)):
+                blockers.append("P12_RECOVERY_RESULT_INTEGRITY_FAILED")
             manual_path = (coordinator.journal_root / "manual" /
                            f"{journal.get('recovery_id')}.json")
+            manual = None
             if manual_path.is_symlink():
                 blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
-            else:
-                manual = read_json(manual_path) if manual_path.is_file() else None
-                if manual_path.is_file() and not isinstance(manual, dict):
+            elif manual_path.is_file():
+                manual = read_json(manual_path)
+                if not isinstance(manual, dict):
                     blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
-                elif isinstance(manual, dict) and manual.get("decisions"):
-                    blockers.append("P12_MANUAL_TAKEOVER_REQUIRES_INDEPENDENT_REVIEW")
+                    manual = None
+            if isinstance(manual, dict):
+                actual_journal_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+                if (manual.get("schema_version") != 1
+                        or manual.get("recovery_id") != journal.get("recovery_id")
+                        or manual.get("workflow") != workflow
+                        or manual.get("target_ref") != str(resolved)
+                        or manual.get("task_id") != expected_task_id
+                        or manual.get("recovery_journal_sha256") != actual_journal_sha
+                        or not isinstance(manual.get("decisions"), list)):
+                    blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
+                else:
+                    decision_ids = set()
+                    for index, decision in enumerate(manual["decisions"], start=1):
+                        if not isinstance(decision, dict):
+                            blockers.append("P12_MANUAL_TAKEOVER_DECISION_MALFORMED")
+                            continue
+                        operator = decision.get("operator")
+                        disposition = decision.get("decision")
+                        reason = decision.get("reason")
+                        evidence = decision.get("evidence")
+                        if (not isinstance(operator, str) or not operator.strip()
+                                or disposition not in {"TAKE_OVER", "ABANDON", "ESCALATE"}
+                                or not isinstance(reason, str) or not reason.strip()
+                                or not isinstance(evidence, list)
+                                or decision.get("execution_unblocked") is not False
+                                or decision.get("automatic_replay_allowed") is not False
+                                or decision.get("simulation_invoked") is not False
+                                or decision.get("alpha_submission_invoked") is not False):
+                            blockers.append("P12_MANUAL_TAKEOVER_DECISION_MALFORMED")
+                            continue
+                        expected_id = fingerprint_json({
+                            "recovery_id": journal["recovery_id"],
+                            "operator": operator, "decision": disposition,
+                            "reason": reason, "evidence": evidence,
+                            "sequence": index,
+                        })[:32]
+                        if (decision.get("decision_id") != expected_id
+                                or expected_id in decision_ids):
+                            blockers.append("P12_MANUAL_TAKEOVER_DECISION_INTEGRITY_FAILED")
+                        decision_ids.add(expected_id)
+                        for evidence_row in evidence:
+                            if not isinstance(evidence_row, dict):
+                                blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_MALFORMED")
+                                continue
+                            evidence_ref, evidence_sha = (
+                                evidence_row.get("ref"), evidence_row.get("sha256"))
+                            if (not isinstance(evidence_ref, str)
+                                    or not isinstance(evidence_sha, str)
+                                    or not _HEX64.fullmatch(evidence_sha)):
+                                blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_MALFORMED")
+                                continue
+                            evidence_path = Path(evidence_ref).expanduser()
+                            if (evidence_path.is_symlink() or evidence_path.parent.is_symlink()
+                                    or not evidence_path.resolve().is_relative_to(
+                                        Path(state_root).resolve())
+                                    or not evidence_path.is_file()):
+                                blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_UNVERIFIED")
+                                continue
+                            actual_sha = hashlib.sha256(
+                                evidence_path.read_bytes()).hexdigest()
+                            if actual_sha != evidence_sha:
+                                blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_HASH_MISMATCH")
+                    if manual["decisions"]:
+                        blockers.append("P12_MANUAL_TAKEOVER_REQUIRES_INDEPENDENT_REVIEW")
         inspected.append({
             "target_ref": str(resolved), "workflow": workflow,
             "intent_status": intent_status,
@@ -243,7 +354,7 @@ def _inspect_recovery(state_root, task):
     return {
         "status": "CLOSED" if not blockers else "BLOCKED",
         "targets": inspected,
-        "recovery_journal_ref": latest_journal_ref,
+        "recovery_journal_ref": journal_refs[-1] if journal_refs else None,
         "recovery_journal_refs": journal_refs,
         "blockers": sorted(set(blockers)),
     }
