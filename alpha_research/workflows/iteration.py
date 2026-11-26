@@ -13,11 +13,15 @@ from uuid import uuid4
 
 from alpha_research.state.store import atomic_write_json, read_json
 
-_HEX32 = re.compile(r"[0-9a-f]{32}\\Z")
-_HEX64 = re.compile(r"[0-9a-f]{64}\\Z")
+_HEX32 = re.compile(r"[0-9a-f]{32}\Z")
+_HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 _TERMINAL = {"COMPLETED", "PARTIAL", "BLOCKED", "STOPPED"}
-_PENDING = {"EVIDENCE_PENDING", "PENDING_FULL_AUDIT", "REVIEW_PENDING",
-            "CHECKS_PENDING", "PAIRWISE_PENDING", "PENDING_FULL_GATE"}
+_PENDING = {
+    "EVIDENCE_PENDING", "PENDING_FULL_AUDIT", "REVIEW_PENDING",
+    "CHECKS_PENDING", "PAIRWISE_PENDING", "PENDING_FULL_GATE",
+    "ROBUSTNESS_REVIEW", "TRADEOFF_REVIEW", "RA_UNAVAILABLE",
+    "POLICY_STALE", "EVALUATION_PENDING",
+}
 
 
 class IterationError(ValueError):
@@ -55,15 +59,19 @@ def is_stop_requested(stop_flag):
     return path.exists() or path.is_symlink()
 
 
-def _candidate_evidence(result):
+def _candidate_evidence(result, state_root=None):
     candidate_ref = result.get("candidate_ref") or result.get("candidate_record_ref")
     record = None
     if isinstance(candidate_ref, str):
         path = Path(candidate_ref).expanduser()
-        if path.is_file() and not path.is_symlink():
-            value = read_json(path)
-            if isinstance(value, dict):
-                record = value
+        if not path.is_symlink() and not path.parent.is_symlink():
+            resolved = path.resolve()
+            allowed = (state_root is None or
+                       resolved.is_relative_to(Path(state_root).resolve()))
+            if allowed and resolved.is_file():
+                value = read_json(resolved)
+                if isinstance(value, dict):
+                    record = value
     if record is None:
         return {
             "candidate_status": result.get("candidate_status"),
@@ -81,8 +89,8 @@ def _candidate_evidence(result):
     }
 
 
-def _failure_signature(result):
-    evidence = _candidate_evidence(result)
+def _failure_signature(result, state_root=None):
+    evidence = _candidate_evidence(result, state_root)
     status = evidence.get("candidate_status")
     if status in (None, "CANDIDATE"):
         return None
@@ -323,18 +331,22 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
                 type(exc).__name__)
             raise
 
-        evidence = _candidate_evidence(result)
-        failure_signature = _failure_signature(result)
+        evidence = _candidate_evidence(result, state_root)
+        failure_signature = _failure_signature(result, state_root)
         refs = {
             key: result[key] for key in (
                 "record_ref", "report_ref", "candidate_ref", "preferred_ref",
-                "candidate_record_ref", "preferred_record_ref",
-                "simulation_intent_ref", "readback_ref")
+                "candidate_record_ref", "preferred_record_ref", "branch_ref",
+                "prereg_ref", "knowledge_pack_ref", "simulation_intent_ref",
+                "receipt_ref", "readback_ref", "audit_ref", "source_ref")
             if isinstance(result.get(key), str) and result[key]
         }
         alpha_ids = []
         for key in ("alpha_id", "candidate_alpha_id"):
             value = result.get(key)
+            if isinstance(value, str) and value and value not in alpha_ids:
+                alpha_ids.append(value)
+        for value in result.get("alpha_ids", []):
             if isinstance(value, str) and value and value not in alpha_ids:
                 alpha_ids.append(value)
         ledger.record_round(
