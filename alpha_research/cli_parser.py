@@ -231,6 +231,16 @@ def build_parser():
         "orchestration-simulation-recovery-audit",
         help="inspect persisted Simulation unknown outcomes; no BRAIN/model calls")
     recovery_audit.add_argument("task_id")
+    takeover = sub.add_parser(
+        "orchestration-recovery-takeover",
+        help="append a human disposition to a BLOCKED recovery; never unblocks or replays")
+    takeover.add_argument("target", type=_path_argument)
+    takeover.add_argument("--operator", required=True)
+    takeover.add_argument("--decision", choices=("TAKE_OVER", "ABANDON", "ESCALATE"),
+                          required=True)
+    takeover.add_argument("--reason", required=True)
+    takeover.add_argument("--evidence", type=_path_argument, action="append", default=[])
+    takeover.add_argument("--task-id")
     release_gate = sub.add_parser(
         "orchestration-release-gate",
         help="integrated read-only production release checklist; NEVER authorize")

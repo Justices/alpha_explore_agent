@@ -57,6 +57,7 @@ from alpha_research.orchestration.execution_identity import (
 from alpha_research.orchestration.prepared_mock import build_prepared_mock_adapter
 from alpha_research.orchestration.domain_mock import build_domain_mock_adapter, mock_domain_boundary
 from alpha_research.orchestration.mock_workspace import claim_mock_workspace, inspect_mock_workspace
+from alpha_research.orchestration.recovery import RecoveryCoordinator
 
 
 ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
@@ -88,6 +89,7 @@ ORCHESTRATION_COMMANDS = frozenset({"orchestration-local-pilot-readiness",
                         "orchestration-predispatch-escrow-reserve",
                         "orchestration-predispatch-escrow-status",
                         "orchestration-simulation-recovery-audit",
+                        "orchestration-recovery-takeover",
                         "orchestration-release-gate",
                         "orchestration-simulation-dispatch-audit"})
 
@@ -277,6 +279,14 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
         if args.command == "orchestration-simulation-recovery-audit":
             result = inspect_simulation_recovery_evidence(
                 orchestrator, args.task_id, policy)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "orchestration-recovery-takeover":
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                result = RecoveryCoordinator(root).record_manual_takeover(
+                    args.target, operator=args.operator, decision=args.decision,
+                    reason=args.reason, evidence_refs=args.evidence,
+                    task_id=args.task_id)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == "orchestration-predispatch-escrow-reserve":
