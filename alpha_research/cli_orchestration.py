@@ -48,7 +48,7 @@ from alpha_research.orchestration.release_gate import inspect_production_release
 from alpha_research.orchestration.runtime_config import (
     prepare_registered_model_runtime, load_preparation_config,
 )
-from alpha_research.config import is_default_config_path
+from alpha_research.config import is_default_config_path, load_config
 from alpha_research.orchestration.recovery_preflight import inspect_task_recovery_preflight
 from alpha_research.orchestration.execution_proposal import persist_execution_proposal
 from alpha_research.orchestration.execution_identity import (
@@ -112,6 +112,33 @@ def _resolve_simulation_manifest(orchestrator, task_id, manifest_path):
 def run_orchestration_command(args, root, registry_assignments, registry_path, *,
                               verify_external_consent, reserve_consent_for_audit):
     try:
+        # Audits and manual handoff are read-only/local operations. They must
+        # not require selecting Lead/Executor roles or preparing a model runtime.
+        if args.command in {
+                "orchestration-p12-admission-audit",
+                "orchestration-release-gate",
+                "orchestration-simulation-recovery-audit"}:
+            config_path = args.config or root / "config" / "nastu_quant.json"
+            cfg = load_config(config_path, initialize=False)
+            config_source = "user_config" if config_path.is_file() else "missing_config"
+            model_config = cfg.get("model") or {}
+            policy = cfg.get("model_governance") or {}
+            orchestrator = MainOrchestrator(root)
+            if args.command == "orchestration-p12-admission-audit":
+                result = inspect_p12_production_admission(
+                    orchestrator, args.task_id, model_config, policy,
+                    config_source=config_source,
+                    platform_read_evidence_id=args.platform_read_evidence_id)
+            elif args.command == "orchestration-release-gate":
+                result = inspect_production_release_gate(
+                    orchestrator, args.task_id, model_config, policy,
+                    config_source=config_source,
+                    platform_read_evidence_id=args.platform_read_evidence_id)
+            else:
+                result = inspect_simulation_recovery_evidence(
+                    orchestrator, args.task_id, policy)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if set(registry_assignments) != {"research_lead", "research_executor"}:
             raise OrchestrationError(
                 "both --lead and --executor registrations are required")
@@ -268,25 +295,6 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
             return 0
         if args.command == "orchestration-simulation-dispatch-audit":
             result = inspect_simulation_dispatch_gate(
-                orchestrator, args.task_id, policy)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
-        if args.command == "orchestration-release-gate":
-            result = inspect_production_release_gate(
-                orchestrator, args.task_id,
-                effective, policy, config_source=config_source,
-                platform_read_evidence_id=args.platform_read_evidence_id)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
-        if args.command == "orchestration-p12-admission-audit":
-            result = inspect_p12_production_admission(
-                orchestrator, args.task_id, effective, policy,
-                config_source=config_source,
-                platform_read_evidence_id=args.platform_read_evidence_id)
-            print(json.dumps(result, ensure_ascii=False, indent=2))
-            return 0
-        if args.command == "orchestration-simulation-recovery-audit":
-            result = inspect_simulation_recovery_evidence(
                 orchestrator, args.task_id, policy)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
