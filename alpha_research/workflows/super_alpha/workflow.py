@@ -208,7 +208,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
           model_call_id=recorder.call_id,
           proposal_sha256=__import__("hashlib").sha256(json.dumps(
               proposal, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest(),
-          knowledge_pack_ref=str(pack_path))
+          knowledge_pack_ref=str(pack_path),
+          prior_super_finding_count=len(prior_super_findings))
     for key in ("selection", "combo", "hypothesis", "rationale",
                 "failure_criterion"):
         if not isinstance(proposal.get(key), str) or not proposal[key].strip():
