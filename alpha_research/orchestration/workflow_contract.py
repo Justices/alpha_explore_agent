@@ -27,14 +27,24 @@ def validate_workflow_request(workflow, request):
         alpha_id = request.get("alpha_id")
         if not isinstance(alpha_id, str) or not alpha_id.strip():
             raise OrchestrationError("optimization requires Alpha ID")
+    if workflow == "regular":
+        max_batches = request.get("max_batches", 1)
+        if type(max_batches) is not int or not 1 <= max_batches <= 20:
+            raise OrchestrationError("Regular max_batches must be an integer from 1 to 20")
+    else:
+        max_iterations = request.get("max_iterations", 1)
+        if type(max_iterations) is not int or not 1 <= max_iterations <= 20:
+            raise OrchestrationError("max_iterations must be an integer from 1 to 20")
+        max_batches = request.get("max_batches", 1)
+        if type(max_batches) is not int or max_batches != 1:
+            raise OrchestrationError("max_batches applies only to Regular Campaigns")
     return {"workflow": workflow, "validated": True}
 
 
 def command_and_args(workflow, request):
     validate_workflow_request(workflow, request)
-    if type(request.get("max_batches", 1)) is not int or request.get("max_batches", 1) != 1:
-        raise OrchestrationError(
-            "unified orchestration currently supports a one-batch task only")
+    max_batches = request.get("max_batches", 1)
+    max_iterations = request.get("max_iterations", 1)
     return WORKFLOW_COMMANDS[workflow], SimpleNamespace(
         objective=request["objective"],
         alpha_id=request.get("alpha_id"),
@@ -43,7 +53,8 @@ def command_and_args(workflow, request):
         universe=request.get("universe"),
         category=request.get("category"),
         dataset=request.get("dataset_ids"),
-        max_batches=1,
+        max_batches=max_batches,
+        max_iterations=max_iterations,
         ppa=bool(request.get("ppa_profile", request.get("ppa", False))),
     )
 

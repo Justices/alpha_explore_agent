@@ -284,16 +284,14 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
     """Run independent domain rounds with one shared research identity.
 
     Each domain invocation creates its own immutable run/branch and Simulation
-    Intent. An unknown outcome or incomplete qualification stops the loop;
-    no exception or missing receipt is automatically retried.
+    Intent. The orchestration recovery target is rebound before each sequential
+    round, so at most one round can be in flight. Unknown outcomes stop the
+    loop and require explicit recovery; they are never automatically retried.
     """
     if not callable(run_one):
         raise IterationError("run_one callback is required")
     if type(max_iterations) is not int or not 1 <= max_iterations <= 20:
         raise IterationError("max_iterations must be an integer from 1 to 20")
-    if execution_context is not None and max_iterations > 1:
-        raise IterationError(
-            "multi-round orchestration requires per-round recovery checkpoints")
     session_id = uuid4().hex
     research_id = workflow + ":" + session_id
     ledger = IterationLedger(

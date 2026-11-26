@@ -237,8 +237,14 @@ class MainOrchestrator:
                 raise OrchestrationError("simulation intent is unreadable") from exc
             if intent.get("workflow") != task["workflow"]:
                 raise OrchestrationError("simulation intent workflow does not match task")
-        saved = self._transition(task, recovery_target={
-            "kind": kind, "ref": str(path), "bound_at": _now()})
+        bound_at = _now()
+        history = list(task.get("recovery_target_history") or [])
+        if not history or history[-1].get("ref") != str(path):
+            history.append({"kind": kind, "ref": str(path), "bound_at": bound_at})
+        saved = self._transition(
+            task, recovery_target={
+                "kind": kind, "ref": str(path), "bound_at": bound_at},
+            recovery_target_history=history)
         self._emit_event(saved, "recovery.target_bound", payload={
             "kind": kind, "target_ref": str(path)})
         return saved

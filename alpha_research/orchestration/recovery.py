@@ -459,8 +459,9 @@ class RecoveryCoordinator:
 
         request = task["request"]
         if task["workflow"] == "regular":
-            if request.get("max_batches", 1) != 1:
-                raise RecoveryError("Regular task recovery currently requires a one-batch orchestration budget")
+            if (type(request.get("max_batches", 1)) is not int
+                    or not 1 <= request.get("max_batches", 1) <= 20):
+                raise RecoveryError("Regular Campaign recovery budget is invalid")
             if not request.get("objective") or not request.get("region"):
                 raise RecoveryError("Regular task request lacks objective or Region for Campaign reconciliation")
 
