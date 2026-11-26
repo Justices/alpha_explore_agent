@@ -14,6 +14,7 @@ from alpha_research.workflows.super_alpha.workflow import prepare_super_run, run
 from alpha_research.workflows.optimization.workflow import prepare_source, run_optimization
 from alpha_research.orchestration.recovery import RecoveryCoordinator
 from alpha_research.orchestration.mock_workspace import marker_path, inspect_mock_workspace
+from alpha_research.workflows.iteration import run_bounded_iterations
 
 
 COMMANDS = {"plan-regular", "run-campaign", "plan-super", "run-super", "plan-optimization", "run-optimization", "recover-research"}
@@ -63,10 +64,18 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None, execution_cont
         if command == "run-optimization":
             if agent is None:
                 raise ValueError("Optimization model is unavailable")
-            return run_optimization(gateway, agent.model, cfg, root,
-                                    alpha_id=args.alpha_id,
-                                    objective=args.objective, region=region,
-                                    execution_context=execution_context)
+            max_iterations = getattr(args, "max_iterations", 1)
+            return run_bounded_iterations(
+                root, workflow="optimization", objective=args.objective,
+                scope={"source_alpha_id": args.alpha_id, "region": region},
+                source_ref=args.alpha_id, max_iterations=max_iterations,
+                stop_flag=getattr(agent, "stop_flag", None),
+                execution_context=execution_context,
+                run_one=lambda _number, research_id: run_optimization(
+                    gateway, agent.model, cfg, root, alpha_id=args.alpha_id,
+                    objective=args.objective, region=region,
+                    execution_context=execution_context, research_id=research_id,
+                    stop_flag=getattr(agent, "stop_flag", None)))
         return prepare_source(gateway, root, alpha_id=args.alpha_id,
                               objective=args.objective, region=region)
     if command in {"plan-super", "run-super"}:
@@ -76,9 +85,18 @@ def dispatch(command, args, cfg, root: Path, gateway, agent=None, execution_cont
         if command == "run-super":
             if agent is None:
                 raise ValueError("Super research model is unavailable")
-            return run_super_research(gateway, agent.model, cfg, root,
-                                      region=region, objective=args.objective,
-                                      delay=delay, execution_context=execution_context)
+            max_iterations = getattr(args, "max_iterations", 1)
+            return run_bounded_iterations(
+                root, workflow="super", objective=args.objective,
+                scope={"region": region, "delay": delay},
+                source_ref=None, max_iterations=max_iterations,
+                stop_flag=getattr(agent, "stop_flag", None),
+                execution_context=execution_context,
+                run_one=lambda _number, research_id: run_super_research(
+                    gateway, agent.model, cfg, root, region=region,
+                    objective=args.objective, delay=delay,
+                    execution_context=execution_context, research_id=research_id,
+                    stop_flag=getattr(agent, "stop_flag", None)))
         return prepare_super_run(gateway, root, region=region,
                                  objective=args.objective, delay=delay)
     if command == "run-campaign":
