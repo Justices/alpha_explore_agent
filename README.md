@@ -322,12 +322,19 @@ Executor selection for all three live research workflows:
 - **Optimization** launches an independent candidate branch from a required
   source Alpha ID, also with a bounded 1–20 iteration budget.
 
+Each workflow form also provides a **read-only preflight**. Regular preflight
+checks the requested scope and Dataset combinations; Super preflight inspects
+the platform-native pool and settings; Optimization preflight captures the
+source Alpha snapshot. These preflights do not invoke Simulation. Live research
+requires a separate explicit confirmation in the UI.
+
 The local server verifies model availability and governance before launching
 a child process. Regular Campaigns can be resumed with their original model
 selection. Super and Optimization expose explicit Simulation Intent recovery;
 recovery reconciles platform receipts and never automatically reposts an
-unknown Simulation. The server never exposes API key values through the
-registry listing and does not select a provider implicitly. If the registry
+unknown Simulation. The project UI never automatically submits an Alpha. The
+server never exposes API key values through the registry listing and does not
+select a provider implicitly. If the registry
 is not bundled, pass `--registry /path/to/model_registry.json` to
 `workbench/serve.py`.
 
