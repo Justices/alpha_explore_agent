@@ -35,7 +35,13 @@ def _latest(candidate_rows, preferred_by_id):
     preferred = preferred_by_id.get(newest["candidate_id"])
     sha = newest.get("evidence_sha256")
     policy = newest.get("policy_sha256")
-    same_evidence = bool(preferred and
+    same_identity = bool(preferred and
+                         preferred.get("candidate_id") == newest.get("candidate_id") and
+                         preferred.get("alpha_id") == newest.get("alpha_id") and
+                         preferred.get("workflow") == newest.get("workflow") and
+                         preferred.get("source_ref") == newest.get("source_ref") and
+                         preferred.get("candidate_ref") == newest.get("candidate_ref"))
+    same_evidence = bool(same_identity and
                          isinstance(sha, str) and len(sha) == 64 and
                          isinstance(policy, str) and len(policy) == 64 and
                          preferred.get("evidence_sha256") == sha and
