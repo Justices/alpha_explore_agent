@@ -464,7 +464,7 @@ async function launchForm(workflow="regular"){
   await refreshModels();
  }catch(error){
   modelOptions={};
-  notify("模型注册中心不可用；仍可执行只读预检，启动研究前需修复模型注册中心。");
+  notify("模型注册中心不可用；仍可执行范围预检，启动研究前需修复模型注册中心。");
  }
  const shared=[
    field("lead","研究 Lead / 构建模型",launchState?.lead||"","text",true,modelOptions),
@@ -590,7 +590,7 @@ async function planResearch(form,button){
      headers:{"Content-Type":"application/json"},body:JSON.stringify(request)});
    const result=await readWorkbenchJson(response);
    if(response.status===401)refreshCredentials();
-   if(!response.ok)throw Error(result.error||"只读预检请求被拒绝");
+   if(!response.ok)throw Error(result.error||"范围预检请求被拒绝");
    showLaunchState(result);
    $("#form-error").textContent="范围预检已启动；不会发起 Simulation。请查看页面顶部状态和研究任务中的执行日志。";
    await refreshLaunch();
