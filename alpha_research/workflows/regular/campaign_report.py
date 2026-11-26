@@ -53,6 +53,57 @@ def write_campaign_summary(state, path):
     return report
 
 
+def current_campaign_findings(state, item, limit=3):
+    """Summarize recent completed rounds from this Campaign and exact scope."""
+    if type(limit) is not int or limit < 1:
+        raise ValueError("current Campaign feedback limit must be positive")
+    keys = ("dataset_id", "region", "delay", "universe")
+    target = tuple(item.get(key) for key in keys)
+    rows = []
+    items = state.get("items", [])
+    for receipt in state.get("completed", []):
+        index = receipt.get("item_index")
+        if type(index) is not int or not 0 <= index < len(items):
+            continue
+        saved_item = items[index]
+        if tuple(saved_item.get(key) for key in keys) != target:
+            continue
+        batch_ref = receipt.get("batch_dir")
+        if not isinstance(batch_ref, str) or not batch_ref:
+            continue
+        batch = Path(batch_ref)
+        result = read_json(batch / "results.json", default={})
+        gate_counts, failures, measured = Counter(), Counter(), []
+        for alpha_id, verdict in (result.get("gate") or {}).items():
+            if not isinstance(verdict, dict):
+                continue
+            gate_counts[verdict.get("status", "UNKNOWN")] += 1
+            failures.update(item for item in verdict.get("failures", [])
+                            if isinstance(item, str))
+            metrics = (((result.get("readback") or {}).get(alpha_id) or {})
+                       .get("details", {}).get("is") or {})
+            sharpe = metrics.get("sharpe")
+            if type(sharpe) in (int, float):
+                measured.append({"sharpe": sharpe, "fitness": metrics.get("fitness")})
+        attribution = result.get("attribution")
+        summary = attribution.get("summary") if isinstance(attribution, dict) else None
+        rows.append({
+            "campaign_id": state.get("campaign_id"),
+            "iteration": receipt.get("completed_at"),
+            "objective": state.get("request", {}).get("objective"),
+            "dataset_id": saved_item.get("dataset_id"),
+            "alpha_count": len(receipt.get("alpha_ids", [])),
+            "gate_counts": dict(gate_counts),
+            "common_failures": dict(failures.most_common(5)),
+            "best_metrics": max(measured, key=lambda row: row["sharpe"], default=None),
+            "attribution_status": result.get("attribution_status"),
+            "attribution": summary[:350] if isinstance(summary, str) else None,
+            "evidence_ref": batch_ref,
+        })
+    rows.sort(key=lambda row: row.get("iteration") or "", reverse=True)
+    return rows[:limit]
+
+
 def prior_campaign_findings(directory, current_id, items):
     scope_keys = ("dataset_id", "region", "delay", "universe")
     history = {tuple(item[key] for key in scope_keys): [] for item in items}
