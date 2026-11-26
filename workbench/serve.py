@@ -242,7 +242,7 @@ def handler_for(agent_args, port):
     def launch_stop_flag(launch_id):
         return root / "state" / f"workbench-{launch_id}.stop"
 
-    def run_campaign(args, credentials, log_path, selection, workflow="regular"):
+    def run_workflow(args, credentials, log_path, selection, workflow="regular"):
         outcome = {"status": "failed", "workflow": workflow}
         stop_flag = launch_stop_flag(log_path.stem)
         try:
@@ -310,7 +310,7 @@ def handler_for(agent_args, port):
                 except OSError:
                     write_progress("无法保存本次启动的索引或清理终止标记", log_path)
 
-    def start_campaign(args, credentials, selection, campaign_id=None,
+    def start_workflow(args, credentials, selection, campaign_id=None,
                        workflow="regular", primary_id=None):
         launch.clear()
         launch.update(status="running", launch_id=uuid4().hex, workflow=workflow)
@@ -327,7 +327,7 @@ def handler_for(agent_args, port):
             atomic_write_json(log_path.with_suffix(".launch.json"), {
                 "args": args, "models": selection, "workflow": workflow,
                 "primary_id": primary_id, "status": "starting"})
-            Thread(target=run_campaign,
+            Thread(target=run_workflow,
                    args=(args, credentials, log_path, selection, workflow),
                    daemon=True).start()
         except (OSError, RuntimeError):
@@ -436,7 +436,7 @@ def handler_for(agent_args, port):
                 if launch["status"] == "running":
                     code, payload = 409, {"error": "已有研究任务正在运行"}
                 else:
-                    code, payload = start_campaign(
+                    code, payload = start_workflow(
                         args, credentials, selection, workflow=workflow, primary_id=primary_id)
             self.respond_json(code, payload)
 
@@ -463,7 +463,7 @@ def handler_for(agent_args, port):
                     if launch["status"] == "running":
                         code, payload = 409, {"error": "请等待当前任务结束"}
                     else:
-                        code, payload = start_campaign(
+                        code, payload = start_workflow(
                             ["recover-workflow", f"--workflow={workflow}", str(target_path)],
                             credentials, None, workflow=f"{workflow}_recovery",
                             primary_id=str(target_path))
@@ -511,7 +511,7 @@ def handler_for(agent_args, port):
                             if previous != {"campaign_id": target, **selected}:
                                 raise ValueError(
                                     "恢复时模型选择或注册配置与原 Campaign 不一致")
-                        code, payload = start_campaign(
+                        code, payload = start_workflow(
                             ["run-campaign", f"--resume-campaign={target}"],
                             credentials, selected, target, workflow="regular")
                 else:
