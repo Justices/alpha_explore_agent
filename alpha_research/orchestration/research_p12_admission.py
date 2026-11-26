@@ -84,6 +84,33 @@ def _inspect_iteration(state_root, task, result):
                 blockers.append("P12_ITERATION_ROUND_INTEGRITY_FAILED")
                 break
             seen.add(row["round_key"])
+    reconciliations = record.get("reconciliations", [])
+    if not isinstance(reconciliations, list):
+        blockers.append("P12_ITERATION_RECONCILIATIONS_MALFORMED")
+        reconciliations = []
+    reconciled_keys = set()
+    for reconciliation in reconciliations:
+        if not isinstance(reconciliation, dict):
+            blockers.append("P12_ITERATION_RECONCILIATION_MALFORMED")
+            continue
+        digest = reconciliation.get("reconciliation_sha256")
+        body = {key: value for key, value in reconciliation.items()
+                if key != "reconciliation_sha256"}
+        round_key = reconciliation.get("round_key")
+        if (not isinstance(round_key, str) or round_key in reconciled_keys
+                or reconciliation.get("status") != "RECOVERED"
+                or not isinstance(digest, str) or not _HEX64.fullmatch(digest)
+                or _hash(body) != digest
+                or not any(row.get("round_key") == round_key
+                           and row.get("status") == "RECOVERY_REQUIRED"
+                           for row in rounds if isinstance(row, dict))):
+            blockers.append("P12_ITERATION_RECONCILIATION_INTEGRITY_FAILED")
+            continue
+        reconciled_keys.add(round_key)
+    for row in rounds if isinstance(rounds, list) else []:
+        if (isinstance(row, dict) and row.get("status") == "RECOVERY_REQUIRED"
+                and row.get("round_key") not in reconciled_keys):
+            blockers.append("P12_ITERATION_RECOVERY_UNRECONCILED")
     if record.get("status") != "COMPLETED":
         blockers.append("P12_ITERATION_NOT_COMPLETED")
     if not rounds:
