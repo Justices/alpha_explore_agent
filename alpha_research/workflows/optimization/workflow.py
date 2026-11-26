@@ -79,15 +79,31 @@ def _prior_optimization_findings(store, source_info, *, limit=5):
     ]
     rows.sort(key=lambda row: (row.get("updated_at", ""), row.get("created_at", "")),
               reverse=True)
-    return [{
-        "branch_id": row["branch_id"],
-        "objective": row.get("objective"),
-        "rationale": row.get("rationale"),
-        "changes": row.get("changes", []),
-        "status": row.get("status"),
-        "receipt_ref": row.get("receipt_ref"),
-        "audit_ref": row.get("audit_ref"),
-    } for row in rows[:limit]]
+    findings = []
+    for row in rows[:limit]:
+        candidate = {}
+        if isinstance(row.get("candidate_id"), str):
+            try:
+                candidate = store.get("candidate", row["candidate_id"])
+            except (FileNotFoundError, ValueError):
+                candidate = {}
+        findings.append({
+            "branch_id": row["branch_id"],
+            "objective": row.get("objective"),
+            "rationale": row.get("rationale"),
+            "changes": row.get("changes", []),
+            "status": row.get("status"),
+            "candidate_status": row.get("candidate_status"),
+            "preferred_status": row.get("preferred_status"),
+            "proposal_sha256": row.get("proposal_sha256"),
+            "candidate_definition_sha256": row.get("candidate_definition_sha256"),
+            "failures": candidate.get("failures", []),
+            "pending": candidate.get("pending", []),
+            "metrics": candidate.get("metrics", {}),
+            "receipt_ref": row.get("receipt_ref"),
+            "audit_ref": row.get("audit_ref"),
+        })
+    return findings
 
 
 def _put_advanced(store, record):
@@ -243,7 +259,7 @@ def _source_dataset(gateway, settings, source_fields, expected_dataset=None):
 
 def run_optimization(gateway, model, config: dict, state_root: Path, *,
                      alpha_id: str, objective: str, region: str | None = None,
-                     execution_context=None, run_id=None, expected_dataset=None,
+                     execution_context=None, run_id=None, research_id=None, expected_dataset=None,
                      expected_settings=None, ppa_profile=False,
                      selection_evidence=None, stop_flag=None,
                      preparation_handoff=None):
@@ -251,10 +267,11 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     if not isinstance(objective, str) or not objective.strip():
         raise OptimizationError("optimization objective is required")
     run_id = run_id or uuid4().hex
+    active_research_id = research_id or f"optimization:{run_id}"
     if execution_context is not None:
         bind_identity = execution_context.get("bind_research_identity")
         if callable(bind_identity):
-            bind_identity(f"optimization:{run_id}")
+            bind_identity(active_research_id)
     _emit(execution_context, "optimization.research_started",
           run_id=run_id, source_alpha_id=alpha_id, region=region)
     root = Path(state_root).resolve()
@@ -317,7 +334,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     recorder = DecisionRecorder(
         model, root / "state", governance=config.get("model_governance")
     )
-    recorder.begin_session(research_id=f"optimization:{run_id}")
+    recorder.begin_session(research_id=active_research_id)
     proposal = recorder.complete_json("optimize_alpha", {**context, "knowledge_pack": pack},
                                       knowledge_pack_ref=str(pack_path))
     _emit(execution_context, "optimization.proposal_generated",
@@ -362,6 +379,23 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     _emit(execution_context, "optimization.proposal_validated",
           run_id=run_id, source_type=family, dataset_id=dataset_id,
           validation_status="PASS", source_fields_count=len(source_fields))
+    proposal_sha256 = _digest(proposal)
+    candidate_definition_sha256 = _digest({
+        "source_properties_sha256": source_info["source_properties_sha256"],
+        "source_type": family, "settings": settings,
+        "expression": proposal.get("expression") if family == "regular" else None,
+        "selection": proposal.get("selection") if family == "super" else None,
+        "combo": proposal.get("combo") if family == "super" else None,
+    })
+    if any(row.get("candidate_definition_sha256") == candidate_definition_sha256
+           for row in prior_optimization_findings):
+        return {
+            "status": "DUPLICATE_PROPOSAL_BLOCKED", "workflow": "optimization",
+            "run_id": run_id, "source_alpha_id": alpha_id,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
     if stop_flag is not None and stop_flag.exists():
         raise OptimizationError("research stopped before optimization simulation")
     branch_info = create_branch(
@@ -369,6 +403,9 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         rationale=proposal["rationale"], changes=proposal["changes"],
         effective_settings=settings)
     branch = store.get("candidate_branch", branch_info["branch_id"])
+    branch.update(proposal_sha256=proposal_sha256,
+                  candidate_definition_sha256=candidate_definition_sha256)
+    _put_advanced(store, branch)
     _emit(execution_context, "optimization.candidate_branch_created",
           run_id=run_id, branch_id=branch_info["branch_id"],
           source_alpha_id=alpha_id, branch_ref=branch_info["branch_ref"])
@@ -507,6 +544,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         "source_snapshot_sha256": source_info["details_sha256"],
         "source_properties_sha256": source_info["source_properties_sha256"],
         "candidate_branch_id": branch["branch_id"],
+        "proposal_sha256": proposal_sha256,
+        "candidate_definition_sha256": candidate_definition_sha256,
         "candidate_alpha_id": rows[0]["alpha_id"],
         "objective": objective, "hypothesis": proposal["hypothesis"],
         "rationale": proposal["rationale"], "changes": proposal["changes"],
@@ -562,4 +601,6 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
             "report_ref": str(report_path), "source_unchanged_verified": True,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
             "status": branch["status"]}
