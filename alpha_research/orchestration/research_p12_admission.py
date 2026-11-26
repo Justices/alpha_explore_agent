@@ -104,7 +104,16 @@ def _inspect_candidate_governance(state_root, config, result):
         current_policy_sha256=policy_hash(config))
     entries = {row.get("alpha_id"): row for row in pool.get("entries", [])
                if isinstance(row, dict)}
-    blockers, audited = [], []
+    blockers, audited, selected = [], [], []
+    rejected = {
+        "RA_FAILED", "CORR_REJECTED", "PAIRWISE_CONFLICT",
+        "PLATFORM_CHECK_FAILED", "METRICS_FAILED",
+    }
+    pending = {
+        "EVIDENCE_PENDING", "PENDING_FULL_AUDIT", "REVIEW_PENDING",
+        "CHECKS_PENDING", "PAIRWISE_PENDING", "EVALUATION_PENDING",
+        "POLICY_STALE",
+    }
     if not alpha_ids:
         blockers.append("P12_CANDIDATE_ALPHA_IDS_MISSING")
     for alpha_id in alpha_ids:
@@ -121,18 +130,25 @@ def _inspect_candidate_governance(state_root, config, result):
             "candidate_status": candidate_status, "preferred_status": preferred_status,
             "requires_reaudit": row.get("requires_reaudit"),
         })
-        if candidate_status != "CANDIDATE":
-            blockers.append("P12_CANDIDATE_NOT_QUALIFIED:" + alpha_id)
-        if preferred_status != "PREFERRED":
-            blockers.append("P12_PREFERRED_NOT_QUALIFIED:" + alpha_id)
         if row.get("requires_reaudit"):
             blockers.append("P12_CANDIDATE_REAUDIT_REQUIRED:" + alpha_id)
+        if candidate_status in pending:
+            blockers.append("P12_CANDIDATE_EVIDENCE_UNRESOLVED:" + alpha_id)
+        elif candidate_status == "CANDIDATE":
+            if preferred_status == "PREFERRED":
+                selected.append(alpha_id)
+            elif preferred_status == "PENDING_PREFERRED":
+                blockers.append("P12_PREFERRED_EVIDENCE_UNRESOLVED:" + alpha_id)
+        elif candidate_status not in rejected:
+            blockers.append("P12_CANDIDATE_STATUS_UNRECOGNIZED:" + alpha_id)
+    if not selected:
+        blockers.append("P12_NO_PREFERRED_CANDIDATE")
     return {
         "status": "QUALIFIED" if not blockers else "BLOCKED",
         "pool_sha256": fingerprint_json(pool), "alpha_ids": alpha_ids,
+        "selected_preferred_alpha_ids": selected,
         "evaluations": audited, "blockers": sorted(set(blockers)),
     }
-
 
 def _inspect_recovery(state_root, task):
     target = task.get("recovery_target")
