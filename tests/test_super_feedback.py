@@ -31,8 +31,11 @@ class SuperFeedbackTests(unittest.TestCase):
             {**rows[-1], "run_id": "other-region", "region": "CHN"},
             {**rows[-1], "run_id": "other-objective", "objective": "other"},
         ])
+        rows.append({**rows[-1], "run_id": "current",
+                     "updated_at": "2026-11-30T00:00:00+00:00"})
         feedback = _prior_super_findings(
-            FakeRecordStore(rows), "USA", "quality alpha", limit=3)
+            FakeRecordStore(rows), "USA", "quality alpha",
+            exclude_run_id="current", limit=3)
         self.assertEqual([row["run_id"] for row in feedback],
                          ["run-6", "run-5", "run-4"])
         self.assertNotIn("other-region", repr(feedback))
