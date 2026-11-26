@@ -487,16 +487,6 @@ class RecoveryCoordinator:
         receipt_root.mkdir(parents=True, exist_ok=True)
         journal_path = self._journal_path(
             task["workflow"], Path(target["ref"]).resolve())
-        receipt = {
-            "schema_version": 1, "status": "COMPLETED",
-            "task_id": task_id, "workflow": task["workflow"], "step": step,
-            "target_kind": target["kind"], "target_ref": target["ref"],
-            "recovery_id": journal["recovery_id"],
-            "recovery_journal_ref": str(journal_path),
-            "recovery_journal_sha256": _sha256_bytes(journal_path.read_bytes()),
-            "outcome": result, "outcome_sha256": _canonical_sha256(result),
-            "created_at": _now(),
-        }
         # A recovered Simulation is not the same as a completed research run.
         # If the P9 budget still has rounds (or Regular still has Campaign work),
         # keep the orchestration Task BLOCKED and hand the verified checkpoint
