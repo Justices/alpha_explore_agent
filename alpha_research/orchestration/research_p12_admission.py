@@ -28,17 +28,22 @@ def _alpha_ids(result):
             values.append(value)
     add(result.get("alpha_id"))
     add(result.get("candidate_alpha_id"))
-    for value in result.get("alpha_ids", []):
+    alpha_ids = result.get("alpha_ids")
+    for value in alpha_ids if isinstance(alpha_ids, list) else []:
         add(value)
-    for receipt in result.get("completed", []):
+    completed = result.get("completed")
+    for receipt in completed if isinstance(completed, list) else []:
         if isinstance(receipt, dict):
-            for value in receipt.get("alpha_ids", []):
+            values = receipt.get("alpha_ids")
+            for value in values if isinstance(values, list) else []:
                 add(value)
-    for row in result.get("iteration_results", []):
+    iteration_results = result.get("iteration_results")
+    for row in iteration_results if isinstance(iteration_results, list) else []:
         if isinstance(row, dict):
             add(row.get("alpha_id"))
             add(row.get("candidate_alpha_id"))
-            for value in row.get("alpha_ids", []):
+            values = row.get("alpha_ids")
+            for value in values if isinstance(values, list) else []:
                 add(value)
     return values
 
@@ -55,7 +60,10 @@ def _inspect_iteration(state_root, task, result):
             "iterations").resolve()
     if not path.is_relative_to(root) or not path.is_file():
         return {"status": "INVALID", "blockers": ["P12_ITERATION_LEDGER_OUTSIDE_STATE_ROOT"]}
-    record = read_json(path)
+    try:
+        record = read_json(path)
+    except (OSError, ValueError, TypeError):
+        return {"status": "INVALID", "blockers": ["P12_ITERATION_LEDGER_UNREADABLE"]}
     if not isinstance(record, dict):
         return {"status": "INVALID", "blockers": ["P12_ITERATION_LEDGER_UNREADABLE"]}
     request, rounds, budget = record.get("request"), record.get("rounds"), record.get("budget")
@@ -148,6 +156,11 @@ def _inspect_iteration(state_root, task, result):
         "round_count": len(rounds) if isinstance(rounds, list) else 0,
         "recovery_refs": [row.get("recovery_ref") for row in reconciliations
                           if isinstance(row, dict) and isinstance(row.get("recovery_ref"), str)],
+        "recovery_evidence": [
+            {"ref": row["recovery_ref"], "result_sha256": row["result_sha256"]}
+            for row in reconciliations if isinstance(row, dict)
+            and isinstance(row.get("recovery_ref"), str)
+            and isinstance(row.get("result_sha256"), str)],
         "budget": budget, "stop_reason": record.get("stop_reason"),
         "blockers": sorted(set(blockers)),
     }
@@ -213,13 +226,15 @@ def _inspect_recovery(state_root, task):
     if not history:
         return {"status": "NO_RECOVERY_TARGET", "blockers": []}
     coordinator = RecoveryCoordinator(state_root)
-    blockers, inspected, journal_refs = [], [], []
+    blockers, inspected, journal_refs, recovery_results = [], [], [], []
     seen = set()
     expected_kind = ("regular_batch" if task.get("workflow") == "regular"
                      else "simulation_intent")
     if isinstance(current, dict) and history:
-        if (history[-1].get("ref") != current.get("ref")
-                or history[-1].get("kind") != current.get("kind")):
+        last = history[-1]
+        if (not isinstance(last, dict)
+                or last.get("ref") != current.get("ref")
+                or last.get("kind") != current.get("kind")):
             blockers.append("P12_RECOVERY_CURRENT_TARGET_HISTORY_MISMATCH")
     for entry in history:
         if not isinstance(entry, dict) or not isinstance(entry.get("ref"), str):
@@ -250,7 +265,10 @@ def _inspect_recovery(state_root, task):
         if journal_path.is_symlink():
             blockers.append("P12_RECOVERY_JOURNAL_SYMLINK")
         elif journal_path.is_file():
-            journal = read_json(journal_path)
+            try:
+                journal = read_json(journal_path)
+            except (OSError, ValueError, TypeError):
+                journal = None
             if not isinstance(journal, dict):
                 blockers.append("P12_RECOVERY_JOURNAL_UNREADABLE")
                 journal = None
@@ -271,18 +289,29 @@ def _inspect_recovery(state_root, task):
             if (not isinstance(saved_result, dict)
                     or journal.get("result_sha256") != fingerprint_json(saved_result)):
                 blockers.append("P12_RECOVERY_RESULT_INTEGRITY_FAILED")
+            elif isinstance(journal.get("result_sha256"), str):
+                recovery_results.append({
+                    "ref": str(journal_path),
+                    "result_sha256": journal["result_sha256"],
+                })
             manual_path = (coordinator.journal_root / "manual" /
                            f"{journal.get('recovery_id')}.json")
             manual = None
             if manual_path.is_symlink():
                 blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
             elif manual_path.is_file():
-                manual = read_json(manual_path)
+                try:
+                    manual = read_json(manual_path)
+                except (OSError, ValueError, TypeError):
+                    manual = None
                 if not isinstance(manual, dict):
                     blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
                     manual = None
             if isinstance(manual, dict):
-                actual_journal_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+                try:
+                    actual_journal_sha = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+                except OSError:
+                    actual_journal_sha = None
                 if (manual.get("schema_version") != 1
                         or manual.get("recovery_id") != journal.get("recovery_id")
                         or manual.get("workflow") != workflow
@@ -339,8 +368,12 @@ def _inspect_recovery(state_root, task):
                                     or not evidence_path.is_file()):
                                 blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_UNVERIFIED")
                                 continue
-                            actual_sha = hashlib.sha256(
-                                evidence_path.read_bytes()).hexdigest()
+                            try:
+                                actual_sha = hashlib.sha256(
+                                    evidence_path.read_bytes()).hexdigest()
+                            except OSError:
+                                blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_UNVERIFIED")
+                                continue
                             if actual_sha != evidence_sha:
                                 blockers.append("P12_MANUAL_TAKEOVER_EVIDENCE_HASH_MISMATCH")
                     if manual["decisions"]:
@@ -356,6 +389,7 @@ def _inspect_recovery(state_root, task):
         "targets": inspected,
         "recovery_journal_ref": journal_refs[-1] if journal_refs else None,
         "recovery_journal_refs": journal_refs,
+        "recovery_results": recovery_results,
         "blockers": sorted(set(blockers)),
     }
 
@@ -383,8 +417,18 @@ def inspect_p12_production_admission(orchestrator, task_id, model_config,
     blockers.update(recovery.get("blockers", []))
     recovery_ref = recovery.get("recovery_journal_ref")
     if recovery_ref is not None and any(
-            value != recovery_ref for value in iteration.get("recovery_refs", [])):
+            value not in recovery.get("recovery_journal_refs", [])
+            for value in iteration.get("recovery_refs", [])):
         blockers.add("P12_ITERATION_RECOVERY_REF_MISMATCH")
+    recovery_result_digests = {
+        row.get("ref"): row.get("result_sha256")
+        for row in recovery.get("recovery_results", [])
+        if isinstance(row, dict)}
+    for evidence in iteration.get("recovery_evidence", []):
+        if (not isinstance(evidence, dict)
+                or recovery_result_digests.get(evidence.get("ref"))
+                != evidence.get("result_sha256")):
+            blockers.add("P12_ITERATION_RECOVERY_RESULT_MISMATCH")
     blockers.update({
         "P12_EXTERNAL_PRODUCTION_ATTESTATION_MISSING",
         "P12_INDEPENDENT_PLATFORM_WRITE_AUTHORITY_MISSING",
