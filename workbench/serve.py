@@ -155,7 +155,7 @@ def _workbench_records_path(root):
 
 def _validate_workbench_records(payload):
     if (not isinstance(payload, dict) or set(payload) != {"version", "cases", "alphas"}
-            or payload.get("version") != 1
+            or type(payload.get("version")) is not int or payload.get("version") != 1
             or not isinstance(payload.get("cases"), list)
             or not isinstance(payload.get("alphas"), list)):
         raise ValueError("工作台记录格式无效")
