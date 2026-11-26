@@ -110,29 +110,29 @@ def _orchestration_target_state(state_root, execution_context):
         return None
     try:
         target = resolver()
-    except Exception:
-        return None
-    if not isinstance(target, dict) or not isinstance(target.get("ref"), str):
-        return "NO_TARGET"
-    path = Path(target["ref"]).expanduser()
-    if path.is_symlink() or path.parent.is_symlink():
-        return "UNVERIFIED"
-    path = path.resolve()
-    root = Path(state_root).resolve()
-    if not path.is_relative_to(root):
-        return "UNVERIFIED"
-    if target.get("kind") == "regular_batch":
-        if not path.is_dir():
+        if not isinstance(target, dict) or not isinstance(target.get("ref"), str):
+            return "NO_TARGET"
+        path = Path(target["ref"]).expanduser()
+        if path.is_symlink() or path.parent.is_symlink():
             return "UNVERIFIED"
-        path = path / "simulation_intent.json"
-    elif target.get("kind") != "simulation_intent":
+        path = path.resolve()
+        root = Path(state_root).resolve()
+        if not path.is_relative_to(root):
+            return "UNVERIFIED"
+        if target.get("kind") == "regular_batch":
+            if not path.is_dir():
+                return "UNVERIFIED"
+            path = path / "simulation_intent.json"
+        elif target.get("kind") != "simulation_intent":
+            return "UNVERIFIED"
+        if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
+            return "UNVERIFIED"
+        intent = read_json(path)
+        if not isinstance(intent, dict):
+            return "UNVERIFIED"
+        return intent.get("status") or "UNVERIFIED"
+    except (OSError, ValueError, TypeError):
         return "UNVERIFIED"
-    if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
-        return "UNVERIFIED"
-    intent = read_json(path)
-    if not isinstance(intent, dict):
-        return "UNVERIFIED"
-    return intent.get("status") or "UNVERIFIED"
 
 
 class IterationLedger:
