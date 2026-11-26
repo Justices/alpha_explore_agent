@@ -149,6 +149,82 @@ def research_arguments(data):
     raise ValueError("不支持的研究工作流")
 
 
+def plan_arguments(data):
+    """Build a read-only BRAIN planning command without requiring model roles."""
+    if not isinstance(data, dict):
+        raise ValueError("预检请求必须是 JSON 对象")
+    workflow = data.get("workflow", "regular")
+    if workflow == "regular":
+        allowed = {"workflow", "region", "dataset_ids", "category", "delay", "universe"}
+        if set(data) - allowed:
+            raise ValueError("Regular 预检参数包含不支持的字段")
+        region = data.get("region")
+        if not isinstance(region, str) or not region.strip() or "\x00" in region:
+            raise ValueError("Region 必须是非空文本")
+        delay = data.get("delay", 1)
+        if type(delay) is not int or delay != 1:
+            raise ValueError("Regular 预检必须使用 Delay 1")
+        dataset_ids = data.get("dataset_ids")
+        if dataset_ids is not None and (
+                not isinstance(dataset_ids, list) or not dataset_ids
+                or any(not isinstance(item, str) or not item.strip() or "\x00" in item
+                       for item in dataset_ids)
+                or len(set(dataset_ids)) != len(dataset_ids)):
+            raise ValueError("Dataset ID 必须是非空且不重复的列表")
+        args = ["plan-regular", f"--region={region.strip()}", "--delay=1"]
+        if dataset_ids:
+            for dataset_id in dataset_ids:
+                args.append(f"--dataset={dataset_id.strip()}")
+        for key in ("category", "universe"):
+            value = data.get(key)
+            if value is not None:
+                if not isinstance(value, str) or not value.strip() or "\x00" in value:
+                    raise ValueError(f"{key} 必须是非空文本")
+                args.append(f"--{key}={value.strip()}")
+        return workflow, args, None
+
+    if workflow == "super":
+        allowed = {"workflow", "region", "objective", "delay"}
+        if set(data) - allowed:
+            raise ValueError("Super 预检参数包含不支持的字段")
+        for key in ("region", "objective"):
+            value = data.get(key)
+            if not isinstance(value, str) or not value.strip() or "\x00" in value:
+                raise ValueError(f"{key} 必须是非空文本")
+        args = [
+            "plan-super", f"--region={data['region'].strip()}",
+            f"--objective={data['objective'].strip()}",
+        ]
+        delay = data.get("delay")
+        if delay is not None:
+            if type(delay) is not int or delay < 0:
+                raise ValueError("Super Delay 必须是非负整数")
+            args.append(f"--delay={delay}")
+        return workflow, args, None
+
+    if workflow == "optimization":
+        allowed = {"workflow", "alpha_id", "objective", "region"}
+        if set(data) - allowed:
+            raise ValueError("Alpha 来源预检参数包含不支持的字段")
+        alpha_id = data.get("alpha_id")
+        if not isinstance(alpha_id, str) or not alpha_id.strip() or "\x00" in alpha_id:
+            raise ValueError("Alpha ID 必须是非空文本")
+        args = ["plan-optimization", f"--alpha-id={alpha_id.strip()}"]
+        objective = data.get("objective")
+        if objective is not None:
+            if not isinstance(objective, str) or not objective.strip() or "\x00" in objective:
+                raise ValueError("优化目标必须是非空文本")
+            args.append(f"--objective={objective.strip()}")
+        region = data.get("region")
+        if region is not None:
+            if not isinstance(region, str) or not region.strip() or "\x00" in region:
+                raise ValueError("Region 必须是非空文本")
+            args.append(f"--region={region.strip()}")
+        return workflow, args, alpha_id.strip()
+
+    raise ValueError("不支持的预检工作流")
+
+
 def _workbench_records_path(root):
     return Path(root) / "state" / "workbench" / "records.json"
 
@@ -262,26 +338,48 @@ def handler_for(agent_args, port):
             outcome["exit_code"] = result.returncode
             if result.returncode == 0:
                 report = json.loads(result.stdout)
-                if isinstance(report, dict) and isinstance(report.get("status"), str):
-                    outcome["status"] = "exited"
-                    outcome["result_status"] = report["status"]
-                    if workflow == "regular":
-                        outcome["campaign_status"] = report["status"]
-                    for key in (
-                        "campaign_id", "run_id", "branch_id", "branch_ref",
-                        "source_alpha_id", "candidate_alpha_id", "candidate_id",
-                        "candidate_ref", "preferred_ref", "alpha_id", "batch_id",
-                        "iteration_session_id", "iterations_completed", "iteration_budget",
-                        "iteration_stop_reason", "iteration_ref", "record_ref", "report_ref",
-                        "simulation_intent_ref", "receipt_ref", "readback_ref", "audit_ref",
-                        "candidate_status", "preferred_status", "proposal_sha256",
-                        "candidate_definition_sha256", "eligible_alpha_count",
-                        "unresolved_count", "simulation_invoked", "alpha_submission_invoked",
-                        "source_unchanged_verified",
-                    ):
-                        value = report.get(key)
-                        if isinstance(value, (str, int, float, bool, dict)):
-                            outcome[key] = value
+                if isinstance(report, dict):
+                    report_status = report.get("status")
+                    if workflow == "optimization_plan" and report.get("source_id"):
+                        report_status = report_status or "source_captured"
+                    if isinstance(report_status, str):
+                        outcome["status"] = "exited"
+                        outcome["result_status"] = report_status
+                        if workflow == "regular":
+                            outcome["campaign_status"] = report_status
+                        for key in (
+                            "campaign_id", "run_id", "branch_id", "branch_ref",
+                            "source_alpha_id", "candidate_alpha_id", "candidate_id",
+                            "candidate_ref", "preferred_ref", "alpha_id", "batch_id",
+                            "iteration_session_id", "iterations_completed", "iteration_budget",
+                            "iteration_stop_reason", "iteration_ref", "record_ref", "report_ref",
+                            "simulation_intent_ref", "receipt_ref", "readback_ref", "audit_ref",
+                            "candidate_status", "preferred_status", "proposal_sha256",
+                            "candidate_definition_sha256", "eligible_alpha_count",
+                            "unresolved_count", "simulation_invoked", "alpha_submission_invoked",
+                            "source_unchanged_verified", "plan_id", "source_id", "source_type",
+                            "source_ref", "snapshot_ref", "details_sha256",
+                            "source_properties_sha256", "coverage_complete", "dataset_count",
+                            "combination_count", "requested", "allowed_delays", "region", "delay",
+                        ):
+                            value = report.get(key)
+                            if isinstance(value, (str, int, float, bool, dict, list)):
+                                outcome[key] = value
+                        if workflow == "regular_plan":
+                            datasets = report.get("datasets")
+                            unresolved = report.get("unresolved")
+                            if isinstance(datasets, list):
+                                outcome["dataset_count"] = len(datasets)
+                                outcome["combination_count"] = sum(
+                                    len(item.get("combinations", []))
+                                    for item in datasets if isinstance(item, dict)
+                                    and isinstance(item.get("combinations"), list))
+                            if isinstance(unresolved, list):
+                                outcome["unresolved_count"] = len(unresolved)
+                            if isinstance(report.get("plan_id"), str):
+                                outcome["record_ref"] = str(
+                                    root / "state" / "research_v1_1" / "plans"
+                                    / f"{report['plan_id']}.json")
         except (OSError, ValueError, subprocess.SubprocessError):
             write_progress("无法启动研究进程或读取执行结果", log_path)
         finally:
@@ -386,7 +484,7 @@ def handler_for(agent_args, port):
                 return
             if self.path not in {
                     "/api/launch", "/api/credentials", "/api/research",
-                    "/api/workbench-records"}:
+                    "/api/workbench-records", "/api/plan"}:
                 self.send_error(404)
                 return
             if self.headers.get_content_type() != "application/json":
@@ -420,12 +518,16 @@ def handler_for(agent_args, port):
                     return
                 if not isinstance(request, dict):
                     raise ValueError("研究启动请求必须是 JSON 对象")
-                selection = checked_selection(
-                    {key: request.get(key) for key in ("lead", "executor")},
-                    agent_args, root)
-                workflow, args, primary_id = research_arguments({
-                    key: value for key, value in request.items()
-                    if key not in ("lead", "executor")})
+                if self.path == "/api/plan":
+                    workflow, args, primary_id = plan_arguments(request)
+                    selection = None
+                else:
+                    selection = checked_selection(
+                        {key: request.get(key) for key in ("lead", "executor")},
+                        agent_args, root)
+                    workflow, args, primary_id = research_arguments({
+                        key: value for key, value in request.items()
+                        if key not in ("lead", "executor")})
             except (OSError, UnicodeError, json.JSONDecodeError):
                 self.respond_json(400, {"error": "无法读取请求"})
                 return
@@ -437,7 +539,9 @@ def handler_for(agent_args, port):
                     code, payload = 409, {"error": "已有研究任务正在运行"}
                 else:
                     code, payload = start_workflow(
-                        args, credentials, selection, workflow=workflow, primary_id=primary_id)
+                        args, credentials, selection,
+                        workflow=f"{workflow}_plan" if self.path == "/api/plan" else workflow,
+                        primary_id=primary_id)
             self.respond_json(code, payload)
 
         def research_action(self, request, credentials):
@@ -484,8 +588,8 @@ def handler_for(agent_args, port):
                 if action == "stop":
                     if not running or target != launch.get("launch_id"):
                         code, payload = 409, {"error": "本次网页启动已结束或已切换"}
-                    elif str(launch.get("workflow", "")).endswith("_recovery"):
-                        code, payload = 409, {"error": "回执核对不可中断"}
+                    elif str(launch.get("workflow", "")).endswith(("_recovery", "_plan")):
+                        code, payload = 409, {"error": "只读核对任务不可中断"}
                     else:
                         try:
                             update_stop_flag(launch_stop_flag(target), True)
