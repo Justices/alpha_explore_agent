@@ -497,6 +497,61 @@ class RecoveryCoordinator:
             "outcome": result, "outcome_sha256": _canonical_sha256(result),
             "created_at": _now(),
         }
+        # A recovered Simulation is not the same as a completed research run.
+        # If the P9 budget still has rounds (or Regular still has Campaign work),
+        # keep the orchestration Task BLOCKED and hand the verified checkpoint
+        # back to the operator. Never silently mark a partial Campaign complete.
+        iteration_complete = False
+        iteration_ref = result.get("iteration_ref")
+        if isinstance(iteration_ref, str):
+            iteration_path = Path(iteration_ref).expanduser()
+            iteration_root = (self.state_root / "state" / "research_v1_1" /
+                              "iterations").resolve()
+            if (not iteration_path.is_symlink()
+                    and not iteration_path.parent.is_symlink()):
+                iteration_path = iteration_path.resolve()
+                if iteration_path.is_relative_to(iteration_root) and iteration_path.is_file():
+                    iteration_record = read_json(iteration_path)
+                    iteration_complete = (
+                        isinstance(iteration_record, dict)
+                        and iteration_record.get("status") == "COMPLETED"
+                        and iteration_record.get("budget", {}).get("reserved") == 0)
+        if iteration_complete is not True:
+            receipt = {
+                "schema_version": 1,
+                "status": "RECOVERED_AWAITING_EXPLICIT_CONTINUATION",
+                "task_id": task_id, "workflow": task["workflow"], "step": step,
+                "target_kind": target["kind"], "target_ref": target["ref"],
+                "recovery_id": journal["recovery_id"],
+                "recovery_journal_ref": str(journal_path),
+                "recovery_journal_sha256": _sha256_bytes(journal_path.read_bytes()),
+                "outcome": result, "outcome_sha256": _canonical_sha256(result),
+                "automatic_resume_allowed": False,
+                "simulation_invoked": False, "alpha_submission_invoked": False,
+                "created_at": _now(),
+            }
+            atomic_write_json(receipt_path, receipt)
+            return {
+                "schema_version": 1,
+                "status": "RECOVERED_AWAITING_EXPLICIT_CONTINUATION",
+                "task_id": task_id, "workflow": task["workflow"],
+                "recovery_receipt_ref": str(receipt_path),
+                "iteration_ref": iteration_ref,
+                "automatic_resume_allowed": False,
+                "simulation_invoked": False, "alpha_submission_invoked": False,
+                "task_remains_blocked": True,
+            }
+
+        receipt = {
+            "schema_version": 1, "status": "COMPLETED",
+            "task_id": task_id, "workflow": task["workflow"], "step": step,
+            "target_kind": target["kind"], "target_ref": target["ref"],
+            "recovery_id": journal["recovery_id"],
+            "recovery_journal_ref": str(journal_path),
+            "recovery_journal_sha256": _sha256_bytes(journal_path.read_bytes()),
+            "outcome": result, "outcome_sha256": _canonical_sha256(result),
+            "created_at": _now(),
+        }
         atomic_write_json(receipt_path, receipt)
         receipt_sha256 = _sha256_bytes(receipt_path.read_bytes())
         return orchestrator.reconcile(
