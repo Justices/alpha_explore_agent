@@ -356,18 +356,9 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
         except Exception as exc:
             target_state = _orchestration_target_state(
                 state_root, execution_context)
-            if target_state in {"POSTING", "OUTCOME_UNKNOWN",
-                                "RESPONSE_RECEIVED", "READ_BACK"}:
-                ledger.record_round(
-                    round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
-                    reason=type(exc).__name__, started_at=started,
-                    completed_at=_now())
-                ledger.mark_recovery_pending(
-                    "iteration_failed_recovery_or_manual_review_required:" +
-                    type(exc).__name__)
-            elif target_state is None:
-                # Direct CLI has no Task-bound target resolver. Preserve the
-                # explicit manual recovery path; never guess whether POST began.
+            if (target_state is None or target_state not in {"NO_TARGET", "PREPARED"}):
+                # Unknown/unreadable states are not evidence that POST did not
+                # happen. Preserve the recovery/manual-review path fail-closed.
                 ledger.record_round(
                     round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
                     reason=type(exc).__name__, started_at=started,
