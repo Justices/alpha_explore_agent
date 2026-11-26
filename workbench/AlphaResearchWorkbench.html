@@ -294,12 +294,25 @@ function runtimeTasks(){
    return [
      esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
+     esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
+     esc(row.candidate_alpha_id||"—"),
      canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):"—"
    ];
  });
+ const evidenceRows=domainRecords.map(({kind,row})=>({
+   kind,id:row.id||"—",
+   refs:["path","record_ref","report_ref","simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
+     .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n")
+ })).filter(item=>item.refs);
  const domainTable=domainRows.length
    ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
-     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","恢复核对"],domainRows)
+     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","恢复核对"],domainRows)
+   :"";
+ const evidenceTable=evidenceRows.length
+   ?'<h3 style="padding:12px 17px 0">执行证据引用（只读）</h3>'+
+     table(["流程","运行 / 分支 ID","证据路径 / 回执引用"],evidenceRows.map(item=>[
+       esc(item.kind),esc(item.id),'<pre class="detail" style="white-space:pre-wrap;max-width:48rem">'+esc(item.refs)+'</pre>'
+     ]))
    :"";
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
@@ -320,7 +333,7 @@ function runtimeTasks(){
    launchState?.status==="running"
      ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。")
      : blank("暂无 Regular Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
- return panel("Agent 执行任务",latest+snapshots+warning+records+domainTable,
+ return panel("Agent 执行任务",latest+snapshots+warning+records+domainTable+evidenceTable,
               button("刷新 Agent 状态","agent-refresh"));
 }
 
