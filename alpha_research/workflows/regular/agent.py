@@ -730,6 +730,7 @@ class ResearchAgent:
                     "scope": scope,
                     "mechanism_tags": prereg["proposal"].get("mechanism_tags", []),
                     "field_generation_tags": prereg["proposal"].get("field_generation_tags", []),
+                    "prior_campaign_findings": prior_research or [],
                     "variants": prereg["variants"],
                     "failure_signatures": sorted({signature for row in
                         failed_alphas.values() for signature in row["signatures"]}),
@@ -1840,6 +1841,10 @@ class ResearchAgent:
             "operator_catalog": operator_catalog,
             "remedy_reference": remedy_reference,
             "prior_batches": prior_case.get("batches", []),
+            # Reuse the same-scope historical evidence already supplied to probe
+            # planning; proposal generation must see the outcomes it is expected
+            # to improve, not only field-level probe history.
+            "prior_campaign_findings": prior_research or [],
             "probe_results": probe_results, "probe_observations": probe_observations,
             "available_evidence": {
                 field_id: {dimension: sorted(values) for dimension, values in dimensions.items()}
