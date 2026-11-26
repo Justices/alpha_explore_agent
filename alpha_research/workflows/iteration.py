@@ -130,8 +130,6 @@ class IterationLedger:
                     or saved.get("request") != request
                     or not isinstance(saved.get("rounds"), list)):
                 raise IterationError("existing iteration ledger identity or request changed")
-            if saved.get("status") in _TERMINAL:
-                raise IterationError("iteration session is already terminal")
             self.record = saved
         else:
             now = _now()
@@ -194,6 +192,8 @@ class IterationLedger:
             if existing.get("round_sha256") != row["round_sha256"]:
                 raise IterationError("a recorded iteration round cannot be overwritten")
             return existing
+        if self.record.get("status") in _TERMINAL:
+            raise IterationError("terminal iteration session cannot accept another round")
         if self.record["budget"]["used"] >= self.record["budget"]["limit"]:
             raise IterationError("iteration budget is exhausted")
         self.record["rounds"].append(row)
