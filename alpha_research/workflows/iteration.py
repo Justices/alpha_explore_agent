@@ -97,8 +97,10 @@ class IterationLedger:
         _nonempty(objective, "objective")
         if not isinstance(scope, dict):
             raise IterationError("iteration scope must be an object")
-        if type(max_iterations) is not int or not 1 <= max_iterations <= 20:
-            raise IterationError("max_iterations must be an integer from 1 to 20")
+        maximum = 10000 if workflow == "regular" else 20
+        if type(max_iterations) is not int or not 1 <= max_iterations <= maximum:
+            raise IterationError(
+                f"max_iterations must be an integer from 1 to {maximum}")
         self.root = Path(state_root).resolve()
         self.path = (self.root / "state" / "research_v1_1" /
                      "iterations" / (session_id + ".json"))

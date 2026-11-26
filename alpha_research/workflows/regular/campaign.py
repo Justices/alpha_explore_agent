@@ -66,6 +66,7 @@ def delete_saved_campaign(state_root, campaign_id):
     owned = {
         path, path.with_name(f"{campaign_id}_scope_plan.json"),
         path.with_name(f"{campaign_id}_summary.json"),
+        root / "state" / "research_v1_1" / "iterations" / f"{campaign_id}.json",
         path.parent / "field_pools" / campaign_id,
         path.parent / "dataset_reviews" / campaign_id,
         root / "state/codex_threads" / hashlib.sha256(research_id.encode()).hexdigest(),
@@ -870,4 +871,6 @@ def run_regular_campaign(agent, gateway, *, objective, region, dataset_ids=None,
             "dataset_reviews": state.get("dataset_reviews", {}),
             "unselected_dataset_ids": state["plan"].get("unselected_dataset_ids", []),
             "unresolved": state["plan"]["unresolved"],
-            "state_path": str(path), "summary_path": str(summary_path)}
+            "state_path": str(path), "summary_path": str(summary_path),
+            "iteration_ref": str(iteration_ledger.path),
+            "iterations_completed": iteration_ledger.record["budget"]["used"]}
