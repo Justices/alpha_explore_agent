@@ -1,6 +1,7 @@
 """BRAIN-native Super research preflight; no Regular Dataset assumptions."""
 
 from datetime import datetime, timezone
+import hashlib
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -31,15 +32,29 @@ def _prior_super_findings(store, region, objective, *, exclude_run_id=None, limi
             if row.get("run_id") != exclude_run_id
             and row.get("region") == region and row.get("objective") == objective]
     rows.sort(key=lambda row: row.get("updated_at", ""), reverse=True)
-    return [{
-        "run_id": row["run_id"],
-        "status": row.get("status"),
-        "candidate_alpha_id": row.get("candidate_alpha_id"),
-        "candidate_status": row.get("candidate_status"),
-        "preferred_status": row.get("preferred_status"),
-        "audit_ref": row.get("audit_ref"),
-        "readback_ref": row.get("readback_ref"),
-    } for row in rows[:limit]]
+    findings = []
+    for row in rows[:limit]:
+        candidate = {}
+        if isinstance(row.get("candidate_id"), str):
+            try:
+                candidate = store.get("candidate", row["candidate_id"])
+            except (FileNotFoundError, ValueError):
+                candidate = {}
+        findings.append({
+            "run_id": row["run_id"],
+            "status": row.get("status"),
+            "candidate_alpha_id": row.get("candidate_alpha_id"),
+            "candidate_status": row.get("candidate_status"),
+            "preferred_status": row.get("preferred_status"),
+            "proposal_sha256": row.get("proposal_sha256"),
+            "candidate_definition_sha256": row.get("candidate_definition_sha256"),
+            "failures": candidate.get("failures", []),
+            "pending": candidate.get("pending", []),
+            "metrics": candidate.get("metrics", {}),
+            "audit_ref": row.get("audit_ref"),
+            "readback_ref": row.get("readback_ref"),
+        })
+    return findings
 
 
 def prepare_super_run(gateway, state_root: Path, *, region: str,
@@ -138,13 +153,15 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
 
 def run_super_research(gateway, model, config: dict, state_root: Path, *,
                        region: str, objective: str, delay: int | None = None,
-                       execution_context=None, preparation_handoff=None):
+                       execution_context=None, preparation_handoff=None,
+                       research_id=None, stop_flag=None):
     """Generate a Super candidate; optionally stop before Simulation for handoff."""
     run_id = uuid4().hex
+    active_research_id = research_id or f"super:{run_id}"
     if execution_context is not None:
         bind_identity = execution_context.get("bind_research_identity")
         if callable(bind_identity):
-            bind_identity(f"super:{run_id}")
+            bind_identity(active_research_id)
     gateway.call("set_case", case_key=run_id, run_id=run_id)
     _emit(execution_context, "super.research_started", run_id=run_id,
           region=region, delay=delay)
@@ -199,7 +216,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     recorder = DecisionRecorder(
         model, root / "state", governance=config.get("model_governance")
     )
-    recorder.begin_session(research_id=f"super:{run_id}")
+    recorder.begin_session(research_id=active_research_id)
     proposal = recorder.complete_json(
         "construct_super", {**context, "knowledge_pack": rule_pack},
         knowledge_pack_ref=str(pack_path))
@@ -226,6 +243,34 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             raise SuperScopeError(f"Super proposal changed configured {key}")
     validation = validate_super_expressions(
         proposal["selection"], proposal["combo"], operators)
+    proposal_sha256 = hashlib.sha256(json.dumps(
+        proposal, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+    candidate_definition_sha256 = hashlib.sha256(json.dumps(
+        {"selection": proposal["selection"], "combo": proposal["combo"],
+         "settings": settings}, ensure_ascii=False, sort_keys=True,
+        separators=(",", ":")).encode("utf-8")).hexdigest()
+    if any(row.get("candidate_definition_sha256") == candidate_definition_sha256
+           for row in prior_super_findings):
+        run.update(status="duplicate_proposal_blocked",
+                   proposal_sha256=proposal_sha256,
+                   candidate_definition_sha256=candidate_definition_sha256)
+        atomic_write_json(run_path, run)
+        persist_shared(status="duplicate_proposal_blocked",
+                       proposal_sha256=proposal_sha256,
+                       candidate_definition_sha256=candidate_definition_sha256,
+                       unresolved=["duplicate_candidate_definition"])
+        return {
+            "status": "DUPLICATE_PROPOSAL_BLOCKED", "workflow": "super",
+            "run_id": run_id, "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+            "record_ref": str(run_path)}
+    run.update(proposal_sha256=proposal_sha256,
+               candidate_definition_sha256=candidate_definition_sha256)
+    atomic_write_json(run_path, run)
+    persist_shared(proposal_sha256=proposal_sha256,
+                   candidate_definition_sha256=candidate_definition_sha256)
     batch_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
     prereg = {
         "workflow": "super", "run_id": run_id, "batch_id": batch_id,
@@ -265,8 +310,21 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "status": "AWAITING_INDEPENDENT_AUTHORIZATION",
             "workflow": "super", "run_id": run_id, "batch_id": batch_id,
             "manifest": prepared_manifest,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
             "simulation_invoked": False, "alpha_submission_invoked": False,
         }
+    if stop_flag is not None and Path(stop_flag).exists():
+        run["status"] = "user_stopped"
+        atomic_write_json(run_path, run)
+        persist_shared(status="user_stopped",
+                       unresolved=["stop_requested_before_simulation"])
+        return {
+            "status": "USER_STOPPED", "workflow": "super", "run_id": run_id,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+            "record_ref": str(run_path)}
     create_simulation_intent(
         intent_path, workflow="super", run_id=run_id, batch_id=batch_id,
         request=request, settings=settings)
@@ -383,4 +441,6 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "preferred_status": qualification["preferred"]["status"],
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
             "status": run["status"], "record_ref": str(run_path)}
