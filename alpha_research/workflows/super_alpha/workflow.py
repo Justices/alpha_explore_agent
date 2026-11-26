@@ -14,6 +14,7 @@ from alpha_research.qualification.pending_audit import record_pending_audit
 from alpha_research.simulation.intent import create_simulation_intent, transition_simulation_intent
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.service import CandidateQualificationService
+from alpha_research.workflows.iteration import is_stop_requested
 
 
 def _emit(execution_context, event_type, **payload):
@@ -314,7 +315,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "candidate_definition_sha256": candidate_definition_sha256,
             "simulation_invoked": False, "alpha_submission_invoked": False,
         }
-    if stop_flag is not None and Path(stop_flag).exists():
+    if is_stop_requested(stop_flag):
         run["status"] = "user_stopped"
         atomic_write_json(run_path, run)
         persist_shared(status="user_stopped",

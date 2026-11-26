@@ -45,6 +45,16 @@ def _nonempty(value, name):
     return value
 
 
+def is_stop_requested(stop_flag):
+    if stop_flag is None:
+        return False
+    exists = getattr(stop_flag, "exists", None)
+    if callable(exists):
+        return bool(exists())
+    path = Path(stop_flag)
+    return path.exists() or path.is_symlink()
+
+
 def _candidate_evidence(result):
     candidate_ref = result.get("candidate_ref") or result.get("candidate_record_ref")
     record = None
@@ -216,6 +226,8 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
     """
     if not callable(run_one):
         raise IterationError("run_one callback is required")
+    if type(max_iterations) is not int or not 1 <= max_iterations <= 20:
+        raise IterationError("max_iterations must be an integer from 1 to 20")
     if execution_context is not None and max_iterations > 1:
         raise IterationError(
             "multi-round orchestration requires per-round recovery checkpoints")
@@ -232,7 +244,7 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
     terminal_status = "COMPLETED"
 
     for number in range(1, max_iterations + 1):
-        if stop_flag is not None and Path(stop_flag).exists():
+        if is_stop_requested(stop_flag):
             stop_reason, terminal_status = "user_stop_requested", "STOPPED"
             break
         started = _now()
@@ -275,15 +287,19 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
         results.append(result)
 
         if result.get("status") == "DUPLICATE_PROPOSAL_BLOCKED":
-            stop_reason = "duplicate_candidate_definition"
+            stop_reason, terminal_status = "duplicate_candidate_definition", "PARTIAL"
+            break
+        if result.get("status") == "USER_STOPPED":
+            stop_reason, terminal_status = "user_stop_requested", "STOPPED"
             break
         if result.get("status") == "AWAITING_INDEPENDENT_AUTHORIZATION":
-            stop_reason = "independent_authorization_handoff"
+            stop_reason, terminal_status = "independent_authorization_handoff", "PARTIAL"
             break
         if evidence.get("preferred_status") == "PREFERRED":
             stop_reason = "preferred_candidate_reached"
             break
         if (evidence.get("candidate_status") in _PENDING
+                or evidence.get("preferred_status") == "PENDING_PREFERRED"
                 or result.get("status") in {"outcome_unknown", "unresolved",
                                             "simulation_prepared", "simulation_posting",
                                             "source_integrity_unresolved"}):
@@ -301,7 +317,7 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
     else:
         stop_reason = "iteration_budget_exhausted"
 
-    if stop_flag is not None and Path(stop_flag).exists() and stop_reason == "iteration_budget_exhausted":
+    if is_stop_requested(stop_flag) and stop_reason == "iteration_budget_exhausted":
         stop_reason, terminal_status = "user_stop_requested", "STOPPED"
     record = ledger.finish(terminal_status, stop_reason)
     return {
