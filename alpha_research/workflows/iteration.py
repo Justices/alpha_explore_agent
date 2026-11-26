@@ -161,8 +161,11 @@ class IterationLedger:
             if digest is not None and (
                     not isinstance(digest, str) or not _HEX64.fullmatch(digest)):
                 raise IterationError(name + " must be a SHA-256 digest")
+        existing = next((item for item in self.record["rounds"]
+                         if item.get("round_key") == round_key), None)
         row = {
-            "round": len(self.record["rounds"]) + 1,
+            "round": (existing.get("round") if existing is not None
+                      else len(self.record["rounds"]) + 1),
             "round_key": round_key, "status": status,
             "candidate_status": candidate_status,
             "preferred_status": preferred_status,
@@ -175,8 +178,6 @@ class IterationLedger:
             "completed_at": completed_at or _now(),
         }
         row["round_sha256"] = _hash(row)
-        existing = next((item for item in self.record["rounds"]
-                         if item.get("round_key") == round_key), None)
         if existing is not None:
             if existing.get("round_sha256") != row["round_sha256"]:
                 raise IterationError("a recorded iteration round cannot be overwritten")
