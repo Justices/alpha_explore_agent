@@ -398,7 +398,14 @@ function cases(){
 function compare(){
  const items=data.alphas.filter(a=>selected.has(a.id));
  const chooser='<div class="toolbar"><select aria-label="选择 Alpha" id="comparison-options">'+opts(Object.fromEntries(data.alphas.filter(a=>!selected.has(a.id)).map(a=>[a.id,a.name])),"","选择 Alpha")+'</select>'+button("加入对比","add-comparison")+'</div>';
- return panel("并排对比",chooser+(items.length?table(["指标",...items.map(a=>esc(a.name)+" "+button("移除","remove-comparison",a.id,"quiet"))],[["状态",...items.map(badge)],...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics[k]))])]):blank("选择要对比的 Alpha","保留原始指标数值。比较之前请核对回测设置、指标口径和单位。")));
+ return panel("并排对比",chooser+(items.length?table(["指标",...items.map(a=>esc(a.name)+" "+button("移除","remove-comparison",a.id,"quiet"))],[
+   ["审核状态",...items.map(badge)],
+   ["工作流 / 区域",...items.map(a=>{const c=findCase(a.caseId);return esc(workflow(c)+" / "+(c.region||"—"));})],
+   ["Dataset / Category / Delay / Universe",...items.map(a=>{const c=findCase(a.caseId);return esc([a.dataset||c.dataset,a.category||c.category,a.delay??c.delay,a.universe||c.universe].map(v=>v??"—").join(" / "));})],
+   ["来源 Alpha / 候选 Alpha",...items.map(a=>esc([findCase(a.caseId).sourceId||"—",a.alphaId||"—"].join(" / ")))],
+   ["回测设置 / 回执",...items.map(a=>esc([a.settings||"设置待补",a.receipt||"回执待补"].join(" / ")))],
+   ...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics[k]))])
+ ]):blank("选择要对比的 Alpha","保留原始指标数值，并同时核对工作流、有效设置、来源 Alpha 与回测证据。")));
 }
 function audit(){
  const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
