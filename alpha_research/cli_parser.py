@@ -321,6 +321,8 @@ def build_parser():
     optimization_run.add_argument(
         "--max-iterations", type=int, default=1,
         help="bounded independent candidate rounds (1-20); stop on Preferred or unresolved evidence")
+    optimization_run.add_argument("--brain-credentials-stdin", action="store_true",
+                                   help=argparse.SUPPRESS)
     super_plan = sub.add_parser(
         "plan-super", help="inspect BRAIN-native Super settings and active Alpha pool")
     super_plan.add_argument("--region")
@@ -334,6 +336,8 @@ def build_parser():
     super_run.add_argument(
         "--max-iterations", type=int, default=1,
         help="bounded independent Super rounds (1-20); stop on Preferred or unresolved evidence")
+    super_run.add_argument("--brain-credentials-stdin", action="store_true",
+                           help=argparse.SUPPRESS)
     research_recovery = sub.add_parser("recover-research", help="reconcile a V1.1 Super or Optimization simulation intent without reposting")
     research_recovery.add_argument("intent_path", type=_path_argument)
     recovery = sub.add_parser("recover", help="reconcile an unfinished Regular batch")
@@ -344,6 +348,8 @@ def build_parser():
     unified_recovery.add_argument(
         "--workflow", choices=("regular", "super", "optimization"), required=True)
     unified_recovery.add_argument("target", type=_path_argument)
+    unified_recovery.add_argument("--brain-credentials-stdin", action="store_true",
+                                  help=argparse.SUPPRESS)
     task_recovery = sub.add_parser(
         "recover-task", help="reconcile a blocked orchestration execute step from its saved workflow intent")
     task_recovery.add_argument(
