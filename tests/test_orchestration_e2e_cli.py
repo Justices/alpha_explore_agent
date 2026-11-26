@@ -59,6 +59,10 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertTrue(report["workflow_handoff_audit"]["review_evidence_bound"])
         self.assertTrue(report["trace_binding_valid"])
         self.assertGreater(report["trace_event_count"], 0)
+        trace = inspect_execution_trace(self.root, report["task_id"])
+        proposal_event = next(event for event in trace["events"]
+                              if event["event_type"] == "regular.proposal_generated")
+        self.assertEqual(proposal_event["payload"]["prior_campaign_finding_count"], 0)
         self.assertEqual(len(report["trace_last_event_sha256"]), 64)
         self.assertTrue(Path(report["trace_ref"]).is_file())
         self.assertGreater(report["evidence_file_count"], 0)
@@ -102,6 +106,13 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                 self.assertEqual(result["scripted_domain_attempts"], 1)
                 self.assertEqual(result["trace_status"], "TRACE_VERIFIED")
                 self.assertEqual(result["workflow_handoff_audit"]["status"], "VERIFIED")
+                trace = inspect_execution_trace(root, result["task_id"])
+                proposal_type = (f"{workflow}.proposal_generated")
+                proposal_event = next(event for event in trace["events"]
+                                      if event["event_type"] == proposal_type)
+                feedback_key = ("prior_super_finding_count" if workflow == "super"
+                                else "prior_optimization_finding_count")
+                self.assertEqual(proposal_event["payload"][feedback_key], 0)
                 self.assertTrue(Path(result["trace_ref"]).is_file())
                 self.assertIn("simulate_super", result["scripted_gateway_commands"])
                 self.assertFalse(result["brain_simulation_invoked"])
