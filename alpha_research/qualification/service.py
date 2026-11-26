@@ -150,9 +150,15 @@ class CandidateQualificationService:
 
         try:
             existing_candidate = self.store.get("candidate", candidate_id)
+        except FileNotFoundError:
+            existing_candidate = None
+        try:
             existing_preferred = self.store.get("preferred", candidate_id)
         except FileNotFoundError:
-            existing_candidate, existing_preferred = None, None
+            existing_preferred = None
+        if existing_preferred is not None and existing_candidate is None:
+            raise ValueError(
+                "orphan Preferred record has no Candidate lineage; manual audit required")
         # source_ref identifies the immutable originating research record.
         # A fresh re-audit is evidence, not a new source; keep the original
         # source_ref and attach the new audit under evidence_refs.
