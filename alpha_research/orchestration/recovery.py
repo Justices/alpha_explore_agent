@@ -134,6 +134,103 @@ class RecoveryCoordinator:
             return None
         return self._read_json(journal_path, "recovery journal")
 
+    def record_manual_takeover(self, target, *, operator, decision, reason,
+                               evidence_refs=None, task_id=None):
+        """Append a human disposition to a BLOCKED journal without unblocking it.
+
+        This is an audit handoff only: it never edits Task/Intent state, calls a
+        workflow handler, or permits automatic replay.
+        """
+        path = self._resolve_target(target)
+        workflow, resolved, _, _ = self._inspect(path)
+        journal_path = self._journal_path(workflow, resolved)
+        if not journal_path.is_file() or journal_path.is_symlink():
+            raise RecoveryError("manual takeover requires an existing recovery journal")
+        if not isinstance(operator, str) or not operator.strip() or len(operator) > 128:
+            raise RecoveryError("manual takeover operator is required")
+        if decision not in {"TAKE_OVER", "ABANDON", "ESCALATE"}:
+            raise RecoveryError("unsupported manual takeover decision")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 2000:
+            raise RecoveryError("manual takeover reason is required")
+        refs = evidence_refs or []
+        if (not isinstance(refs, list) or len(refs) > 20
+                or any(not isinstance(value, (str, Path)) for value in refs)):
+            raise RecoveryError("manual takeover evidence refs must be a list of at most 20 paths")
+        evidence = []
+        for value in refs:
+            evidence_path = Path(value).expanduser()
+            if evidence_path.is_symlink() or evidence_path.parent.is_symlink():
+                raise RecoveryError("manual takeover evidence cannot be a symlink")
+            resolved_evidence = evidence_path.resolve()
+            if (not resolved_evidence.is_relative_to(self.state_root)
+                    or not resolved_evidence.is_file()):
+                raise RecoveryError("manual takeover evidence must be an existing file inside state root")
+            evidence.append({
+                "ref": str(resolved_evidence),
+                "sha256": _sha256_bytes(resolved_evidence.read_bytes()),
+            })
+        if decision == "TAKE_OVER" and not evidence:
+            raise RecoveryError("TAKE_OVER requires at least one verifiable evidence file")
+
+        manual_root = self.journal_root / "manual"
+        manual_path = manual_root / f"{journal_path.stem}.json"
+        try:
+            with SingleWriterLock(manual_path.with_suffix(".lock")):
+                journal = self._read_json(journal_path, "recovery journal")
+                if journal.get("status") != "BLOCKED":
+                    raise RecoveryError("manual takeover is available only for BLOCKED recovery")
+                if task_id is not None and journal.get("task_id") != task_id:
+                    raise RecoveryError("manual takeover Task binding does not match recovery journal")
+                if manual_path.exists():
+                    record = self._read_json(manual_path, "manual takeover journal")
+                else:
+                    record = {
+                        "schema_version": 1,
+                        "recovery_id": journal["recovery_id"],
+                        "workflow": workflow,
+                        "target_ref": str(resolved),
+                        "recovery_journal_ref": str(journal_path),
+                        "recovery_journal_sha256": _sha256_bytes(journal_path.read_bytes()),
+                        "task_id": journal.get("task_id"),
+                        "decisions": [],
+                        "created_at": _now(),
+                    }
+                if (record.get("recovery_journal_sha256") !=
+                        _sha256_bytes(journal_path.read_bytes())
+                        or record.get("task_id") != journal.get("task_id")):
+                    raise RecoveryError("manual takeover lineage changed; review the journal")
+                entry = {
+                    "decision_id": _canonical_sha256({
+                        "recovery_id": journal["recovery_id"],
+                        "operator": operator.strip(), "decision": decision,
+                        "reason": reason.strip(), "evidence": evidence,
+                        "sequence": len(record["decisions"]) + 1,
+                    })[:32],
+                    "operator": operator.strip(), "decision": decision,
+                    "reason": reason.strip(), "evidence": evidence,
+                    "created_at": _now(),
+                    "execution_unblocked": False,
+                    "automatic_replay_allowed": False,
+                    "simulation_invoked": False,
+                    "alpha_submission_invoked": False,
+                }
+                if any(row.get("decision_id") == entry["decision_id"]
+                       for row in record["decisions"]):
+                    raise RecoveryError("duplicate manual takeover decision")
+                record["decisions"].append(entry)
+                record["updated_at"] = _now()
+                atomic_write_json(manual_path, record)
+        except WriterLockError as exc:
+            raise RecoveryError("another operator is recording manual takeover") from exc
+        return {
+            "schema_version": 1, "status": "MANUAL_TAKEOVER_RECORDED",
+            "recovery_id": journal["recovery_id"], "workflow": workflow,
+            "task_id": journal.get("task_id"), "decision": decision,
+            "manual_takeover_ref": str(manual_path),
+            "execution_unblocked": False, "automatic_replay_allowed": False,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
+
     def recover(self, target, *, gateway, agent=None, config=None, expected_workflow=None,
                 task_id=None, step=None):
         """Serialize recovery by target across processes, including handler work.
