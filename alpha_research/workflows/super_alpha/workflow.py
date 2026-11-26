@@ -23,6 +23,24 @@ def _emit(execution_context, event_type, **payload):
         callback(event_type, payload)
 
 
+def _prior_super_findings(store, region, objective, *, limit=5):
+    """Return bounded, same-region/objective Super outcomes as planning context."""
+    if type(limit) is not int or limit < 1:
+        raise SuperScopeError("Super feedback limit must be positive")
+    rows = [row for row in store.list("super_run")
+            if row.get("region") == region and row.get("objective") == objective]
+    rows.sort(key=lambda row: row.get("updated_at", ""), reverse=True)
+    return [{
+        "run_id": row["run_id"],
+        "status": row.get("status"),
+        "candidate_alpha_id": row.get("candidate_alpha_id"),
+        "candidate_status": row.get("candidate_status"),
+        "preferred_status": row.get("preferred_status"),
+        "audit_ref": row.get("audit_ref"),
+        "readback_ref": row.get("readback_ref"),
+    } for row in rows[:limit]]
+
+
 def prepare_super_run(gateway, state_root: Path, *, region: str,
                       objective: str, delay: int | None = None,
                       run_id: str | None = None):
@@ -159,9 +177,11 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         raise SuperScopeError("live operator catalog is unavailable")
     root = Path(state_root).resolve()
     knowledge = KnowledgeService(root / "state", root / "runs", config)
+    prior_super_findings = _prior_super_findings(store, region, objective)
     context = {
         "objective": objective, "scope": {"region": region, "delay": delay},
         "active_submitted_pool": run["active_submitted_pool"],
+        "prior_super_findings": prior_super_findings,
         "platform_super_schema": run["platform_super_schema"],
         "allowed_delays": run["allowed_delays"],
         "operator_catalog": [row for row in operators if isinstance(row, dict)
