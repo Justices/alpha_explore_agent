@@ -10,7 +10,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from alpha_research.state.store import atomic_write_json
+from alpha_research.state.store import atomic_write_json, read_json
 from alpha_research.state.json_contract import read_strict_object
 from alpha_research.state.writer_lock import SingleWriterLock, WriterLockError
 from alpha_research.state.fingerprint import fingerprint_json as _canonical_sha256
@@ -253,6 +253,70 @@ class RecoveryCoordinator:
             raise RecoveryError(
                 "another recovery writer is already processing this target") from exc
 
+    def _iteration_research_id(self, workflow, target):
+        """Resolve the iteration session from its immutable domain record."""
+        from alpha_research.state.records import ResearchRecordStore
+
+        store = ResearchRecordStore(self.state_root)
+        if workflow == "regular":
+            context_path = Path(target) / "batch_context.json"
+            context = read_json(context_path)
+            return context.get("research_id") if isinstance(context, dict) else None
+        intent = self._read_json(target, "simulation intent")
+        run_id = intent.get("run_id")
+        if workflow == "super" and isinstance(run_id, str):
+            try:
+                return store.get("super_run", run_id).get("research_id")
+            except (FileNotFoundError, ValueError):
+                return None
+        if workflow == "optimization":
+            matches = [row for row in store.list("candidate_branch")
+                       if row.get("simulation_intent_ref") == str(Path(target).resolve())]
+            return matches[0].get("research_id") if len(matches) == 1 else None
+        return None
+
+    def _reconcile_iteration(self, workflow, target, result, recovery_ref):
+        """Close the interrupted P9 round only from a verified recovery receipt."""
+        research_id = self._iteration_research_id(workflow, target)
+        if not isinstance(research_id, str):
+            return result
+        prefix = {
+            "regular": "regular:campaign:",
+            "super": "super:",
+            "optimization": "optimization:",
+        }.get(workflow)
+        if not prefix or not research_id.startswith(prefix):
+            return result
+        session_id = research_id[len(prefix):]
+        if len(session_id) != 32 or any(
+                char not in "0123456789abcdef" for char in session_id):
+            return result
+        from alpha_research.workflows.iteration import IterationLedger
+
+        ledger_path = (self.state_root / "state" / "research_v1_1" /
+                       "iterations" / f"{session_id}.json")
+        saved = read_json(ledger_path)
+        if not isinstance(saved, dict):
+            return result
+        request = saved.get("request")
+        if not isinstance(request, dict):
+            raise RecoveryError("iteration ledger request is unreadable during recovery")
+        ledger = IterationLedger(
+            self.state_root, session_id=session_id, workflow=workflow,
+            objective=request.get("objective"), scope=request.get("scope"),
+            source_ref=request.get("source_ref"),
+            max_iterations=request.get("max_iterations"))
+        if not any(row.get("status") == "RECOVERY_REQUIRED"
+                   for row in ledger.record.get("rounds", [])):
+            return result
+        reconciled = ledger.reconcile_recovery(
+            recovery_ref=str(recovery_ref), result=result)
+        output = dict(result)
+        output["iteration_session_id"] = session_id
+        output["iteration_ref"] = str(ledger.path)
+        output["iteration_status"] = reconciled.get("status")
+        return output
+
     def _recover_locked(self, target, *, gateway, agent=None, config=None,
                         expected_workflow=None, task_id=None, step=None):
         """Recover one existing intent without reposting unknown simulation.
@@ -324,6 +388,9 @@ class RecoveryCoordinator:
                 result = recover_fn(gateway, self.state_root, resolved, config=config)
             if not isinstance(result, dict):
                 raise RecoveryError("workflow recovery returned a non-object result")
+            if workflow in {"super", "optimization"}:
+                result = self._reconcile_iteration(
+                    workflow, resolved, result, journal_path)
             result_digest = _canonical_sha256(result)
             journal.update(
                 status="COMPLETED",
