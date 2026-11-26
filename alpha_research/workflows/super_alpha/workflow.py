@@ -189,6 +189,9 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
         shared.update(changes)
         shared["updated_at"] = now.isoformat()
         store.put("super_run", shared, expected_updated_at=previous)
+    run["research_id"] = active_research_id
+    atomic_write_json(run_path, run)
+    persist_shared(research_id=active_research_id)
     if prepared["status"] != "prepared":
         return prepared
     operators = gateway.call("get_operators")

@@ -397,14 +397,21 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "simulation_invoked": False, "alpha_submission_invoked": False,
         }
     if stop_flag is not None and stop_flag.exists():
-        raise OptimizationError("research stopped before optimization simulation")
+        return {
+            "status": "USER_STOPPED", "workflow": "optimization",
+            "run_id": run_id, "source_alpha_id": alpha_id,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
     branch_info = create_branch(
         state_root, source_ref=source_info["source_ref"], objective=objective,
         rationale=proposal["rationale"], changes=proposal["changes"],
         effective_settings=settings)
     branch = store.get("candidate_branch", branch_info["branch_id"])
     branch.update(proposal_sha256=proposal_sha256,
-                  candidate_definition_sha256=candidate_definition_sha256)
+                  candidate_definition_sha256=candidate_definition_sha256,
+                  research_id=active_research_id)
     _put_advanced(store, branch)
     _emit(execution_context, "optimization.candidate_branch_created",
           run_id=run_id, branch_id=branch_info["branch_id"],
@@ -440,11 +447,23 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "status": "AWAITING_INDEPENDENT_AUTHORIZATION",
             "workflow": "optimization", "run_id": run_id,
             "batch_id": batch_id, "manifest": prepared_manifest,
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
             "simulation_invoked": False, "alpha_submission_invoked": False,
         }
     check_cache = getattr(gateway, "check_simulation_cache", None)
     if family == "regular" and callable(check_cache):
         check_cache(settings=settings, expressions=[expression])
+    if stop_flag is not None and stop_flag.exists():
+        branch.update(status="user_stopped", prereg_ref=str(prereg_path))
+        _put_advanced(store, branch)
+        return {
+            "status": "USER_STOPPED", "workflow": "optimization",
+            "run_id": run_id, "branch_id": branch["branch_id"],
+            "proposal_sha256": proposal_sha256,
+            "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": False, "alpha_submission_invoked": False,
+        }
     create_simulation_intent(
         intent_path, workflow="optimization", run_id=run_id,
         batch_id=batch_id, request=request, settings=settings)
@@ -544,6 +563,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
         "source_snapshot_sha256": source_info["details_sha256"],
         "source_properties_sha256": source_info["source_properties_sha256"],
         "candidate_branch_id": branch["branch_id"],
+        "research_id": active_research_id,
         "proposal_sha256": proposal_sha256,
         "candidate_definition_sha256": candidate_definition_sha256,
         "candidate_alpha_id": rows[0]["alpha_id"],
