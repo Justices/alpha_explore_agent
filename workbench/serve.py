@@ -1,4 +1,4 @@
-"""Serve the workbench and launch bounded Regular research on loopback."""
+"""Serve the local Alpha workbench and its guarded research workflows."""
 
 import argparse
 from http.cookies import CookieError, SimpleCookie
@@ -400,8 +400,12 @@ def handler_for(agent_args, port):
                     self.save_credentials(request)
                     return
                 if self.path == "/api/workbench-records":
-                    saved = save_workbench_records(root, request)
-                    self.respond_json(200, saved)
+                    try:
+                        saved = save_workbench_records(root, request)
+                    except WriterLockError:
+                        self.respond_json(409, {"error": "工作台记录正在被另一个进程保存，请重试"})
+                    else:
+                        self.respond_json(200, saved)
                     return
                 credentials = self.browser_credentials()
                 if credentials is None:
@@ -440,7 +444,7 @@ def handler_for(agent_args, port):
                 if set(request) != {"action", "id", "workflow"}:
                     raise ValueError("回执核对需要工作流和 Simulation Intent 路径")
                 workflow = request.get("workflow")
-                if workflow not in {"super", "optimization"}:
+                if not isinstance(workflow, str) or workflow not in {"super", "optimization"}:
                     raise ValueError("仅支持 Super 或 Alpha 优化回执核对")
                 if not isinstance(target, str) or not target.strip():
                     raise ValueError("Simulation Intent 路径无效")
