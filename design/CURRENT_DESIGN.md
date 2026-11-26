@@ -80,6 +80,7 @@ Knowledge:  Dataset / field / operator snapshots and research references
 6. **Readback & reconciliation**：严格绑定返回的请求/operation/Alpha 身份；丢失 ACK 或未知结果隔离为 UNKNOWN，先协调读回，不自动重放。
 7. **Qualification**：适用 RA 要求通过后才进入进一步相关性及指标核验；缺失、失败、无法读取的证据不得作为通过。Candidate/Preferred/PPA 分开记录。
 8. **Report**：写入候选、失败原因、未覆盖范围、费用和血缘信息；报表状态不是额外的执行许可。
+9. **Research Feedback**：Regular 将同 Dataset/Region/Delay/Universe 的历史 Campaign 摘要（最多 3 条、归因文本截断、仅汇总字段）提供给 Probe Planning、Proposal Construction 与 Failure Diagnosis；Optimization 仅向同 Alpha 且源定义 SHA-256 完全一致的历史分支提供最近 5 条目标/改动/状态/审计引用。历史反馈是研究上下文，不是平台事实或资格证据；不得跨 Dataset、跨 Scope 或跨源定义复用，也不得改变 RA→Correlation 的资格顺序。
 
 研究决策层四种边界必须分开：Workflow Scope（业务流程类型）、Research Scope（用户/平台有效范围）、Research Profile（如显式 PPA）、Execution Policy（批准的权限与预算）。`Research Lead` 与 `Research Executor` 是角色，Codex/Antigravity/Claude 等是 Agent Runtime，DeepSeek/GLM/Kimi 等是注册的模型服务；**角色、执行客户端与模型服务三者不能混淆**。
 
