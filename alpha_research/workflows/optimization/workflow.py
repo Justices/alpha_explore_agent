@@ -323,7 +323,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     _emit(execution_context, "optimization.proposal_generated",
           run_id=run_id, model_session_id=recorder.session_id,
           model_call_id=recorder.call_id,
-          proposal_sha256=_digest(proposal), knowledge_pack_ref=str(pack_path))
+          proposal_sha256=_digest(proposal), knowledge_pack_ref=str(pack_path),
+          prior_optimization_finding_count=len(prior_optimization_findings))
     for key in ("rationale", "hypothesis", "failure_criterion"):
         if not isinstance(proposal.get(key), str) or not proposal[key].strip():
             raise OptimizationError(f"optimization proposal lacks {key}")
