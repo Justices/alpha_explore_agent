@@ -165,16 +165,18 @@ def plan_arguments(data):
         if type(delay) is not int or delay != 1:
             raise ValueError("Regular 预检必须使用 Delay 1")
         dataset_ids = data.get("dataset_ids")
-        if dataset_ids is not None and (
-                not isinstance(dataset_ids, list) or not dataset_ids
-                or any(not isinstance(item, str) or not item.strip() or "\x00" in item
-                       for item in dataset_ids)
-                or len(set(dataset_ids)) != len(dataset_ids)):
-            raise ValueError("Dataset ID 必须是非空且不重复的列表")
+        if dataset_ids is not None:
+            if (not isinstance(dataset_ids, list) or not dataset_ids
+                    or any(not isinstance(item, str) or not item.strip() or "\x00" in item
+                           for item in dataset_ids)):
+                raise ValueError("Dataset ID 必须是非空且不重复的列表")
+            dataset_ids = [item.strip() for item in dataset_ids]
+            if len(set(dataset_ids)) != len(dataset_ids):
+                raise ValueError("Dataset ID 必须是非空且不重复的列表")
         args = ["plan-regular", f"--region={region.strip()}", "--delay=1"]
         if dataset_ids:
             for dataset_id in dataset_ids:
-                args.append(f"--dataset={dataset_id.strip()}")
+                args.append(f"--dataset={dataset_id}")
         for key in ("category", "universe"):
             value = data.get(key)
             if value is not None:
