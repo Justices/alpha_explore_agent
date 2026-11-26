@@ -201,6 +201,66 @@ class IterationLedger:
         self._save()
         return row
 
+    def mark_recovery_pending(self, reason):
+        """Keep an interrupted round resumable by the explicit recovery path."""
+        _nonempty(reason, "recovery reason")
+        if self.record.get("status") in _TERMINAL:
+            raise IterationError("terminal iteration session cannot enter recovery")
+        self.record["status"] = "RECOVERY_PENDING"
+        self.record["stop_reason"] = reason
+        self._save()
+        return self.record
+
+    def reconcile_recovery(self, *, recovery_ref, result):
+        """Append verified recovery evidence and close the interrupted round."""
+        _nonempty(recovery_ref, "recovery_ref")
+        if not isinstance(result, dict):
+            raise IterationError("recovery result must be an object")
+        if self.record.get("status") not in {"RECOVERY_PENDING", "RUNNING"}:
+            raise IterationError("iteration session is not awaiting recovery")
+        pending_rounds = [row for row in self.record["rounds"]
+                          if row.get("status") == "RECOVERY_REQUIRED"]
+        if len(pending_rounds) != 1:
+            raise IterationError("recovery must bind exactly one interrupted round")
+        target = pending_rounds[0]
+        refs = {
+            key: result[key] for key in (
+                "receipt_ref", "readback_ref", "candidate_record_ref",
+                "preferred_record_ref", "audit_ref")
+            if isinstance(result.get(key), str) and result[key]
+        }
+        alpha_ids = []
+        for key in ("alpha_id", "candidate_alpha_id"):
+            value = result.get(key)
+            if isinstance(value, str) and value and value not in alpha_ids:
+                alpha_ids.append(value)
+        reconciliation = {
+            "round_key": target["round_key"], "recovery_ref": recovery_ref,
+            "status": "RECOVERED", "result_sha256": _hash(result),
+            "candidate_status": result.get("candidate_status"),
+            "preferred_status": result.get("preferred_status"),
+            "alpha_ids": alpha_ids, "evidence_refs": refs,
+            "created_at": _now(),
+        }
+        reconciliation["reconciliation_sha256"] = _hash(reconciliation)
+        rows = self.record.setdefault("reconciliations", [])
+        existing = next((row for row in rows
+                         if row.get("recovery_ref") == recovery_ref), None)
+        if existing is not None:
+            if existing.get("reconciliation_sha256") != reconciliation["reconciliation_sha256"]:
+                raise IterationError("recovery reconciliation cannot be overwritten")
+            return self.record
+        rows.append(reconciliation)
+        if self.record["budget"]["used"] >= self.record["budget"]["limit"]:
+            self.record["status"] = "COMPLETED"
+            reason = "recovered_after_unknown_outcome"
+        else:
+            self.record["status"] = "PARTIAL"
+            reason = "recovered; remaining iteration budget was not automatically resumed"
+        self.record["stop_reason"] = reason
+        self._save()
+        return self.record
+
     def finish(self, status, reason):
         if status not in _TERMINAL:
             raise IterationError("invalid terminal iteration status")
@@ -254,10 +314,12 @@ def run_bounded_iterations(state_root, *, workflow, objective, scope,
                 raise IterationError("domain workflow returned a non-object result")
         except Exception as exc:
             ledger.record_round(
-                round_key="iteration:" + str(number), status="FAILED",
+                round_key="iteration:" + str(number), status="RECOVERY_REQUIRED",
                 reason=type(exc).__name__, started_at=started,
                 completed_at=_now())
-            ledger.finish("BLOCKED", "iteration_failed:" + type(exc).__name__)
+            ledger.mark_recovery_pending(
+                "iteration_failed_recovery_or_manual_review_required:" +
+                type(exc).__name__)
             raise
 
         evidence = _candidate_evidence(result)
