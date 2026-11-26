@@ -107,7 +107,7 @@ def _inspect_iteration(state_root, task, result):
             blockers.append("P12_ITERATION_RECONCILIATION_INTEGRITY_FAILED")
             continue
         reconciled_keys.add(round_key)
-    for row in rounds if isinstance(rounds, list) else []:
+    for row in (rounds if isinstance(rounds, list) else []):
         if (isinstance(row, dict) and row.get("status") == "RECOVERY_REQUIRED"
                 and row.get("round_key") not in reconciled_keys):
             blockers.append("P12_ITERATION_RECOVERY_UNRECONCILED")
@@ -120,6 +120,8 @@ def _inspect_iteration(state_root, task, result):
         "iteration_ref": str(path),
         "iteration_sha256": fingerprint_json(record),
         "round_count": len(rounds) if isinstance(rounds, list) else 0,
+        "recovery_refs": [row.get("recovery_ref") for row in reconciliations
+                          if isinstance(row, dict) and isinstance(row.get("recovery_ref"), str)],
         "budget": budget, "stop_reason": record.get("stop_reason"),
         "blockers": sorted(set(blockers)),
     }
@@ -139,7 +141,8 @@ def _inspect_candidate_governance(state_root, config, result):
     pending = {
         "EVIDENCE_PENDING", "PENDING_FULL_AUDIT", "REVIEW_PENDING",
         "CHECKS_PENDING", "PAIRWISE_PENDING", "EVALUATION_PENDING",
-        "POLICY_STALE",
+        "PENDING_FULL_GATE", "ROBUSTNESS_REVIEW", "TRADEOFF_REVIEW",
+        "RA_UNAVAILABLE", "POLICY_STALE",
     }
     if not alpha_ids:
         blockers.append("P12_CANDIDATE_ALPHA_IDS_MISSING")
@@ -233,6 +236,10 @@ def inspect_p12_production_admission(orchestrator, task_id, model_config,
     blockers.update(iteration.get("blockers", []))
     blockers.update(candidate.get("blockers", []))
     blockers.update(recovery.get("blockers", []))
+    recovery_ref = recovery.get("recovery_journal_ref")
+    if recovery_ref is not None and any(
+            value != recovery_ref for value in iteration.get("recovery_refs", [])):
+        blockers.add("P12_ITERATION_RECOVERY_REF_MISMATCH")
     blockers.update({
         "P12_EXTERNAL_PRODUCTION_ATTESTATION_MISSING",
         "P12_INDEPENDENT_PLATFORM_WRITE_AUTHORITY_MISSING",
