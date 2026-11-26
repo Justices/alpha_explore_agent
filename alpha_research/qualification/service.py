@@ -207,21 +207,30 @@ class CandidateQualificationService:
             details, {"checks": is_data.get("checks")},
             settings.get("region"), self.config, correlations=correlations,
             pairwise=pairwise or {}, expected_pairwise_ids=expected_pairwise_ids or [])
-        if ra_state == "fail":
-            gate["status"] = "RA_FAILED"
-            gate["failures"] = sorted(set(gate.get("failures", []) + ["ra_fail_count"]))
-        elif ra_state != "pass":
-            gate["status"] = "EVIDENCE_PENDING"
-            gate["pending"] = sorted(set(gate.get("pending", []) + ["ra_checks_unsettled_or_unavailable"]))
         gate["failures"] = sorted(set(gate.get("failures", []) + (external_failures or [])))
         gate["pending"] = sorted(set(gate.get("pending", []) + (external_pending or [])))
-        if gate["failures"] or gate["pending"]:
-            gate["status"] = ("RA_FAILED" if any(x.startswith("ra:") or x == "ra_fail_count" for x in gate["failures"])
-                              else (external_status if external_status in {
-                                  "PENDING_FULL_AUDIT", "ROBUSTNESS_REVIEW", "REVIEW_PENDING",
-                                  "CHECKS_PENDING", "EVIDENCE_PENDING"} else "EVIDENCE_PENDING")
-                              if gate["pending"] and not gate["failures"]
-                              else "METRICS_FAILED")
+        if ra_state == "fail":
+            gate["status"] = "RA_FAILED"
+            gate["failures"] = sorted(set(gate["failures"] + ["ra_fail_count"]))
+        elif ra_state != "pass":
+            # A downstream platform status must never hide an unsettled RA gate.
+            gate["status"] = "RA_UNAVAILABLE" if ra_state == "unavailable" else "EVIDENCE_PENDING"
+            gate["pending"] = sorted(set(
+                gate["pending"] + ["ra_checks_unsettled_or_unavailable"]))
+        elif gate["failures"] or gate["pending"]:
+            gate["status"] = (
+                "PAIRWISE_CONFLICT" if any(
+                    item.startswith("pairwise:") for item in gate["failures"])
+                else "CORR_REJECTED" if any(
+                    "correlation" in item or item.startswith("local_self_")
+                    for item in gate["failures"])
+                else "METRICS_FAILED" if gate["failures"]
+                else external_status if external_status in {
+                    "PENDING_FULL_AUDIT", "ROBUSTNESS_REVIEW", "TRADEOFF_REVIEW",
+                    "REVIEW_PENDING", "CHECKS_PENDING", "PAIRWISE_PENDING",
+                    "PENDING_FULL_GATE", "RA_UNAVAILABLE", "POLICY_STALE",
+                    "EVALUATION_PENDING", "EVIDENCE_PENDING"}
+                else "EVIDENCE_PENDING")
         corr = {"prod": (correlations or {}).get("prod"),
                 "self": (correlations or {}).get("self"), "pairwise": pairwise or {}}
         refs = dict(evidence_refs or {})
