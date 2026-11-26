@@ -114,6 +114,14 @@ def run_orchestration_command(args, root, registry_assignments, registry_path, *
     try:
         # Audits and manual handoff are read-only/local operations. They must
         # not require selecting Lead/Executor roles or preparing a model runtime.
+        if args.command == "orchestration-recovery-takeover":
+            with SingleWriterLock(root / "state" / "agent.lock"):
+                result = RecoveryCoordinator(root).record_manual_takeover(
+                    args.target, operator=args.operator, decision=args.decision,
+                    reason=args.reason, evidence_refs=args.evidence,
+                    task_id=args.task_id)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+            return 0
         if args.command in {
                 "orchestration-p12-admission-audit",
                 "orchestration-release-gate",
