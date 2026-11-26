@@ -182,10 +182,17 @@ class RecoveryCoordinator:
             raise RecoveryError("TAKE_OVER requires at least one verifiable evidence file")
 
         manual_root = self.journal_root / "manual"
+        if manual_root.is_symlink() or manual_root.parent.is_symlink():
+            raise RecoveryError("manual takeover journal directory cannot be a symlink")
         manual_root.mkdir(parents=True, exist_ok=True)
+        if not manual_root.resolve().is_relative_to(self.state_root):
+            raise RecoveryError("manual takeover journal must stay inside state root")
         manual_path = manual_root / f"{journal_path.stem}.json"
+        lock_path = manual_path.with_suffix(".lock")
+        if manual_path.is_symlink() or lock_path.is_symlink():
+            raise RecoveryError("manual takeover journal or lock cannot be a symlink")
         try:
-            with SingleWriterLock(manual_path.with_suffix(".lock")):
+            with SingleWriterLock(lock_path):
                 journal = self._read_json(journal_path, "recovery journal")
                 if journal.get("status") != "BLOCKED":
                     raise RecoveryError("manual takeover is available only for BLOCKED recovery")
