@@ -188,12 +188,20 @@ async function loadWorkbenchRecords(){
      const saved=localStorage.getItem(key);
      if(saved)local=validateWorkbenchRecords(JSON.parse(saved));
    }catch{}
-   if(!remote.cases.length&&!remote.alphas.length&&(local.cases.length||local.alphas.length)){
-     await saveWorkbenchRecords(local);
-     data=local;
-   }else{
-     data=remote;
-   }
+   const mergeRecords=(base,extra)=>{
+     const records=new Map(base.map(item=>[item.id,item]));
+     for(const item of extra){
+       if(records.has(item.id)&&JSON.stringify(records.get(item.id))!==JSON.stringify(item))
+         throw Error("项目记录与浏览器副本存在同 ID 的不同版本，请先导出并人工核对。");
+       records.set(item.id,item);
+     }
+     return [...records.values()];
+   };
+   const merged={version:1,cases:mergeRecords(remote.cases,local.cases),
+                 alphas:mergeRecords(remote.alphas,local.alphas)};
+   if(merged.cases.length!==remote.cases.length||merged.alphas.length!==remote.alphas.length)
+     await saveWorkbenchRecords(merged);
+   data=merged;
    try{localStorage.setItem(key,JSON.stringify(data));}catch{}
    render();
  }catch(error){
@@ -257,6 +265,7 @@ function runtimeTasks(){
  ]);
  const domainRecords=[
    ...(agentStatus?.v11_super_runs||[]).map(row=>({kind:"Super",workflow:"super",row})),
+   ...(agentStatus?.v11_optimization_sources||[]).map(row=>({kind:"优化来源快照",workflow:"optimization",row})),
    ...(agentStatus?.v11_candidate_branches||[]).map(row=>({kind:"优化候选分支",workflow:"optimization",row}))
  ];
  const domainRows=domainRecords.map(({kind,workflow,row})=>[
