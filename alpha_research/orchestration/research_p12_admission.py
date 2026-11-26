@@ -181,38 +181,72 @@ def _inspect_candidate_governance(state_root, config, result):
     }
 
 def _inspect_recovery(state_root, task):
-    target = task.get("recovery_target")
-    if not isinstance(target, dict) or not isinstance(target.get("ref"), str):
+    current = task.get("recovery_target")
+    history = task.get("recovery_target_history")
+    if not isinstance(history, list) or not history:
+        history = [current] if isinstance(current, dict) else []
+    if not history:
         return {"status": "NO_RECOVERY_TARGET", "blockers": []}
     coordinator = RecoveryCoordinator(state_root)
-    try:
-        journal = coordinator.journal_for(target["ref"])
-    except (RecoveryError, OSError, ValueError):
-        return {"status": "UNVERIFIED", "blockers": ["P12_RECOVERY_TARGET_UNVERIFIED"]}
-    if journal is None:
-        return {"status": "NO_RECOVERY_JOURNAL", "blockers": []}
-    blockers = []
-    if journal.get("status") != "COMPLETED":
-        blockers.append("P12_RECOVERY_NOT_CLOSED")
-    manual_path = (coordinator.journal_root / "manual" /
-                   f"{journal.get('recovery_id')}.json")
-    if manual_path.is_symlink():
-        blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
-        manual = None
-    else:
-        manual = read_json(manual_path) if manual_path.is_file() else None
-        if manual_path.is_file() and not isinstance(manual, dict):
-            blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
-    if isinstance(manual, dict) and manual.get("decisions"):
-        blockers.append("P12_MANUAL_TAKEOVER_REQUIRES_INDEPENDENT_REVIEW")
+    blockers, inspected, journal_refs = [], [], []
+    seen = set()
+    latest_journal_ref = None
+    expected_kind = ("regular_batch" if task.get("workflow") == "regular"
+                     else "simulation_intent")
+    for entry in history:
+        if not isinstance(entry, dict) or not isinstance(entry.get("ref"), str):
+            blockers.append("P12_RECOVERY_TARGET_HISTORY_MALFORMED")
+            continue
+        reference = entry["ref"]
+        if reference in seen:
+            blockers.append("P12_RECOVERY_TARGET_HISTORY_DUPLICATED")
+            continue
+        seen.add(reference)
+        if entry.get("kind") not in (None, expected_kind):
+            blockers.append("P12_RECOVERY_TARGET_KIND_MISMATCH")
+            continue
+        try:
+            path = coordinator._resolve_target(reference)
+            workflow, resolved, intent, _ = coordinator._inspect(path)
+        except (RecoveryError, OSError, ValueError):
+            blockers.append("P12_RECOVERY_TARGET_UNVERIFIED")
+            inspected.append({"target_ref": reference, "status": "UNVERIFIED"})
+            continue
+        intent_status = intent.get("status")
+        if intent_status != "READ_BACK":
+            blockers.append("P12_RECOVERY_INTENT_NOT_READ_BACK")
+        journal_path = coordinator._journal_path(workflow, resolved)
+        journal = read_json(journal_path) if journal_path.is_file() else None
+        if journal_path.is_file() and not isinstance(journal, dict):
+            blockers.append("P12_RECOVERY_JOURNAL_UNREADABLE")
+        if isinstance(journal, dict):
+            journal_refs.append(str(journal_path))
+            latest_journal_ref = str(journal_path)
+            if journal.get("status") != "COMPLETED":
+                blockers.append("P12_RECOVERY_NOT_CLOSED")
+            manual_path = (coordinator.journal_root / "manual" /
+                           f"{journal.get('recovery_id')}.json")
+            if manual_path.is_symlink():
+                blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
+            else:
+                manual = read_json(manual_path) if manual_path.is_file() else None
+                if manual_path.is_file() and not isinstance(manual, dict):
+                    blockers.append("P12_MANUAL_TAKEOVER_JOURNAL_UNVERIFIED")
+                elif isinstance(manual, dict) and manual.get("decisions"):
+                    blockers.append("P12_MANUAL_TAKEOVER_REQUIRES_INDEPENDENT_REVIEW")
+        inspected.append({
+            "target_ref": str(resolved), "workflow": workflow,
+            "intent_status": intent_status,
+            "recovery_journal_ref": str(journal_path) if journal_path.is_file() else None,
+            "recovery_status": journal.get("status") if isinstance(journal, dict) else None,
+        })
     return {
-        "status": journal.get("status", "INVALID"),
-        "recovery_journal_ref": str(coordinator._journal_path(
-            task["workflow"], Path(target["ref"]).resolve())),
-        "manual_takeover_ref": str(manual_path) if isinstance(manual, dict) else None,
-        "blockers": blockers,
+        "status": "CLOSED" if not blockers else "BLOCKED",
+        "targets": inspected,
+        "recovery_journal_ref": latest_journal_ref,
+        "recovery_journal_refs": journal_refs,
+        "blockers": sorted(set(blockers)),
     }
-
 
 def inspect_p12_production_admission(orchestrator, task_id, model_config,
                                      governance_policy, *, config_source,
