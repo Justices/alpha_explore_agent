@@ -463,6 +463,7 @@ async function launchForm(workflow="regular"){
  try{
   await refreshModels();
  }catch(error){
+  modelOptions={};
   notify("模型注册中心不可用；仍可执行只读预检，启动研究前需修复模型注册中心。");
  }
  const shared=[
