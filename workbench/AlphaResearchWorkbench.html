@@ -562,8 +562,8 @@ function audit(){
    const metrics=row.metrics||{},thresholds=row.thresholds||{};
    const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
    return [
-     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.status||"—"),
-     esc(row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.preferred_status||row.status||"—"),
+     esc(row.policy_current===false?"策略过期":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
      esc(metrics.sharpe??"—")+" / "+esc(thresholds.sharpe_min??"—"),
      esc(metrics.fitness??"—")+" / "+esc(thresholds.fitness_min??"—"),
      esc(metrics.turnover??"—")+" / "+esc([thresholds.turnover_min,thresholds.turnover_max].filter(v=>v!=null).join("–")||"—"),
