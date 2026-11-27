@@ -422,6 +422,8 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
                            "readback": run["readback_ref"], "audit": str(audit_path),
                            "prereg": str(prereg_path)},
             fallback_details=rows[0].get("details"))
+    candidate_record = store.get("candidate", qualification["candidate_id"])
+    policy_sha256 = candidate_record.get("policy_sha256")
     _emit(execution_context, "super.qualification_completed",
           run_id=run_id, alpha_id=run["alpha_id"],
           candidate_id=qualification["candidate_id"],
@@ -433,12 +435,15 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     run["candidate_id"] = qualification["candidate_id"]
     run["candidate_status"] = qualification["candidate_status"]
     run["preferred_status"] = qualification["preferred"]["status"]
+    if isinstance(policy_sha256, str):
+        run["policy_sha256"] = policy_sha256
     atomic_write_json(run_path, run)
     persist_shared(status="candidate_evaluated",
                    candidate_alpha_id=run["alpha_id"],
                    candidate_id=qualification["candidate_id"],
                    candidate_status=qualification["candidate_status"],
                    preferred_status=qualification["preferred"]["status"],
+                   policy_sha256=policy_sha256,
                    candidate_record_ref=qualification["candidate_ref"],
                    preferred_record_ref=qualification["preferred_ref"],
                    readback_ref=run["readback_ref"], audit_ref=str(audit_path),
@@ -449,6 +454,7 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "candidate_id": qualification["candidate_id"],
             "candidate_status": qualification["candidate_status"],
             "preferred_status": qualification["preferred"]["status"],
+            "policy_sha256": policy_sha256,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
             "proposal_sha256": proposal_sha256,
