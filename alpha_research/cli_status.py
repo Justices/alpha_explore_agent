@@ -153,17 +153,26 @@ def run_status_command(args, root, stop_flag):
                         continue
                     if kind != "preferred_evaluations" and storage_kind == "preferred" and item.get("status") != "PREFERRED":
                         continue
-                    policy_current = (current_policy is not None and
-                                      item.get("policy_sha256") == current_policy)
+                    policy_sha = item.get("policy_sha256")
+                    policy_current = (
+                        current_policy == policy_sha
+                        if isinstance(policy_sha, str) else None)
                     candidate_status = item.get("candidate_status") or (
                         item.get("status") if storage_kind == "candidate" else None)
                     preferred_status = item.get("preferred_status") or (
                         item.get("status") if storage_kind == "preferred" else None)
-                    if storage_kind == "candidate" and item.get("status") == "CANDIDATE" and not policy_current:
-                        candidate_status = "POLICY_STALE"
-                        preferred_status = "NOT_CANDIDATE"
-                    if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
-                        preferred_status = "NOT_CANDIDATE"
+                    if storage_kind == "candidate" and item.get("status") == "CANDIDATE":
+                        if policy_current is False:
+                            candidate_status = "POLICY_STALE"
+                            preferred_status = "NOT_CANDIDATE"
+                        elif policy_current is None:
+                            candidate_status = "POLICY_UNBOUND"
+                            preferred_status = "NOT_CANDIDATE"
+                    if storage_kind == "preferred" and item.get("status") == "PREFERRED":
+                        if policy_current is False:
+                            preferred_status = "NOT_CANDIDATE"
+                        elif policy_current is None:
+                            preferred_status = "POLICY_UNBOUND"
                     extra = {}
                     if kind == "super_run":
                         run_snapshot = {}
