@@ -148,7 +148,10 @@ class FullMockWorkflowTests(unittest.TestCase):
         self.assertEqual(gateway.calls.count("simulate_super"), 1)
         self.assertEqual(result["budget"]["used"], 1)
         self.assertEqual(result["result"]["qualification"]["candidate_status"],
-                         "EVIDENCE_PENDING")
+                         "RA_UNAVAILABLE")
+        self.assertIn(
+            "ra_checks_unsettled_or_unavailable",
+            result["result"]["qualification"]["candidate_pending"])
         self.assertEqual(len(ResearchRecordStore(self.root).list("candidate")), 1)
         self.assertEqual(len(ResearchRecordStore(self.root).list("preferred")), 1)
         self.assertEqual(result["result"]["pool"]["alpha_count"], 1)
