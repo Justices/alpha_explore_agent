@@ -291,6 +291,9 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
           batch_id=batch_id, validation_status="PASS", prereg_ref=str(prereg_path))
     run["prereg_ref"] = str(prereg_path)
     run["batch_id"] = batch_id
+    persist_shared(batch_id=batch_id, prereg_ref=str(prereg_path),
+                   proposal_sha256=proposal_sha256,
+                   candidate_definition_sha256=candidate_definition_sha256)
     intent_path = run_path.with_name(f"{run_id}_{batch_id}_simulation_intent.json")
     request = {
         "selection": proposal["selection"], "combo": proposal["combo"],
@@ -457,6 +460,10 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "policy_sha256": policy_sha256,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
+            "batch_id": batch_id, "prereg_ref": str(prereg_path),
+            "simulation_intent_ref": str(intent_path),
+            "response_ref": str(response_path),
+            "receipt_ref": run.get("readback_ref"), "audit_ref": str(audit_path),
             "proposal_sha256": proposal_sha256,
             "candidate_definition_sha256": candidate_definition_sha256,
             "simulation_invoked": True, "alpha_submission_invoked": False,
