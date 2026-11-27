@@ -1041,6 +1041,7 @@ document.addEventListener("click",e=>{
  case "agent-refresh":refreshAgent();return;
  case "resume-research":resumeForm(id);return;
  case "stop-research":researchAction("stop",id);return;
+ case "acknowledge-interrupted":researchAction("acknowledge-interrupted",id);return;
  case "delete-research":researchAction("delete",id);return;
  case "research-summary":showResearchSummary(id);return;
  case "recover-workflow":researchAction("recover",id,{workflow});return;
