@@ -453,6 +453,102 @@ class WorkbenchLaunchPersistenceTests(unittest.TestCase):
                     serve.launch_manifest_path(root, launch_id)
 
 
+class WorkbenchLaunchRestartGuardTests(unittest.TestCase):
+    def test_restart_blocks_new_launch_until_operator_acknowledges_old_process_exit(self):
+        old_launch_id = "a" * 32
+        commands = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            self.assertEqual(json.loads(kwargs["input"]), {
+                "username": "offline@example.invalid", "password": "offline-secret",
+            })
+            return CompletedProcess(command, 0, json.dumps({
+                "status": "COMPLETED", "run_id": "new-super-run",
+            }))
+
+        with TemporaryDirectory() as root, \\
+                patch.dict(os.environ, {
+                    "ZAI_API_KEY": "offline-fixture",
+                    "MOONSHOT_API_KEY": "offline-fixture",
+                }), patch.object(serve.subprocess, "run", side_effect=run):
+            config = Path(root) / "config" / "nastu_quant.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({
+                "model_governance": {"max_calls": 5, "max_reported_tokens": 1000,
+                                     "failover": "manual"},
+            }), encoding="utf-8")
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            serve.write_launch_manifest(log_dir, old_launch_id, {
+                "workflow": "super", "status": "running",
+                "started_at": "2026-11-27T10:00:00+00:00",
+                "args": ["run-super"], "models": None,
+            })
+            server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
+            port = server.server_address[1]
+            server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            origin = f"http://127.0.0.1:{port}"
+
+            def post(path, payload, cookie=""):
+                with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+                    connection.request("POST", path, json.dumps(payload), {
+                        "Origin": origin, "Content-Type": "application/json", "Cookie": cookie,
+                    })
+                    response = connection.getresponse()
+                    body = json.loads(response.read())
+                    return response.status, response.getheader("Set-Cookie"), body
+
+            def get(path):
+                with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+                    connection.request("GET", path)
+                    response = connection.getresponse()
+                    return response.status, json.loads(response.read())
+
+            status, cookie_header, _ = post("/api/credentials", {
+                "username": "offline@example.invalid", "password": "offline-secret",
+            })
+            self.assertEqual(status, 200)
+            cookie = cookie_header.split(";", 1)[0]
+            status, restored = get("/api/launch")
+            self.assertEqual(status, 200)
+            self.assertEqual(restored["status"], "execution_unknown")
+            request = {
+                "workflow": "super", "region": "USA", "objective": "offline restart guard",
+                "max_iterations": 1, "lead": "glm", "executor": "kimi",
+            }
+            status, _, blocked = post("/api/launch", request, cookie)
+            self.assertEqual(status, 409)
+            self.assertIn("旧子进程", blocked["error"])
+            self.assertEqual(commands, [])
+
+            status, _, acknowledged = post("/api/research", {
+                "action": "acknowledge-interrupted", "id": old_launch_id,
+            }, cookie)
+            self.assertEqual(status, 200)
+            self.assertEqual(acknowledged["status"], "interrupted_acknowledged")
+            old_manifest = json.loads(
+                (log_dir / f"{old_launch_id}.launch.json").read_text(encoding="utf-8"))
+            self.assertEqual(old_manifest["status"], "interrupted_acknowledged")
+
+            status, _, started = post("/api/launch", request, cookie)
+            self.assertEqual(status, 202)
+            deadline = time.monotonic() + 3
+            latest = None
+            while time.monotonic() < deadline:
+                _, latest = get("/api/launch")
+                if latest["status"] != "running":
+                    break
+                time.sleep(0.01)
+            self.assertEqual(latest["status"], "exited")
+            self.assertEqual(latest["run_id"], "new-super-run")
+            self.assertEqual(len(commands), 1)
+            self.assertNotEqual(started["launch_id"], old_launch_id)
+
+
 class WorkbenchLaunchTests(unittest.TestCase):
     def test_launch_keeps_scope_and_rejects_cross_origin_and_duplicate_start(self):
         entered = threading.Event()
