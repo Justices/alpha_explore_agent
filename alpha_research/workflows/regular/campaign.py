@@ -427,7 +427,12 @@ def _sync_iteration_ledger(state, ledger):
             "CANDIDATE" if any(row.get("status") == "CANDIDATE"
                                for row in gate_rows) else
             next((row.get("status") for row in gate_rows), None))
-        attempts.append((receipt.get("completed_at") or "", {
+        completed_at = (receipt.get("completed_at") or receipt.get("finished_at")
+                        or context.get("completed_at") or context.get("started_at")
+                        or "completion-time-unavailable")
+        started_at = (context.get("started_at") or receipt.get("started_at")
+                      or completed_at)
+        attempts.append((completed_at, {
             "round_key": batch_ref, "status": "COMPLETED",
             "candidate_status": candidate_status,
             "alpha_ids": receipt.get("alpha_ids", []),
@@ -436,8 +441,8 @@ def _sync_iteration_ledger(state, ledger):
             "evidence_refs": {
                 "batch": batch_ref, "results": str(batch / "results.json"),
                 "preregistration": str(batch / "prereg.json")},
-            "started_at": context.get("started_at") or receipt.get("completed_at"),
-            "completed_at": receipt.get("completed_at"),
+            "started_at": started_at,
+            "completed_at": completed_at,
         }))
     for failure in state.get("failures", []):
         attempt = failure.get("attempt")
@@ -446,13 +451,16 @@ def _sync_iteration_ledger(state, ledger):
         reason = failure.get("reason") or "unresolved_attempt"
         evidence_refs = ({"batch": str(failure["batch_ref"])}
                          if isinstance(failure.get("batch_ref"), (str, Path)) else {})
-        attempts.append((failure.get("recorded_at") or "", {
+        recorded_at = (failure.get("recorded_at") or failure.get("completed_at")
+                       or failure.get("started_at")
+                       or f"failure-time-unavailable:{failure.get('item_index')}:{attempt}")
+        attempts.append((recorded_at, {
             "round_key": f"failure:{failure.get('item_index')}:{attempt}",
             "status": "FAILED", "reason": str(reason)[:300],
             "failure_signature_sha256": _iteration_hash({"reason": reason}),
             "evidence_refs": evidence_refs,
-            "started_at": failure.get("started_at") or failure.get("recorded_at"),
-            "completed_at": failure.get("recorded_at"),
+            "started_at": failure.get("started_at") or recorded_at,
+            "completed_at": recorded_at,
         }))
     for _, entry in sorted(attempts, key=lambda value: value[0]):
         ledger.record_round(**entry)
