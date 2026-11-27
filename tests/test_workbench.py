@@ -290,8 +290,19 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
                 "unresolved": [{"reason": "settings_unreadable"}],
                 "platform_super_schema": {"selectionLimit": {"type": "integer"}},
             }), encoding="utf-8")
+            batch_id = "20261127_120000_abcd1234"
+            (snapshots / f"{run_id}_{batch_id}_prereg.json").write_text(json.dumps({
+                "proposal": {
+                    "selection": "rank(signal_a)", "combo": "rank(signal_b)",
+                    "hypothesis": "test selection", "rationale": "quality signal",
+                    "failure_criterion": "sharpe below target",
+                    "settings": {"region": "USA", "delay": 1},
+                },
+                "validation": {"status": "PASS"},
+            }), encoding="utf-8")
             (records / f"{run_id}.json").write_text(json.dumps({
-                "run_id": run_id, "workflow": "super", "region": "USA",
+                "run_id": run_id, "batch_id": batch_id,
+                "workflow": "super", "region": "USA",
                 "objective": "selection quality", "status": "candidate_evaluated",
                 "platform_record_ref": str(snapshot),
                 "simulation_intent_ref": str(root_path / "intent.json"),
@@ -314,6 +325,10 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             self.assertEqual(run["allowed_delays"], [1, 2])
             self.assertEqual(run["eligible_alpha_count"], 2)
             self.assertEqual(run["unresolved_count"], 1)
+            self.assertEqual(run["selection"], "rank(signal_a)")
+            self.assertEqual(run["combo"], "rank(signal_b)")
+            self.assertEqual(run["settings"]["delay"], 1)
+            self.assertEqual(run["validation"]["status"], "PASS")
             self.assertEqual(run["candidate_alpha_id"], "C1")
             self.assertEqual(run["simulation_intent_ref"], str(root_path / "intent.json"))
             self.assertTrue(any(row.get("status") == "unreadable"
