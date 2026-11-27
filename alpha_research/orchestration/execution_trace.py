@@ -391,6 +391,8 @@ def inspect_execution_trace(state_root, task_id):
         base = root / "state" / "research_v1_1" / "optimization"
         report_path = base / f"{run_id}_optimization_report.json"
         report = _read_object(report_path, root=root)
+        if not report:
+            continue
         branch_id = next((event.get("payload", {}).get("branch_id")
                           for event in events
                           if event.get("event_type") ==
