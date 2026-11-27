@@ -397,6 +397,7 @@ function runtimeTasks(){
      selection:row.selection,combo:row.combo,hypothesis:row.hypothesis,
      rationale:row.rationale,failure_criterion:row.failure_criterion,
      settings:row.settings,validation:row.validation,platform_super_schema:row.platform_super_schema,
+     policy_sha256:row.policy_sha256,
      simulation_invoked:row.simulation_invoked,
      alpha_submission_invoked:row.alpha_submission_invoked,
      source_unchanged_verified:row.source_unchanged_verified,
@@ -578,6 +579,7 @@ function audit(){
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.candidate_status||row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
      esc(corr.prod??"—")+" / "+esc(corr.self??"—"),
+     esc(row.policy_sha256?row.policy_sha256.slice(0,12):"未绑定"),
      esc(maxPairwise??"—"),esc((row.failures||[]).join(", ")||"—"),
      esc((row.pending||[]).join(", ")||"—"),
      '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
@@ -594,6 +596,7 @@ function audit(){
      esc(metrics.turnover??"—")+" / "+esc([thresholds.turnover_min,thresholds.turnover_max].filter(v=>v!=null).join("–")||"—"),
      esc(metrics.weight??"—")+" / "+esc(thresholds.weight_max??"—"),
      esc(row.policy_current===false?"策略已过期":row.policy_current===true?"策略一致":"未绑定策略版本"),
+     esc(row.policy_sha256?row.policy_sha256.slice(0,12):"未绑定"),
      esc((row.failures||[]).join(", ")||"—"),esc((row.pending||[]).join(", ")||"—"),
      '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
    ];
@@ -601,14 +604,14 @@ function audit(){
  const auditRefresh=localAgent?button("刷新 Agent 审核记录","agent-refresh"):"";
  const liveAudit=evaluations.length
    ?panel("Agent 实际 Candidate 审核记录 · 只读",table(
-      ["Alpha","流程","RA fail count","Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","失败项","待补证据","引用"],
+      ["Alpha","流程","RA fail count","Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","策略 SHA","失败项","待补证据","引用"],
       evaluations),auditRefresh)
    :panel("Agent 实际 Candidate 审核记录 · 只读",blank(
       "当前没有 Agent Candidate 审核记录",
       localAgent?"刷新 Agent 状态后，这里会显示实际 RA、相关性及 Candidate 证据。":"连接本地工作台服务后可读取 Agent 审核记录。"),auditRefresh);
  const livePreferred=preferredEvaluations.length
    ?panel("Agent 实际 Preferred 复核记录 · 只读",table(
-      ["Alpha","流程","Preferred 状态","资格结论","Sharpe / 阈值","Fitness / 阈值","Turnover / 区间","Weight / 阈值","策略版本","失败项","待补证据","引用"],
+      ["Alpha","流程","Preferred 状态","资格结论","Sharpe / 阈值","Fitness / 阈值","Turnover / 区间","Weight / 阈值","策略版本","策略 SHA","失败项","待补证据","引用"],
       preferredEvaluations),auditRefresh)
    :panel("Agent 实际 Preferred 复核记录 · 只读",blank(
       "当前没有 Preferred 复核记录",
