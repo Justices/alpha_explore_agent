@@ -133,8 +133,7 @@ def run_status_command(args, root, stop_flag):
 
     def _record_summaries(kind):
         storage_kind = {"candidate_evaluations": "candidate",
-                        "preferred_evaluations": "preferred",
-                        "super_run": "super_runs"}.get(kind, kind)
+                        "preferred_evaluations": "preferred"}.get(kind, kind)
         state_dir = root / "state"
         research_dir = state_dir / "research_v1_1"
         folder = research_dir / storage_kind
