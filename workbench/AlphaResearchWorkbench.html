@@ -367,7 +367,7 @@ function runtimeTasks(){
        Array.isArray(row.allowed_delays)&&row.allowed_delays.length
          ?"可选 D"+row.allowed_delays.join(","):"Delay 未限定"].filter(Boolean).join(" / ");
    return [
-     esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
+     esc(kind),esc(row.run_id||row.branch_id||row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
      esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
      esc(row.candidate_alpha_id||"—"),
@@ -388,7 +388,7 @@ function runtimeTasks(){
    ];
  });
  const evidenceRows=domainRecords.map(({kind,row})=>({
-   kind,id:row.id||"—",
+   kind,id:row.run_id||row.branch_id||row.id||"—",
    refs:["path","record_ref","report_ref","platform_record_ref","active_submitted_pool_ref",
          "source_snapshot_ref","candidate_record_ref","preferred_record_ref","prereg_ref","manifest_ref",
          "simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
