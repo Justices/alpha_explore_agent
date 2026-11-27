@@ -60,9 +60,10 @@ class OfflineEndToEndCliTests(unittest.TestCase):
         self.assertTrue(report["trace_binding_valid"])
         self.assertGreater(report["trace_event_count"], 0)
         trace = inspect_execution_trace(self.root, report["task_id"])
-        proposal_event = next(event for event in trace["events"]
-                              if event["event_type"] == "regular.proposal_generated")
-        self.assertEqual(proposal_event["payload"]["prior_campaign_finding_count"], 0)
+        batch_event = next(event for event in trace["events"]
+                           if event["event_type"] == "regular.batch_started")
+        self.assertEqual(batch_event["payload"]["dataset_id"], "analyst10")
+        self.assertEqual(batch_event["payload"]["batch_number"], 1)
         self.assertEqual(len(report["trace_last_event_sha256"]), 64)
         self.assertTrue(Path(report["trace_ref"]).is_file())
         self.assertGreater(report["evidence_file_count"], 0)
@@ -100,7 +101,7 @@ class OfflineEndToEndCliTests(unittest.TestCase):
                 root = self.base / workflow
                 options = ["--alpha-id", "SOURCE"] if workflow == "optimization" else []
                 code, output, error = self.invoke(workflow, root=root, extra=options)
-                self.assertEqual(code, 0, error)
+                self.assertEqual(code, 0, error + "\n" + output)
                 result = json.loads(output)
                 self.assertEqual(result["status"], "OFFLINE_E2E_PASSED")
                 self.assertEqual(result["scripted_domain_attempts"], 1)
