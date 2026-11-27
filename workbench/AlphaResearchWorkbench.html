@@ -435,7 +435,7 @@ function runtimeTasks(){
       !String(launchState.workflow||"").endsWith("_recovery")&&
       !String(launchState.workflow||"").endsWith("_plan")
       ?button("终止研究","stop-research",launchState.launch_id):"")+
-   (launchState.status==="execution_unknown"
+   (launchState.status==="execution_unknown"&&launchState.launch_id
       ?button("确认旧任务已结束","acknowledge-interrupted",launchState.launch_id,"quiet"):"")+'</p>'+
    '<div class="details"><div><h3>执行日志</h3><pre class="detail" id="launch-events" aria-label="执行日志" '+
    'style="max-height:22rem;overflow:auto;margin:0">'+esc(launchEvents())+'</pre></div></div>':"";
