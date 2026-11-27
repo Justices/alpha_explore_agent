@@ -746,6 +746,85 @@ function checkAlpha(a,c){
    for(const k of ["category","delay","universe"])if(c[k]!=null&&a[k]!=null&&c[k]!==a[k])throw Error("有效 "+k+" 与用户硬约束冲突。");
  }
 }
+function changedFields(original,next,keys){
+ return keys.some(key=>JSON.stringify(original?.[key]??null)!==JSON.stringify(next?.[key]??null));
+}
+function changedMetrics(original,next,keys){
+ return keys.some(key=>JSON.stringify(original?.metrics?.[key]??null)!==JSON.stringify(next?.metrics?.[key]??null));
+}
+function clearAlphaEvidence(record,metricKeys,fieldKeys){
+ const measured={...(record.metrics||{})};
+ metricKeys.forEach(key=>delete measured[key]);
+ record.metrics=measured;
+ fieldKeys.forEach(key=>{record[key]=null;});
+}
+function invalidateAlphaEvidence(original,next){
+ if(!original?.id)return next;
+ const allEvidence=["raCount","raFinal","raRef","localRef","localComplete","corrRef",
+  "pairwise","pairRef","auditStatus","auditRef","preferredStatus","preferredRef","subUniverse"];
+ const correlationMetrics=["local","prod","self","pairwise"];
+ const performanceMetrics=Object.keys(metrics).filter(key=>!correlationMetrics.includes(key));
+ const definitionChanged=changedFields(original,next,[
+  "alphaId","expression","fields","operators","settings","receipt","dataset","category",
+  "delay","universe","operatorCount","units"
+ ]);
+ if(definitionChanged||changedMetrics(original,next,performanceMetrics)){
+  clearAlphaEvidence(next,Object.keys(metrics),allEvidence);
+  return next;
+ }
+ if(changedFields(original,next,["raCount","raFinal","raRef"])){
+  clearAlphaEvidence(next,correlationMetrics,[
+   "localRef","localComplete","corrRef","pairwise","pairRef",
+   "auditStatus","auditRef","preferredStatus","preferredRef","subUniverse"
+  ]);
+  return next;
+ }
+ const policyChanged=changedFields(original,next,["corrLimit","policyRef"]);
+ const localMetricChanged=changedMetrics(original,next,["local"]);
+ const localEvidenceChanged=changedFields(original,next,["localRef","localComplete"]);
+ if(policyChanged||localMetricChanged||localEvidenceChanged){
+  clearAlphaEvidence(next,["prod","self","pairwise"],[
+   "corrRef","pairwise","pairRef","auditStatus","auditRef",
+   "preferredStatus","preferredRef","subUniverse"
+  ]);
+  if((policyChanged||localMetricChanged)&&!changedFields(original,next,["localRef"]))
+   next.localRef=null;
+  if((policyChanged||localMetricChanged||changedFields(original,next,["localRef"]))
+      &&!changedFields(original,next,["localComplete"]))
+   next.localComplete=null;
+  return next;
+ }
+ const platformChanged=changedMetrics(original,next,["prod","self"])
+  ||changedFields(original,next,["corrRef"]);
+ if(platformChanged){
+  clearAlphaEvidence(next,["pairwise"],[
+   "pairwise","pairRef","auditStatus","auditRef","preferredStatus","preferredRef","subUniverse"
+  ]);
+  if(changedMetrics(original,next,["prod","self"])
+      &&!changedFields(original,next,["corrRef"]))next.corrRef=null;
+  return next;
+ }
+ const pairwiseChanged=changedMetrics(original,next,["pairwise"])
+  ||changedFields(original,next,["pairwise","pairRef"]);
+ if(pairwiseChanged){
+  clearAlphaEvidence(next,[],["auditStatus","auditRef","preferredStatus","preferredRef","subUniverse"]);
+  if(changedMetrics(original,next,["pairwise"])
+      &&!changedFields(original,next,["pairRef"]))next.pairRef=null;
+  return next;
+ }
+ if(changedFields(original,next,["auditStatus","auditRef"])){
+  clearAlphaEvidence(next,[],["preferredStatus","preferredRef","subUniverse"]);
+  return next;
+ }
+ if(changedFields(original,next,["subUniverse"])){
+  clearAlphaEvidence(next,[],["preferredStatus","preferredRef"]);
+  return next;
+ }
+ if(changedFields(original,next,["preferredStatus"])&&
+    !changedFields(original,next,["preferredRef"]))next.preferredRef=null;
+ return next;
+}
+
 async function submit(e){
  if(editing?.kind==="credentials"){
    e.preventDefault();
@@ -764,7 +843,7 @@ async function submit(e){
  }
  e.preventDefault();
  if(!editing)return;
- const fields=Object.fromEntries(new FormData(e.target));const values={};
+ const form=e.target, fields=Object.fromEntries(new FormData(form));const values={};
  for(const [k,v] of Object.entries(fields)) values[k]=v.trim()||null;
  for(const k of ["delay","raCount","corrLimit","operatorCount"]) if(values[k]!=null)values[k]=Number(values[k]);
  const original=editing.record;
@@ -779,11 +858,19 @@ async function submit(e){
      next.cases=next.cases.filter(x=>x.id!==c.id).concat(c);
      view="cases";
    }else{
-     const measured={};
-     for(const k of Object.keys(metrics))if(values["metric_"+k]!=null)measured[k]=Number(values["metric_"+k]);
-     for(const k of Object.keys(metrics))delete values["metric_"+k];
+     const measured={...(original.metrics||{})};
+     for(const k of Object.keys(metrics)){
+       const control=form.elements["metric_"+k],raw=fields["metric_"+k];
+       if(control&&!control.disabled){
+         if(raw==null||raw==="")delete measured[k];
+         else measured[k]=Number(raw);
+       }
+       delete values["metric_"+k];
+     }
      const a={...original,...values,id:original.id||crypto.randomUUID(),caseId:editing.caseId,metrics:measured};
-     if(!raPassed(a)||!numeric(measured.local)||Math.abs(measured.local)>=a.corrLimit) a.corrRef=null;
+     invalidateAlphaEvidence(original,a);
+     if(!raPassed(a)||!numeric(a.metrics.local)||
+        Math.abs(a.metrics.local)>=qualificationPolicy().candidate.self_corr_max)a.corrRef=null;
      checkAlpha(a,findCase(a.caseId));
      next.alphas=next.alphas.filter(x=>x.id!==a.id).concat(a);
    }
