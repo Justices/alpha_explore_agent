@@ -737,7 +737,12 @@ function syncGate(){
  if(!f.raCount)return;
  const policy=qualificationPolicy();
  const ra=f.raCount.value!==""&&Number(f.raCount.value)===0&&f.raFinal.value==="pass"&&text(f.raRef.value);
- const local=ra&&f.metric_local.value!==""&&Math.abs(Number(f.metric_local.value))<policy.candidate.self_corr_max&&text(f.localRef.value)&&text(f.policyRef.value)&&f.localComplete.value==="pass";
+ const policySnapshotChanged=Boolean(editing?.kind==="alpha"&&editing.record?.id&&
+   (editing.record.policyRef!==policy.policy_sha256||
+    editing.record.corrLimit!==policy.candidate.self_corr_max));
+ const local=ra&&!policySnapshotChanged&&f.metric_local.value!==""&&
+   Math.abs(Number(f.metric_local.value))<policy.candidate.self_corr_max&&
+   text(f.localRef.value)&&text(f.policyRef.value)&&f.localComplete.value==="pass";
  ["metric_local","localRef","localComplete"].forEach(k=>f[k].disabled=!ra);
  ["metric_prod","metric_self","metric_pairwise","corrRef"].forEach(k=>f[k].disabled=!local);
 }
