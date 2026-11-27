@@ -182,9 +182,25 @@ function agentPanel(){
  ]));
  const warning=agentStatus.global_alpha_pool?.status==="unavailable"
    ? '<p class="toolbar">Agent 候选池暂不可读，任务与评估记录仍可查看。</p>' : "";
+ const evaluations=(agentStatus.v11_candidate_evaluations||[]).map(row=>{
+   const metrics=row.metrics||{};
+   const gate=row.gate_evidence||{};
+   return [
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),
+     esc(row.ra_fail_count===0?"0":row.ra_fail_count??"未取得"),
+     esc(row.status||"—"),
+     esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
+     esc((row.failures||[]).join(", ")||"—"),
+     esc((row.pending||[]).join(", ")||"—")
+   ];
+ });
+ const evaluationPanel=evaluations.length
+   ?'<h3 style="padding:12px 17px 0">Candidate 审核记录（包含未通过与待补证据）</h3>'+
+     table(["Alpha","流程","RA fail count","审核状态","Sharpe","Turnover","Drawdown","失败项","待补证据"],evaluations)
+   :"";
  return panel("Agent 项目状态 · 只读",warning+(records.length
    ? table(["记录类型","Alpha / 任务 ID","工作流","状态","优选"],records)
-   : blank("当前状态目录没有研究记录","如果 Agent 使用了自定义状态目录，请用 --state-root 启动。")),refresh);
+   : blank("当前状态目录没有研究记录","如果 Agent 使用了自定义状态目录，请用 --state-root 启动。"))+evaluationPanel,refresh);
 }
 async function refreshAgent(){
  if(!localAgent||agentLoading)return;
