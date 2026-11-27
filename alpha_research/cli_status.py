@@ -160,7 +160,8 @@ def run_status_command(args, root, stop_flag):
                         item.get("status") if storage_kind == "candidate" else None)
                     preferred_status = item.get("preferred_status") or (
                         item.get("status") if storage_kind == "preferred" else None)
-                    if storage_kind == "candidate" and item.get("status") == "CANDIDATE":
+                    if (storage_kind in {"candidate", "candidate_branch", "super_run"}
+                            and candidate_status == "CANDIDATE"):
                         if policy_current is False:
                             candidate_status = "POLICY_STALE"
                             preferred_status = "NOT_CANDIDATE"
