@@ -461,9 +461,9 @@ function audit(){
   ' · Turnover '+esc(preferred.turnover_min)+'–'+esc(preferred.turnover_max)+
   ' · 最大权重 ≤ '+esc(preferred.weight_max)+
   '\nSHA-256：'+esc(policy.policy_sha256)+'</div></div></div>';
- const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
- const rows=data.alphas.map(a=>[button(a.name,"alpha",a.id,"quiet"),num(a.raCount),num(a.metrics.local),num(a.metrics.prod)+" / "+num(a.metrics.self),badge(a),esc(review(a,findCase(a.caseId))[1]),button("录入审计","edit-alpha",a.id)]);
- return panel("共享审核队列",policySummary+steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
+ const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC + 组内相关性</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
+ const rows=data.alphas.map(a=>[button(a.name,"alpha",a.id,"quiet"),num(a.raCount),num(a.metrics.local),num(a.metrics.prod)+" / "+num(a.metrics.self),num(a.metrics.pairwise),badge(a),esc(review(a,findCase(a.caseId))[1]),button("录入审计","edit-alpha",a.id)]);
+ return panel("共享审核队列",policySummary+steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","组内相关性","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
 }
 function render(){
  const [crumb,title,desc]=pages[view];
