@@ -262,9 +262,15 @@ def run_status_command(args, root, stop_flag):
                         "iteration_ref": item.get("iteration_ref"),
                         "proposal_sha256": item.get("proposal_sha256"),
                         "candidate_definition_sha256": item.get("candidate_definition_sha256"),
-                        "eligible_alpha_count": item.get("eligible_alpha_count"),
-                        "unresolved_count": item.get("unresolved_count"),
-                        "unresolved": item.get("unresolved"),
+                        "eligible_alpha_count": (item.get("eligible_alpha_count")
+                            if item.get("eligible_alpha_count") is not None
+                            else extra.get("eligible_alpha_count")),
+                        "unresolved_count": (item.get("unresolved_count")
+                            if item.get("unresolved_count") is not None
+                            else extra.get("unresolved_count")),
+                        "unresolved": (item.get("unresolved")
+                            if isinstance(item.get("unresolved"), list)
+                            else extra.get("unresolved")),
                         "ra_fail_count": (item.get("gate_evidence") or {}).get("ra_fail_count")
                             if isinstance(item.get("gate_evidence"), dict)
                             else item.get("ra_fail_count"),
