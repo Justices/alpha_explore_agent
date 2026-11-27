@@ -270,8 +270,13 @@ function review(a,c){
   if(Math.abs(m.prod)>=gate.prod_corr_max||Math.abs(m.self)>=gate.self_corr_max) return ["corrFail","PC 或 SC 达到阈值"];
   if(!numeric(m.pairwise)||!text(a.pairRef)) return ["corrReady","待补最大组内相关性及其证据"];
   if(Math.abs(m.pairwise)>=gate.pairwise_corr_max) return ["corrFail","组内相关性达到阈值"];
-  if(c.ppa && (!numeric(m.sharpe)||!numeric(a.operatorCount)||!fieldSet(a.fields).length||m.sharpe<1||a.operatorCount>8||new Set(fieldSet(a.fields)).size>3))
-    pending.push("PPA 本地资格证据未通过");
+  if(c.ppa){
+    const ppaFields=new Set(fieldSet(a.fields));
+    if(!numeric(m.sharpe)||!numeric(a.operatorCount)||!ppaFields.size)
+      pending.push("PPA 本地资格证据待补");
+    else if(m.sharpe<1||a.operatorCount>8||ppaFields.size>3)
+      return ["blocked","PPA 资格未通过（Sharpe / 操作符数 / 字段数）"];
+  }
   if(!text(a.receipt)||!text(a.settings)||!text(a.expression)||!text(a.alphaId)||!text(c.scopeEvidence)) pending.push("回测回执、定义、范围或有效设置待补");
   if(c.workflow==="regular" && (!text(a.dataset)||!text(a.category)||!text(a.universe)||!numeric(a.delay))) pending.push("Regular 有效范围待补");
   if(c.workflow==="optimization" && (!text(c.sourceSnapshot)||!text(c.region)||!text(c.sourceType))) pending.push("来源快照、类型或区域待补");
@@ -283,7 +288,7 @@ function review(a,c){
   if(a.preferredStatus==="preferred"&&text(a.preferredRef)&&numeric(m.sharpe)&&numeric(m.fitness)&&numeric(m.turnover)&&numeric(m.weight)&&
      m.sharpe>=preferred.sharpe_min&&m.fitness>=preferred.fitness_min&&
      m.turnover>=preferred.turnover_min&&m.turnover<=preferred.turnover_max&&
-     m.weight<=preferred.weight_max&&subUniversePass)
+     Math.abs(m.weight)<=preferred.weight_max&&subUniversePass)
     return ["preferred","Candidate 已核对，Preferred 证据通过"];
   return ["candidate",a.preferredStatus==="failed"?"Preferred 未通过":"待核对 preferred-v1 结果"];
 }
@@ -737,12 +742,25 @@ function syncGate(){
  ["metric_prod","metric_self","metric_pairwise","corrRef"].forEach(k=>f[k].disabled=!local);
 }
 function checkCase(c){
- if(!text(c.name)||!Object.hasOwn(labels,c.workflow)||!Object.hasOwn(phases,c.phase)) throw Error("请检查任务名称、工作流和阶段。");
- if(c.workflow==="optimization"?!text(c.sourceId):!text(c.region)) throw Error("请填写所需的区域或来源 Alpha ID。");
- if(c.delay!=null&&(!Number.isInteger(c.delay)||c.delay<0)) throw Error("Delay 必须是非负整数。");
+ if(!c||typeof c!=="object"||Array.isArray(c)||!text(c.id)||!text(c.name)||
+    !Object.hasOwn(labels,c.workflow)||!Object.hasOwn(phases,c.phase))
+   throw Error("请检查任务 ID、名称、工作流和阶段。");
+ if(c.workflow==="optimization"?!text(c.sourceId):!text(c.region))
+   throw Error("请填写所需的区域或来源 Alpha ID。");
+ if(c.region!=null&&!text(c.region))throw Error("Region 必须是文本。");
+ if(c.ppa!=null&&typeof c.ppa!=="boolean")throw Error("PPA Profile 必须是布尔值。");
+ if(c.delay!=null&&(!Number.isInteger(c.delay)||c.delay<0))
+   throw Error("Delay 必须是非负整数。");
+ if(c.history!=null&&(!Array.isArray(c.history)||c.history.some(item=>
+    !item||typeof item!=="object"||!Object.hasOwn(phases,item.phase)||
+    typeof item.at!=="string"||!Number.isFinite(Date.parse(item.at)))))
+   throw Error("阶段历史记录格式无效。");
 }
 function checkAlpha(a,c){
- if(!c||!text(a.name)||!a.metrics||Array.isArray(a.metrics))throw Error("Alpha 记录缺少有效任务、名称或指标对象。");
+ if(!a||typeof a!=="object"||Array.isArray(a)||!c||!text(c.id)||
+    !text(a.id)||a.caseId!==c.id||!text(a.name)||
+    !a.metrics||typeof a.metrics!=="object"||Array.isArray(a.metrics))
+   throw Error("Alpha 记录缺少有效 ID、任务关联、名称或指标对象。");
  for(const [k,v] of Object.entries(a.metrics)){
    if(!Object.hasOwn(metrics,k)||!numeric(v))throw Error("无效的指标值。");
    if(["local","prod","self","pairwise"].includes(k)&&Math.abs(v)>1)throw Error("相关性必须在 -1 到 1 之间。");
