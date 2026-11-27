@@ -385,13 +385,16 @@ record the exact scope, cache hit or refresh reason, full record count,
 fetch time, and file path. The field-pool event separately records how many
 fields were eligible and how many were selected for research.
 
-The **审核** view includes the live Candidate evaluation records read from
-the Agent state directory, including failed and pending evaluations such as
-`RA_FAILED` and `RA_UNAVAILABLE`. Only candidates whose current RA and
-correlation gates pass are promoted into the Candidate pool; a pending
-evaluation remains visible for audit but is not counted as a Candidate.
-For a standalone CLI run, set `ALPHA_RESEARCH_PROGRESS_FILE` to an absolute
-JSONL path in an existing writable directory to capture these events.
+The **审核** view includes live Candidate and Preferred evaluation
+records read from the Agent state directory, including failed and pending
+evaluations such as `RA_FAILED`, `RA_UNAVAILABLE`, and unresolved Preferred
+reviews. The view displays the qualification policy fingerprint and
+distinguishes a stale policy from a record that has no policy binding. Only
+candidates whose current RA and correlation gates pass are promoted into the
+Candidate pool; a pending evaluation remains visible for audit but is not
+counted as a Candidate. For a standalone CLI run, set
+`ALPHA_RESEARCH_PROGRESS_FILE` to an absolute JSONL path in an existing
+writable directory to capture these events.
 Restarting the Workbench resets the displayed launch and the browser credential
 session. Use the saved logs and Campaign checkpoints to reconcile interrupted
 work before resuming it.
