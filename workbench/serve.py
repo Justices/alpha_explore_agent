@@ -866,7 +866,22 @@ def handler_for(agent_args, port):
                         except (OSError, SubmissionGateError):
                             code, payload = 503, {"error": "未能设置终止标记，请重试"}
                         else:
+                            stopped_at = datetime.now(timezone.utc).isoformat()
                             launch["stop_requested"] = True
+                            launch["stop_requested_at"] = stopped_at
+                            launch["updated_at"] = stopped_at
+                            try:
+                                saved = json.loads(
+                                    launch_manifest_path(log_dir, target).read_text(encoding="utf-8"))
+                                saved.update({
+                                    "stop_requested": True,
+                                    "stop_requested_at": stopped_at,
+                                    "updated_at": stopped_at,
+                                })
+                                write_launch_manifest(log_dir, target, saved)
+                            except (OSError, ValueError):
+                                write_progress("终止标记已写入，但任务清单同步失败",
+                                               log_dir / f"{target}.jsonl")
                             code, payload = 202, dict(launch)
                 elif running:
                     code, payload = 409, {"error": "请等待当前任务结束"}
