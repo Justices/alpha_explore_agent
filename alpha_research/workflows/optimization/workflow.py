@@ -422,6 +422,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                                     "dataset_id": dataset_id, "settings": settings,
                                     "registered_at": _now()})
     batch_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid4().hex[:8]
+    branch.update(batch_id=batch_id, prereg_ref=str(prereg_path))
+    _put_advanced(store, branch)
     if family == "regular":
         request = {"dataset_id": dataset_id, "label": "production",
                    "origin_alpha_id": alpha_id,
@@ -626,6 +628,11 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "policy_sha256": policy_sha256,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
+            "batch_id": batch_id, "prereg_ref": str(prereg_path),
+            "simulation_intent_ref": str(intent_path),
+            "response_ref": str(response_path),
+            "receipt_ref": str(readback_path), "readback_ref": str(readback_path),
+            "audit_ref": str(audit_path),
             "report_ref": str(report_path), "source_unchanged_verified": True,
             "simulation_invoked": True, "alpha_submission_invoked": False,
             "proposal_sha256": proposal_sha256,
