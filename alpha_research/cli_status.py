@@ -126,7 +126,8 @@ def run_status_command(args, root, stop_flag):
 
     def _record_summaries(kind):
         storage_kind = {"candidate_evaluations": "candidate",
-                        "preferred_evaluations": "preferred"}.get(kind, kind)
+                        "preferred_evaluations": "preferred",
+                        "super_run": "super_runs"}.get(kind, kind)
         folder = root / "state" / "research_v1_1" / storage_kind
         output = []
         if folder.is_dir() and not folder.is_symlink():
@@ -154,7 +155,7 @@ def run_status_command(args, root, stop_flag):
                     if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
                         preferred_status = "NOT_CANDIDATE"
                     extra = {}
-                    if storage_kind == "super_run":
+                    if kind == "super_run":
                         run_snapshot = {}
                         run_id = item.get("run_id")
                         if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id):
