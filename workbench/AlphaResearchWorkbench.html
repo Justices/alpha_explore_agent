@@ -354,26 +354,40 @@ function runtimeTasks(){
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
      esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
      esc(row.candidate_alpha_id||"—"),
+     esc([row.region,row.requested_delay==null?"Delay 未限定":"D"+row.requested_delay].filter(Boolean).join(" / ")||"—"),
+     esc(row.eligible_alpha_count??"—"),esc(row.unresolved_count??"—"),
      esc(row.objective||"—"),esc((row.changes||[]).join("；")||"—"),
      optimization?num(sourceMetrics.sharpe)+" → "+num(candidateMetrics.sharpe)+" ("+num(delta.sharpe)+")":"—",
+     optimization?num(sourceMetrics.fitness)+" → "+num(candidateMetrics.fitness)+" ("+num(delta.fitness)+")":"—",
      optimization?num(sourceMetrics.turnover)+" → "+num(candidateMetrics.turnover)+" ("+num(delta.turnover)+")":"—",
+     optimization?num(sourceMetrics.returns)+" → "+num(candidateMetrics.returns)+" ("+num(delta.returns)+")":"—",
      optimization?num(sourceMetrics.drawdown)+" → "+num(candidateMetrics.drawdown)+" ("+num(delta.drawdown)+")":"—",
+     optimization?num(sourceMetrics.margin)+" → "+num(candidateMetrics.margin)+" ("+num(delta.margin)+")":"—",
+     optimization?num(sourceMetrics.weight)+" → "+num(candidateMetrics.weight)+" ("+num(delta.weight)+")":"—",
      canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):"—"
    ];
  });
  const evidenceRows=domainRecords.map(({kind,row})=>({
    kind,id:row.id||"—",
    refs:["path","record_ref","report_ref","simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
-     .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n")
- })).filter(item=>item.refs);
+     .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n"),
+   details:{
+     source_metrics:row.source_metrics,candidate_metrics:row.candidate_metrics,
+     metric_deltas:row.metric_deltas,source_settings:row.source_settings,
+     candidate_settings:row.candidate_settings,unresolved:row.unresolved,
+     platform_super_schema:row.platform_super_schema,
+     failures:row.failures,pending:row.pending
+   }
+ })).filter(item=>item.refs||Object.values(item.details).some(value=>value!=null));
  const domainTable=domainRows.length
    ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
-     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","优化目标","改动摘要","Sharpe 来源→候选 (Δ)","Turnover 来源→候选 (Δ)","Drawdown 来源→候选 (Δ)","恢复核对"],domainRows)
+     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","Super 范围","符合范围 Alpha 数","未解决项","优化目标","改动摘要","Sharpe 来源→候选 (Δ)","Fitness 来源→候选 (Δ)","Turnover 来源→候选 (Δ)","Returns 来源→候选 (Δ)","Drawdown 来源→候选 (Δ)","Margin 来源→候选 (Δ)","Weight 来源→候选 (Δ)","恢复核对"],domainRows)
    :"";
  const evidenceTable=evidenceRows.length
    ?'<h3 style="padding:12px 17px 0">执行证据引用（只读）</h3>'+
      table(["流程","运行 / 分支 ID","证据路径 / 回执引用"],evidenceRows.map(item=>[
-       esc(item.kind),esc(item.id),'<pre class="detail" style="white-space:pre-wrap;max-width:48rem">'+esc(item.refs)+'</pre>'
+       esc(item.kind),esc(item.id),'<pre class="detail" style="white-space:pre-wrap;max-width:48rem">'+esc(item.refs||"")+
+       (Object.values(item.details).some(value=>value!=null)?"\n\n结构化详情：\n"+esc(JSON.stringify(item.details,null,2)):"")+'</pre>'
      ]))
    :"";
  const latest=launchState&&launchState.status!=="idle"?
