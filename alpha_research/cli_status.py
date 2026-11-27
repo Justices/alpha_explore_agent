@@ -139,6 +139,19 @@ def run_status_command(args, root, stop_flag):
                         "receipt_ref": item.get("receipt_ref") or item.get("readback_ref"),
                         "audit_ref": item.get("audit_ref"),
                         "report_ref": item.get("report_ref"),
+                        "iteration_session_id": item.get("iteration_session_id"),
+                        "iterations_completed": item.get("iterations_completed"),
+                        "iteration_budget": item.get("iteration_budget"),
+                        "iteration_stop_reason": item.get("iteration_stop_reason"),
+                        "iteration_ref": item.get("iteration_ref"),
+                        "proposal_sha256": item.get("proposal_sha256"),
+                        "candidate_definition_sha256": item.get("candidate_definition_sha256"),
+                        "eligible_alpha_count": item.get("eligible_alpha_count"),
+                        "unresolved_count": item.get("unresolved_count"),
+                        "unresolved": item.get("unresolved"),
+                        "simulation_invoked": item.get("simulation_invoked"),
+                        "alpha_submission_invoked": item.get("alpha_submission_invoked"),
+                        "source_unchanged_verified": item.get("source_unchanged_verified"),
                         "path": str(record_path)})
                 except (OSError, ValueError):
                     output.append({"path": str(record_path), "status": "unreadable"})
