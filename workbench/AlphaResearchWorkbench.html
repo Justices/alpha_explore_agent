@@ -177,7 +177,7 @@ function agentPanel(){
    ["Preferred 池",agentStatus.v11_preferred],["候选评估记录",agentStatus.v11_candidate_evaluations]
  ];
  const records=groups.flatMap(([kind,items])=>(items||[]).map(row=>[
-   esc(kind),esc(row.alpha_id||row.candidate_alpha_id||row.source_alpha_id||row.campaign_id||row.id||"—"),
+   esc(kind),esc(row.campaign_id||row.run_id||row.branch_id||row.alpha_id||row.candidate_alpha_id||row.source_alpha_id||row.id||"—"),
    esc(row.workflow||"—"),esc(row.candidate_status||row.status||"—"),esc(row.preferred_status||"—")
  ]));
  const warning=agentStatus.global_alpha_pool?.status==="unavailable"
