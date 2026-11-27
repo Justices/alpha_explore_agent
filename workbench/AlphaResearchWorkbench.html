@@ -505,7 +505,33 @@ function audit(){
   '\nSHA-256：'+esc(policy.policy_sha256)+'</div></div></div>';
  const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC + 组内相关性</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
  const rows=data.alphas.map(a=>[button(a.name,"alpha",a.id,"quiet"),num(a.raCount),num(a.metrics.local),num(a.metrics.prod)+" / "+num(a.metrics.self),num(a.metrics.pairwise),badge(a),esc(review(a,findCase(a.caseId))[1]),button("录入审计","edit-alpha",a.id)]);
- return panel("共享审核队列",policySummary+steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","组内相关性","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
+ const evaluations=(agentStatus?.v11_candidate_evaluations||[]).map(row=>{
+   const metrics=row.metrics||{},corr=row.correlations||{};
+   const pairwise=corr.pairwise&&typeof corr.pairwise==="object"
+     ?Object.values(corr.pairwise).filter(value=>typeof value==="number"&&Number.isFinite(value))
+     :[];
+   const maxPairwise=pairwise.length?Math.max(...pairwise.map(Math.abs)):null;
+   const ra=row.ra_fail_count===0?"0":row.ra_fail_count??"未取得";
+   const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
+   return [
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.status||"—"),
+     esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
+     esc(corr.prod??"—")+" / "+esc(corr.self??"—"),
+     esc(maxPairwise??"—"),esc((row.failures||[]).join(", ")||"—"),
+     esc((row.pending||[]).join(", ")||"—"),
+     '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
+   ];
+ });
+ const liveAudit=evaluations.length
+   ?panel("Agent 实际审核记录 · 只读",table(
+      ["Alpha","流程","RA fail count","Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","失败项","待补证据","引用"],
+      evaluations))
+   :panel("Agent 实际审核记录 · 只读",blank(
+      "当前没有 Agent Candidate 审核记录",
+      localAgent?"刷新 Agent 状态后，这里会显示实际 RA、相关性、Candidate 与 Preferred 证据。":"连接本地工作台服务后可读取 Agent 审核记录。"));
+ return panel("共享审核队列",policySummary+steps+(rows.length
+   ?table(["手工 Alpha","RA fail count","本地 SC","PC / SC","组内相关性","结论","下一步","操作"],rows)
+   :blank("等待手工 Alpha 审计记录","Agent 实际审核结果在下方只读展示；缺失或未终结的证据保持待补。")))+liveAudit;
 }
 function render(){
  const [crumb,title,desc]=pages[view];
