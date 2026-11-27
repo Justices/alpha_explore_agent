@@ -783,12 +783,19 @@ function clearAlphaEvidence(record,metricKeys,fieldKeys){
  record.metrics=measured;
  fieldKeys.forEach(key=>{record[key]=null;});
 }
-function invalidateAlphaEvidence(original,next){
+function invalidateAlphaEvidence(original,next,force=false){
  if(!original?.id)return next;
  const allEvidence=["raCount","raFinal","raRef","localRef","localComplete","corrRef",
   "pairwise","pairRef","auditStatus","auditRef","preferredStatus","preferredRef","subUniverse"];
  const correlationMetrics=["local","prod","self","pairwise"];
  const performanceMetrics=Object.keys(metrics).filter(key=>!correlationMetrics.includes(key));
+ if(force){
+  clearAlphaEvidence(next,Object.keys(metrics),allEvidence);
+  next.alphaId=null;
+  next.settings=null;
+  next.receipt=null;
+  return next;
+ }
  const definitionChanged=changedFields(original,next,[
   "alphaId","expression","fields","operators","settings","receipt","dataset","category",
   "delay","universe","operatorCount","units"
@@ -880,6 +887,12 @@ async function submit(e){
      if(c.region)c.region=c.region.toUpperCase();
      checkCase(c);
      if(original.phase!==c.phase)c.history=[...(original.history||[]),{phase:c.phase,at:new Date().toISOString()}];
+     const sourceChanged=Boolean(original.id&&c.workflow==="optimization"&&
+       changedFields(original,c,["sourceType","sourceSnapshot","region"]));
+     if(sourceChanged){
+       next.alphas=next.alphas.map(alpha=>alpha.caseId===c.id
+         ?invalidateAlphaEvidence(alpha,{...alpha,metrics:{...(alpha.metrics||{})}},true):alpha);
+     }
      next.cases=next.cases.filter(x=>x.id!==c.id).concat(c);
      view="cases";
    }else{
