@@ -217,6 +217,7 @@ def inspect_execution_trace(state_root, task_id):
     trace_events_consistent = len(events) == verification["event_count"]
     research_id = (task.get("research_identity") or {}).get("research_id")
     event_research_ids = []
+    domain_run_ids = {"super": set(), "optimization": set()}
     for event in events:
         if not isinstance(event, dict):
             continue
@@ -226,9 +227,11 @@ def inspect_execution_trace(state_root, task_id):
         event_type = event.get("event_type")
         domain_run_id = payload.get("run_id") if isinstance(payload, dict) else None
         if isinstance(domain_run_id, str) and isinstance(event_type, str) and event_type.startswith("super."):
+            domain_run_ids["super"].add(domain_run_id)
             event_research_ids.append("super:" + domain_run_id)
         elif (isinstance(domain_run_id, str) and isinstance(event_type, str)
               and event_type.startswith("optimization.")):
+            domain_run_ids["optimization"].add(domain_run_id)
             event_research_ids.append("optimization:" + domain_run_id)
         else:
             event_research_ids.extend(
@@ -392,7 +395,7 @@ def inspect_execution_trace(state_root, task_id):
         base = root / "state" / "research_v1_1" / "optimization"
         report_path = base / f"{run_id}_optimization_report.json"
         report = _read_object(report_path, root=root)
-        if not report and current_id not in event_research_ids:
+        if not report and run_id not in domain_run_ids["optimization"]:
             continue
         branch_id = next((event.get("payload", {}).get("branch_id")
                           for event in events
@@ -439,7 +442,7 @@ def inspect_execution_trace(state_root, task_id):
             continue
         path = root / "state" / "research_v1_1" / "super_runs" / f"{run_id}.json"
         saved = _read_object(path, root=root)
-        if not saved and current_id not in event_research_ids:
+        if not saved and run_id not in domain_run_ids["super"]:
             continue
         run_evidence = ({
             key: saved.get(key) for key in (
