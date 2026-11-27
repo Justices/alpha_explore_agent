@@ -79,8 +79,11 @@ class RecoveryCoordinatorTests(unittest.TestCase):
 
     def test_unspecified_campaign_attempts_all_d1_datasets_with_budget_one_each(self):
         agent = Mock(runs_root=self.root / "runs", stop_flag=None)
-        agent.run_once.return_value = {"batch_dir": "batch", "alpha_ids": ["A1"],
-                                       "candidate_status": {"A1": "EVIDENCE_PENDING"}}
+        agent.run_once.side_effect = lambda **kwargs: {
+            "batch_dir": f"batch-{agent.run_once.call_count}",
+            "alpha_ids": ["A1"],
+            "candidate_status": {"A1": "EVIDENCE_PENDING"},
+        }
         ids = [f"model{number}" for number in range(101, 106)]
         gateway = Mock()
 
@@ -510,8 +513,9 @@ class RecoveryCoordinatorTests(unittest.TestCase):
                 agent, self.gateway, **request, recovery_batch=batch.with_name("other-batch"))
         self.assertEqual(agent.calls, 1)
         self.assertEqual(self.gateway.calls, [])
-        completed = runner.execute(task["task_id"])
-        self.assertEqual(completed["status"], "COMPLETED")
+        still_blocked = runner.execute(task["task_id"])
+        self.assertEqual(still_blocked["status"], "BLOCKED")
+        self.assertEqual(still_blocked["steps"]["execute"], "RUNNING")
         self.assertEqual(agent.calls, 1)
 
     def test_immutable_target_change_blocks_recovery_replay(self):
