@@ -171,11 +171,11 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             }), encoding="utf-8")
             output = StringIO()
             with patch("alpha_research.cli_status.CandidatePool.build_index",
-                       return_value={"status": "available", "entries": []}), \\
-                    redirect_stdout(output):
-                self.assertEqual(run_status_command(
-                    SimpleNamespace(config=config), root_path,
-                    root_path / "state" / "stop.flag"), 0)
+                       return_value={"status": "available", "entries": []}):
+                with redirect_stdout(output):
+                    self.assertEqual(run_status_command(
+                        SimpleNamespace(config=config), root_path,
+                        root_path / "state" / "stop.flag"), 0)
             report = json.loads(output.getvalue())
             self.assertEqual(len(report["v11_candidate_evaluations"]), 1)
             candidate = report["v11_candidate_evaluations"][0]
