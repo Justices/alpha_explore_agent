@@ -243,13 +243,13 @@ def _validate_workbench_records(payload):
 
     def required_text(item, key):
         value = item.get(key)
-        if not isinstance(value, str) or not value.strip() or "\\x00" in value:
+        if not isinstance(value, str) or not value.strip() or "\x00" in value:
             raise ValueError(f"工作台记录 {key} 缺失或无效")
 
     def optional_text(item, keys):
         for key in keys:
             value = item.get(key)
-            if value is not None and (not isinstance(value, str) or "\\x00" in value):
+            if value is not None and (not isinstance(value, str) or "\x00" in value):
                 raise ValueError(f"工作台记录 {key} 必须是文本")
 
     def finite_number(value):
@@ -272,9 +272,9 @@ def _validate_workbench_records(payload):
             raise ValueError("研究任务 ID 重复")
         case_ids.add(item["id"])
         required_text(item, "name")
-        if item.get("workflow") not in {"regular", "super", "optimization"}:
+        if not isinstance(item.get("workflow"), str) or item["workflow"] not in {"regular", "super", "optimization"}:
             raise ValueError("研究任务工作流无效")
-        if item.get("phase") not in {"scope", "hypothesis", "simulation", "review", "closed"}:
+        if not isinstance(item.get("phase"), str) or item["phase"] not in {"scope", "hypothesis", "simulation", "review", "closed"}:
             raise ValueError("研究任务阶段无效")
         if item["workflow"] == "optimization":
             required_text(item, "sourceId")
@@ -296,7 +296,8 @@ def _validate_workbench_records(payload):
                 raise ValueError("研究阶段历史必须是列表")
             for entry in history:
                 if (not isinstance(entry, dict)
-                        or entry.get("phase") not in
+                        or not isinstance(entry.get("phase"), str)
+                        or entry["phase"] not in
                         {"scope", "hypothesis", "simulation", "review", "closed"}
                         or not isinstance(entry.get("at"), str)
                         or not entry["at"].strip()):
@@ -347,7 +348,7 @@ def _validate_workbench_records(payload):
             if key in correlation_names and abs(value) > 1:
                 raise ValueError("Alpha 相关性指标必须在 -1 到 1 之间")
         for key, allowed in status_values.items():
-            if item.get(key) is not None and item[key] not in allowed:
+            if item.get(key) is not None and (not isinstance(item[key], str) or item[key] not in allowed):
                 raise ValueError(f"Alpha {key} 状态无效")
         if item.get("corrLimit") is not None:
             value = item["corrLimit"]
@@ -361,7 +362,7 @@ def _validate_workbench_records(payload):
         if case["workflow"] == "regular":
             if case.get("dataset") and item.get("dataset"):
                 allowed = [part.strip() for part in case["dataset"].replace("，", ",")
-                           .replace("\\n", ",").split(",") if part.strip()]
+                           .replace("\n", ",").split(",") if part.strip()]
                 if item["dataset"] not in allowed:
                     raise ValueError("Alpha Dataset 超出研究任务硬约束")
             for key in ("category", "delay", "universe"):
@@ -639,7 +640,7 @@ def handler_for(agent_args, port):
                                 log_dir / (campaign_id + ".models.json"), {
                                     "campaign_id": campaign_id, **selection})
                     stop_flag.unlink(missing_ok=True)
-                except OSError:
+                except (OSError, ValueError):
                     write_progress("无法保存本次启动的索引或清理终止标记", log_path)
 
     def start_workflow(args, credentials, selection, campaign_id=None,
