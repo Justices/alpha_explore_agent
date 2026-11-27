@@ -11,7 +11,20 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&
 const labels = {regular:"Regular Alpha",super:"Super Alpha",optimization:"指定 Alpha 优化"};
 const pages = {board:["研究总览","Alpha 研究工作台","管理研究范围、回测证据与候选审计，追踪每条 Alpha 的研究决策。"],cases:["研究任务","研究任务","保留用户硬约束、平台有效组合、预算与研究分支。"],compare:["指标对比","回测指标对比","选择最多四条 Alpha，逐项比较已记录的回测指标。"],audit:["审核与优选","审核与优选","从终态 RA 证据开始，依次核对相关性、Candidate 和 Preferred 结果。"]};
 const phases = {scope:"范围验证",hypothesis:"假设与构建",simulation:"回测证据",review:"审核",closed:"复盘归档"};
-const metrics = {sharpe:"Sharpe",fitness:"Fitness",turnover:"Turnover",drawdown:"Drawdown",coverage:"Coverage",robustness:"Robustness",costs:"Transaction costs",local:"本地自相关",prod:"生产相关性",self:"平台自相关",pairwise:"组内相关性",weight:"最大权重"};
+const metrics = {sharpe:"Sharpe",fitness:"Fitness",turnover:"Turnover",drawdown:"Drawdown",coverage:"Coverage",robustness:"Robustness",costs:"Transaction costs",local:"本地自相关",prod:"生产相关性",self:"平台自相关",pairwise:"最大组内相关性",weight:"最大权重"};
+const DEFAULT_QUALIFICATION_POLICY = {
+ candidate:{sharpe_min:1.58,china_sharpe_min:2.08,fitness_min:1,two_year_sharpe_min:1.6,
+  margin_min:0.0005,risk_neutralized_sharpe_min:1,risk_neutralized_fitness_min:0.7,
+  turnover_min:0.05,turnover_max:0.3,prod_corr_max:0.7,self_corr_max:0.7,pairwise_corr_max:0.4},
+ preferred:{sharpe_min:1.25,fitness_min:1,turnover_min:0.01,turnover_max:0.7,
+  weight_max:0.1,require_sub_universe_pass:true},
+ policy_sha256:"aa2e10c68789543c5d8181ebfb4b97a717100c819029bb80cbd10c829c04f8b6"
+};
+function qualificationPolicy(){
+ const current=agentStatus?.qualification_policy;
+ return current?.status==="available"&&current.candidate&&current.preferred
+  ?current:DEFAULT_QUALIFICATION_POLICY;
+}
 const statuses = {draft:"研究草稿",pending:"证据待补",raFail:"RA 未通过",corrReady:"待相关性",corrFail:"相关性未通过",audit:"待完整审计",candidate:"Candidate",preferred:"优选",blocked:"审核阻塞"};
 const key = "alpha-research-desk-v1";
 const localAgent = location.protocol === "http:" && location.hostname === "127.0.0.1";
@@ -245,14 +258,18 @@ async function loadWorkbenchRecords(){
 function raPassed(a){return a.raCount===0 && a.raFinal==="pass" && text(a.raRef);}
 function review(a,c){
   const m=a.metrics??{}, pending=[];
+  const policy=qualificationPolicy(), gate=policy.candidate, preferred=policy.preferred;
   if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
   if(!raPassed(a)) return [a.receipt?"pending":"draft","待补终态 RA 证据与失败数"];
-  if(!numeric(a.corrLimit)||a.corrLimit<=0||a.corrLimit>1||!text(a.policyRef)) return ["pending","待补有效相关性策略与出处"];
+  if(!numeric(a.corrLimit)||a.corrLimit!==gate.self_corr_max||!text(a.policyRef)||a.policyRef!==policy.policy_sha256)
+    return ["pending","策略版本已变化或未绑定当前审核策略"];
   if(!numeric(m.local)||!text(a.localRef)) return ["pending","待补本地自相关预检证据"];
-  if(Math.abs(m.local)>=a.corrLimit) return ["corrFail","本地自相关达到阈值"];
+  if(Math.abs(m.local)>=gate.self_corr_max) return ["corrFail","本地自相关达到阈值"];
   if(a.localComplete!=="pass") return ["pending","待补近四年同区域非 PPA OS 样本的完整预检结论"];
   if(!numeric(m.prod)||!numeric(m.self)||!text(a.corrRef)) return ["corrReady","可在 Agent 中查询，回填 PC / SC 证据"];
-  if(Math.abs(m.prod)>=a.corrLimit||Math.abs(m.self)>=a.corrLimit) return ["corrFail","PC 或 SC 达到阈值"];
+  if(Math.abs(m.prod)>=gate.prod_corr_max||Math.abs(m.self)>=gate.self_corr_max) return ["corrFail","PC 或 SC 达到阈值"];
+  if(!numeric(m.pairwise)||!text(a.pairRef)) return ["corrReady","待补最大组内相关性及其证据"];
+  if(Math.abs(m.pairwise)>=gate.pairwise_corr_max) return ["corrFail","组内相关性达到阈值"];
   if(c.ppa && (!numeric(m.sharpe)||!numeric(a.operatorCount)||!fieldSet(a.fields).length||m.sharpe<1||a.operatorCount>8||new Set(fieldSet(a.fields)).size>3))
     pending.push("PPA 本地资格证据未通过");
   if(!text(a.receipt)||!text(a.settings)||!text(a.expression)||!text(a.alphaId)||!text(c.scopeEvidence)) pending.push("回测回执、定义、范围或有效设置待补");
@@ -262,7 +279,11 @@ function review(a,c){
   if(a.pairwise!=="pass"||!text(a.pairRef)) pending.push("组内去重证据待补");
   if(a.auditStatus!=="candidate"||!text(a.auditRef)) pending.push("Agent 完整 Candidate 审计与回读待补");
   if(pending.length) return ["audit",pending.join(" · ")];
-  if(a.preferredStatus==="preferred"&&text(a.preferredRef)&&numeric(m.sharpe)&&numeric(m.fitness)&&numeric(m.turnover)&&numeric(m.weight)&&m.sharpe>=1.25&&m.fitness>=1&&m.turnover>=.01&&m.turnover<=.70&&m.weight<=.10&&a.subUniverse==="pass")
+  const subUniversePass=preferred.require_sub_universe_pass===false||a.subUniverse==="pass";
+  if(a.preferredStatus==="preferred"&&text(a.preferredRef)&&numeric(m.sharpe)&&numeric(m.fitness)&&numeric(m.turnover)&&numeric(m.weight)&&
+     m.sharpe>=preferred.sharpe_min&&m.fitness>=preferred.fitness_min&&
+     m.turnover>=preferred.turnover_min&&m.turnover<=preferred.turnover_max&&
+     m.weight<=preferred.weight_max&&subUniversePass)
     return ["preferred","Candidate 已核对，Preferred 证据通过"];
   return ["candidate",a.preferredStatus==="failed"?"Preferred 未通过":"待核对 preferred-v1 结果"];
 }
@@ -449,12 +470,12 @@ function show(title,body,mode){
    ||(mode?.kind==="credentials"&&credentialsSubmitting);
  if(!dialog.open) dialog.showModal();
 }
-function field(k,label,value="",type="text",required=false,items=null){
- const val=esc(value), req=required?" required":"";
+function field(k,label,value="",type="text",required=false,items=null,readOnly=false){
+ const val=esc(value), req=required?" required":"", readonly=readOnly?" readonly":"";
  let input;
  if(items) input='<select name="'+k+'"'+req+'>'+opts(items,value,"请选择 / 待补")+'</select>';
- else if(type==="area") input='<textarea name="'+k+'"'+req+'>'+val+'</textarea>';
- else input='<input name="'+k+'" type="'+type+'" value="'+val+'"'+req+(type==="number"?' step="any"':"")+'>';
+ else if(type==="area") input='<textarea name="'+k+'"'+req+readonly+'>'+val+'</textarea>';
+ else input='<input name="'+k+'" type="'+type+'" value="'+val+'"'+req+readonly+(type==="number"?' step="any"':"")+'>';
  return '<label class="field '+(type==="area"?"wide":"")+'">'+esc(label)+input+'</label>';
 }
 const grid=(...items)=>'<div class="grid">'+items.join("")+'</div>';
@@ -686,7 +707,7 @@ function caseForm(c={},kind=c.workflow||"regular"){
  if(c.id) {const f=$("#form").elements.constraints;f.readOnly=true;if(text(c.objective))$("#form").elements.objective.readOnly=true;}
 }
 function alphaForm(c,a={}){
- const m=a.metrics||{}, regular=c.workflow==="regular";
+ const m=a.metrics||{}, regular=c.workflow==="regular", policy=qualificationPolicy();
  const choices={pass:"通过",fail:"失败 / 冲突",pending:"待补"};
  show(a.id?"编辑 Alpha 与审计":"新增 Alpha 记录",grid(field("name","记录名称",a.name,"text",true),field("alphaId","BRAIN Alpha ID",a.alphaId),
  ...(regular?[field("dataset","有效 Dataset ID",a.dataset),field("category","有效 Category",a.category),field("delay","有效 Delay",a.delay,"number"),field("universe","有效 Universe",a.universe)]:[]),
@@ -694,7 +715,7 @@ function alphaForm(c,a={}){
  field("idea","Idea",a.idea,"area"),field("dataReason","Rationale for data used",a.dataReason,"area"),field("operatorReason","Rationale for operators used",a.operatorReason,"area"),field("economics","经济含义、失效条件和不确定性",a.economics,"area"),field("settings","固定回测设置、字段验证与预回测证据",a.settings,"area"),field("receipt","模拟回执 / 恢复 ID / 分支引用",a.receipt,"area"))
  +section("回测指标 · 保留原始口径")+grid(...Object.entries(metrics).filter(([k])=>!["local","prod","self","pairwise"].includes(k)).map(([k,v])=>field("metric_"+k,v,m[k],"number")),field("units","成本、覆盖率和稳健性口径",a.units,"area"))
  +section("01 · RA 终态")+grid(field("raCount","RA fail count",a.raCount,"number"),field("raFinal","RA 检查已终结",a.raFinal,"text",false,choices),field("raRef","RA 终态证据引用",a.raRef,"area"))
- +'<div id="corr-fields">'+section("02–03 · 相关性证据")+grid(field("corrLimit","配置中的 PC / SC 阈值（严格小于）",a.corrLimit??0.70,"number"),field("policyRef","阈值来源 / 策略版本",a.policyRef),field("metric_local","本地自相关",m.local,"number"),field("localRef","近四年同区域非 PPA OS 预检证据",a.localRef),field("localComplete","本地预检完整性结论",a.localComplete,"text",false,choices),...["prod","self","pairwise"].map(k=>field("metric_"+k,metrics[k],m[k],"number")),field("corrRef","平台 PC / SC 回读证据",a.corrRef,"area"))+'</div>'
+ +'<div id="corr-fields">'+section("02–03 · 相关性证据")+grid(field("corrLimit","当前 SC 阈值（严格小于）",a.corrLimit??policy.candidate.self_corr_max,"number",false,null,true),field("policyRef","当前策略 SHA-256",a.policyRef??policy.policy_sha256,"text",false,null,true),field("metric_local","本地自相关",m.local,"number"),field("localRef","近四年同区域非 PPA OS 预检证据",a.localRef),field("localComplete","本地预检完整性结论",a.localComplete,"text",false,choices),...["prod","self","pairwise"].map(k=>field("metric_"+k,metrics[k],m[k],"number")),field("corrRef","平台 PC / SC 回读证据",a.corrRef,"area"))+'</div>'
  +section("04–05 · Agent 审计回读")+grid(field("pairwise","组内去重 / 用户裁决",a.pairwise,"text",false,choices),field("pairRef","去重或裁决证据",a.pairRef),field("auditStatus","Agent Candidate 结论",a.auditStatus,"text",false,{candidate:"CANDIDATE",failed:"失败",pending:"待补"}),field("auditRef","Candidate 完整审计引用",a.auditRef),field("subUniverse","LOW_SUB_UNIVERSE_SHARPE",a.subUniverse,"text",false,choices),field("preferredStatus","Agent Preferred 结论",a.preferredStatus,"text",false,{preferred:"PREFERRED",failed:"NOT_PREFERRED",pending:"待补"}),field("preferredRef","Preferred 评估引用",a.preferredRef),field("submissionNote","提交候选人工复核决定 / 复盘备注",a.submissionNote,"area")),
  {kind:"alpha",record:a,caseId:c.id});
  syncGate();
@@ -702,8 +723,9 @@ function alphaForm(c,a={}){
 function syncGate(){
  const f=$("#form").elements;
  if(!f.raCount)return;
+ const policy=qualificationPolicy();
  const ra=f.raCount.value!==""&&Number(f.raCount.value)===0&&f.raFinal.value==="pass"&&text(f.raRef.value);
- const local=ra&&f.metric_local.value!==""&&Math.abs(Number(f.metric_local.value))<Number(f.corrLimit.value)&&text(f.localRef.value)&&text(f.policyRef.value)&&f.localComplete.value==="pass";
+ const local=ra&&f.metric_local.value!==""&&Math.abs(Number(f.metric_local.value))<policy.candidate.self_corr_max&&text(f.localRef.value)&&text(f.policyRef.value)&&f.localComplete.value==="pass";
  ["metric_local","localRef","localComplete"].forEach(k=>f[k].disabled=!ra);
  ["metric_prod","metric_self","metric_pairwise","corrRef"].forEach(k=>f[k].disabled=!local);
 }
@@ -772,8 +794,8 @@ function inspectCase(c){
  show("研究任务详情",grid(line("任务",c.name),line("工作流",workflow(c)),line("区域",c.region),line("阶段",phases[c.phase]),line("阶段流转",(c.history||[]).map(h=>phases[h.phase]+" · "+new Date(h.at).toLocaleString("zh-CN")).join("\n")),line("硬约束",[c.dataset,c.category,c.delay,c.universe,c.constraints].filter(v=>v!=null).join(" / ")),line("研究目标",c.objective),line("来源 Alpha / 快照",[c.sourceId,c.sourceType,c.sourceSnapshot].filter(Boolean).join(" / ")),line("范围证据",c.scopeEvidence),line("范围覆盖",c.coverage),line("预算与停止原因",c.budget))+'<div class="actions">'+button("编辑研究证据","edit-case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div>',null);
 }
 function inspectAlpha(a){
- const c=findCase(a.caseId);
- show(a.name,'<p>'+esc(workflow(c))+' · '+esc(c.region||"待解析")+' · '+badge(a)+'</p>'+grid(line("当前审核",review(a,c)[1]),line("Alpha ID",a.alphaId),line("表达式 / Selection / Combo",a.expression),line("数据字段",a.fields),line("操作符",a.operators),line("Idea",a.idea),line("Rationale for data used",a.dataReason),line("Rationale for operators used",a.operatorReason),line("经济含义",a.economics),line("有效设置",a.settings),line("回测回执",a.receipt),line("RA 证据",[a.raCount,a.raRef].filter(v=>v!=null).join(" / ")),line("相关性证据",[a.localRef,a.corrRef,a.pairRef].filter(Boolean).join(" / ")),line("审计与优选证据",[a.auditRef,a.preferredRef].filter(Boolean).join(" / ")),line("人工复核决定",a.submissionNote))+'<div class="actions">'+button("编辑记录与审核","edit-alpha",a.id,"primary")+'</div>',null);
+ const c=findCase(a.caseId),policy=qualificationPolicy();
+ show(a.name,'<p>'+esc(workflow(c))+' · '+esc(c.region||"待解析")+' · '+badge(a)+'</p>'+grid(line("当前审核",review(a,c)[1]),line("Alpha ID",a.alphaId),line("表达式 / Selection / Combo",a.expression),line("数据字段",a.fields),line("操作符",a.operators),line("Idea",a.idea),line("Rationale for data used",a.dataReason),line("Rationale for operators used",a.operatorReason),line("经济含义",a.economics),line("有效设置",a.settings),line("回测回执",a.receipt),line("RA 证据",[a.raCount,a.raRef].filter(v=>v!=null).join(" / ")),line("策略版本",a.policyRef),line("相关性证据",[a.localRef,a.corrRef,a.pairRef].filter(Boolean).join(" / ")),line("审计与优选证据",[a.auditRef,a.preferredRef].filter(Boolean).join(" / ")),line("人工复核决定",a.submissionNote))+'<div class="actions">'+button("编辑记录与审核","edit-alpha",a.id,"primary")+'</div>',null);
 }
 function addComparison(id){if(!id)return;if(selected.size>=4&&!selected.has(id)){notify("最多对比四条 Alpha");return;}selected.add(id);}
 document.addEventListener("click",e=>{
