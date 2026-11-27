@@ -307,6 +307,33 @@ def recent_progress(path):
     return events
 
 
+def recovery_intent_path(root, target):
+    """Resolve only an existing, non-symlink Simulation Intent under state-root."""
+    if not isinstance(target, str) or not target.strip():
+        raise ValueError("Simulation Intent 路径无效")
+    root = Path(root).resolve()
+    path = Path(target).expanduser()
+    if not path.is_absolute() or not path.name.endswith("_simulation_intent.json"):
+        raise ValueError("仅允许核对状态目录内的 Simulation Intent 文件")
+    try:
+        relative = path.relative_to(root)
+    except ValueError as exc:
+        raise ValueError("Simulation Intent 位于当前 state-root 之外") from exc
+    if not relative.parts or any(part in {"", ".", ".."} for part in relative.parts):
+        raise ValueError("Simulation Intent 路径包含非法目录段")
+    current = root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            raise ValueError("Simulation Intent 路径不能经过符号链接")
+    if not current.is_file():
+        raise ValueError("Simulation Intent 文件不存在或不可读取")
+    resolved = current.resolve(strict=True)
+    if not resolved.is_relative_to(root):
+        raise ValueError("Simulation Intent 位于当前 state-root 之外")
+    return resolved
+
+
 def handler_for(agent_args, port):
     origin = f"http://127.0.0.1:{port}"
     launch_lock = Lock()
@@ -556,15 +583,7 @@ def handler_for(agent_args, port):
                 workflow = request.get("workflow")
                 if not isinstance(workflow, str) or workflow not in {"super", "optimization"}:
                     raise ValueError("仅支持 Super 或 Alpha 优化回执核对")
-                if not isinstance(target, str) or not target.strip():
-                    raise ValueError("Simulation Intent 路径无效")
-                target_path = Path(target).expanduser()
-                if (not target_path.is_absolute() or target_path.is_symlink()
-                        or target_path.parent.is_symlink()):
-                    raise ValueError("Simulation Intent 必须是状态目录内的绝对路径")
-                target_path = target_path.resolve()
-                if not target_path.is_relative_to(root):
-                    raise ValueError("Simulation Intent 位于当前 state-root 之外")
+                target_path = recovery_intent_path(root, target)
                 with launch_lock:
                     if launch["status"] == "running":
                         code, payload = 409, {"error": "请等待当前任务结束"}
