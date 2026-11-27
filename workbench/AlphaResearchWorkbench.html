@@ -425,15 +425,32 @@ function runtimeTasks(){
      : blank("暂无 Regular Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
  const workflowNames={regular:"Regular",super:"Super",optimization:"Alpha 优化",regular_plan:"Regular 预检",super_plan:"Super 预检",optimization_plan:"来源预检",super_recovery:"Super 回执核对",optimization_recovery:"优化回执核对"};
  const statusNames={running:"执行中",exited:"已结束",failed:"失败",execution_unknown:"执行状态未知",interrupted_acknowledged:"人工确认结束"};
- const historyRows=launchHistory.map(item=>[
-   esc(item.started_at||item.created_at||"—"),
-   esc(workflowNames[item.workflow]||item.workflow||"—"),
-   esc(statusNames[item.status]||item.status||"—"),
-   esc(item.result_status||item.campaign_status||"—"),
-   esc(item.campaign_id||item.branch_id||item.plan_id||item.source_id||item.primary_id||"—"),
- ]);
+ const historyRows=launchHistory.map(item=>{
+   const models=item.models&&typeof item.models==="object"
+     ?[item.models.lead,item.models.executor].filter(Boolean).join(" / "):"—";
+   const detail={
+     launch_id:item.launch_id,args:item.args,models:item.models,
+     primary_id:item.primary_id,campaign_id:item.campaign_id,run_id:item.run_id,
+     branch_id:item.branch_id,candidate_alpha_id:item.candidate_alpha_id,
+     iterations_completed:item.iterations_completed,iteration_budget:item.iteration_budget,
+     iteration_stop_reason:item.iteration_stop_reason,
+     simulation_intent_ref:item.simulation_intent_ref,receipt_ref:item.receipt_ref,
+     readback_ref:item.readback_ref,audit_ref:item.audit_ref,report_ref:item.report_ref
+   };
+   return [
+     esc(item.started_at||item.created_at||"—"),
+     esc(workflowNames[item.workflow]||item.workflow||"—"),
+     esc(statusNames[item.status]||item.status||"—"),
+     esc(item.result_status||item.campaign_status||"—"),
+     esc(item.campaign_id||item.run_id||item.branch_id||item.plan_id||item.source_id||item.primary_id||"—"),
+     esc(models),
+     '<details><summary>参数与证据</summary><pre class="detail" style="white-space:pre-wrap;max-width:48rem">'+
+       esc(JSON.stringify(detail,null,2))+'</pre></details>'
+   ];
+ });
  const history=historyRows.length
-   ?'<h3 style="padding:12px 17px 0">工作台启动历史（最近 50 条）</h3>'+table(["启动时间","流程","状态","结果","关联 ID"],historyRows)
+   ?'<h3 style="padding:12px 17px 0">工作台启动历史（最近 50 条）</h3>'+
+     table(["启动时间","流程","状态","结果","关联 ID","Lead / Executor","参数与证据"],historyRows)
    :"";
  return panel("Agent 执行任务",latest+snapshots+warning+records+domainTable+evidenceTable+history,
               button("刷新 Agent 状态","agent-refresh"));
