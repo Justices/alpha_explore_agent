@@ -337,7 +337,7 @@ class WorkbenchFrontendSyntaxTests(unittest.TestCase):
     def test_inline_workbench_javascript_parses(self):
         html_path = Path(__file__).resolve().parent.parent / "workbench" / "AlphaResearchWorkbench.html"
         html = html_path.read_text(encoding="utf-8")
-        scripts = re.findall(r"<script\\b[^>]*>(.*?)</script\\s*>", html, re.IGNORECASE | re.DOTALL)
+        scripts = re.findall(r"<script\b[^>]*>(.*?)</script\s*>", html, re.IGNORECASE | re.DOTALL)
         self.assertTrue(scripts, "Workbench must contain an inline application script")
         with TemporaryDirectory() as root:
             for index, source in enumerate(scripts):
