@@ -372,12 +372,23 @@ An unattended CLI job can instead use the service account's
 application, a durable task queue with a worker, and user/account isolation.
 
 Open **研究任务 → 执行日志** for the latest web launch's live progress.
-The per-launch timeline is also saved to
-`<state-root>/state/logs/workbench/<launch-id>.jsonl`.
+Each launch has an atomic `<launch-id>.launch.json` manifest beside its
+`.jsonl` timeline; the manifest stores the selected workflow, model IDs,
+non-secret arguments, terminal result, and timestamps. The Workbench exposes
+the latest 50 manifests as launch history. On service restart, a manifest
+left in `running` is restored as `execution_unknown`; new launches are
+blocked until the operator confirms that the old Agent child process has
+exited. This acknowledgement never retries a workflow or Simulation.
 The same page shows the shared catalog snapshot directory. Catalog events
 record the exact scope, cache hit or refresh reason, full record count,
 fetch time, and file path. The field-pool event separately records how many
 fields were eligible and how many were selected for research.
+
+The **审核** view includes the live Candidate evaluation records read from
+the Agent state directory, including failed and pending evaluations such as
+`RA_FAILED` and `RA_UNAVAILABLE`. Only candidates whose current RA and
+correlation gates pass are promoted into the Candidate pool; a pending
+evaluation remains visible for audit but is not counted as a Candidate.
 For a standalone CLI run, set `ALPHA_RESEARCH_PROGRESS_FILE` to an absolute
 JSONL path in an existing writable directory to capture these events.
 Restarting the Workbench resets the displayed launch and the browser credential
