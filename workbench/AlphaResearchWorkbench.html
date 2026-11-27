@@ -376,14 +376,16 @@ function runtimeTasks(){
  const evidenceRows=domainRecords.map(({kind,row})=>({
    kind,id:row.id||"—",
    refs:["path","record_ref","report_ref","platform_record_ref","active_submitted_pool_ref",
-         "source_snapshot_ref","candidate_record_ref","preferred_record_ref",
+         "source_snapshot_ref","candidate_record_ref","preferred_record_ref","prereg_ref","manifest_ref",
          "simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
      .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n"),
    details:{
+     selection:row.selection,combo:row.combo,hypothesis:row.hypothesis,
+     rationale:row.rationale,failure_criterion:row.failure_criterion,
+     settings:row.settings,validation:row.validation,platform_super_schema:row.platform_super_schema,
      source_metrics:row.source_metrics,candidate_metrics:row.candidate_metrics,
      metric_deltas:row.metric_deltas,source_settings:row.source_settings,
      candidate_settings:row.candidate_settings,unresolved:row.unresolved,
-     platform_super_schema:row.platform_super_schema,
      failures:row.failures,pending:row.pending
    }
  })).filter(item=>item.refs||Object.values(item.details).some(value=>value!=null));
