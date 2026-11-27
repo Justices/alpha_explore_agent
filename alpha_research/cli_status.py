@@ -175,6 +175,8 @@ def run_status_command(args, root, stop_flag):
                     extra = {}
                     if kind == "super_run":
                         run_snapshot = {}
+                        platform_record_ref = None
+                        prereg_ref = None
                         run_id = item.get("run_id")
                         if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id):
                             state_dir = root / "state"
@@ -193,6 +195,7 @@ def run_status_command(args, root, stop_flag):
                                         loaded = json.loads(resolved.read_text(encoding="utf-8"))
                                         if isinstance(loaded, dict):
                                             run_snapshot = loaded
+                                            platform_record_ref = str(resolved)
                             except (OSError, ValueError, RuntimeError):
                                 run_snapshot = {}
                         eligible = run_snapshot.get("active_submitted_pool")
@@ -215,6 +218,7 @@ def run_status_command(args, root, stop_flag):
                                         loaded = json.loads(resolved.read_text(encoding="utf-8"))
                                         if isinstance(loaded, dict):
                                             prereg = loaded
+                                            prereg_ref = str(resolved)
                             except (OSError, ValueError, RuntimeError):
                                 prereg = {}
                         proposal = prereg.get("proposal")
@@ -229,9 +233,9 @@ def run_status_command(args, root, stop_flag):
                             "unresolved_count": len(unresolved) if isinstance(unresolved, list) else None,
                             "unresolved": unresolved if isinstance(unresolved, list) else [],
                             "platform_super_schema": run_snapshot.get("platform_super_schema", {}),
-                            "platform_record_ref": item.get("platform_record_ref"),
+                            "platform_record_ref": item.get("platform_record_ref") or platform_record_ref,
                             "active_submitted_pool_ref": item.get("active_submitted_pool_ref"),
-                            "prereg_ref": item.get("prereg_ref"),
+                            "prereg_ref": item.get("prereg_ref") or prereg_ref,
                             "batch_id": batch_id,
                             "selection": proposal.get("selection"),
                             "combo": proposal.get("combo"),
