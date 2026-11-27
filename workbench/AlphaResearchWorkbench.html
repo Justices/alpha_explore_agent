@@ -127,8 +127,8 @@ function showLaunchState(state){
  if(dialog.open&&editing?.kind==="launch"){
    const submit=$("#form").querySelector('button[type="submit"]');
    const preflight=$("#preflight");
-   if(submit)submit.disabled=launchSubmitting||state.status==="running";
-   if(preflight)preflight.disabled=launchSubmitting||state.status==="running";
+   if(submit)submit.disabled=launchSubmitting||["running","execution_unknown"].includes(state.status);
+   if(preflight)preflight.disabled=launchSubmitting||["running","execution_unknown"].includes(state.status);
  }
  if(previous==="running"&&state.status!=="running")refreshAgent();
  if(view==="cases"&&(previous!==state.status||previouslyStopping!==state.stop_requested))render();
@@ -327,12 +327,13 @@ function board(){
 function runtimeTasks(){
  if(!localAgent)return "";
  const running=launchState?.status==="running";
+ const launchBlocked=["running","execution_unknown"].includes(launchState?.status);
  const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
    esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—"),
    esc(row.batches_attempted??"—"),
    [row.has_summary?button("查看复盘","research-summary",row.campaign_id,"quiet"):"",
-    !running&&row.resumable?button("恢复研究","resume-research",row.campaign_id):"",
-    !running?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
+    !launchBlocked&&row.resumable?button("恢复研究","resume-research",row.campaign_id):"",
+    !launchBlocked?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
  ]);
  const domainRecords=[
    ...(agentStatus?.v11_super_runs||[]).map(row=>({kind:"Super",workflow:"super",row})),
@@ -345,7 +346,7 @@ function runtimeTasks(){
  ]);
  const domainRows=domainRecords.map(({kind,workflow,row})=>{
    const state=String(row.status||"").toLowerCase();
-   const canRecover=!running&&row.simulation_intent_ref&&recoverableStates.has(state);
+   const canRecover=!launchBlocked&&row.simulation_intent_ref&&recoverableStates.has(state);
    return [
      esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
