@@ -404,6 +404,7 @@ function runtimeTasks(){
      source_metrics:row.source_metrics,candidate_metrics:row.candidate_metrics,
      metric_deltas:row.metric_deltas,source_settings:row.source_settings,
      candidate_settings:row.candidate_settings,unresolved:row.unresolved,
+     candidate_failures:row.candidate_failures,candidate_pending:row.candidate_pending,
      failures:row.failures,pending:row.pending
    }
  })).filter(item=>item.refs||Object.values(item.details).some(value=>value!=null));
