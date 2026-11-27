@@ -29,8 +29,9 @@ def validate_workflow_request(workflow, request):
             raise OrchestrationError("optimization requires Alpha ID")
     if workflow == "regular":
         max_batches = request.get("max_batches", 1)
-        if type(max_batches) is not int or not 1 <= max_batches <= 20:
-            raise OrchestrationError("Regular max_batches must be an integer from 1 to 20")
+        if type(max_batches) is not int or max_batches != 1:
+            raise OrchestrationError(
+                "Regular orchestration adapter is one-batch; use Campaign workflow for multi-batch runs")
     else:
         max_iterations = request.get("max_iterations", 1)
         if type(max_iterations) is not int or not 1 <= max_iterations <= 20:
