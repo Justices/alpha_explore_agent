@@ -180,6 +180,8 @@ def run_status_command(args, root, stop_flag):
                                 except (OSError, ValueError, AttributeError):
                                     continue
                         candidate_metrics = candidate_record.get("metrics", {})
+                        if not isinstance(candidate_metrics, dict):
+                            candidate_metrics = {}
                         metric_deltas = {
                             key: candidate_metrics[key] - value
                             for key, value in source_metrics.items()
