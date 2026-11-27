@@ -199,6 +199,82 @@ class WorkbenchRecordStoreTests(unittest.TestCase):
             serve._validate_workbench_records(non_finite)
 
 
+class WorkbenchPlanEndpointTests(unittest.TestCase):
+    def test_read_only_preflight_does_not_require_model_roles(self):
+        entered = threading.Event()
+        commands = []
+        child_credentials = []
+
+        def run(command, **kwargs):
+            commands.append(command)
+            child_credentials.append(json.loads(kwargs["input"]))
+            entered.set()
+            return CompletedProcess(command, 0, json.dumps({
+                "status": "planned", "plan_id": "plan-123",
+                "datasets": [{"combinations": [{}, {}]}], "unresolved": [],
+            }))
+
+        with TemporaryDirectory() as root, \
+                patch.object(serve.subprocess, "run", side_effect=run):
+            server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
+            port = server.server_address[1]
+            server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            origin = f"http://127.0.0.1:{port}"
+
+            def post(path, payload, cookie=""):
+                with closing(http.client.HTTPConnection(
+                        "127.0.0.1", port, timeout=5)) as connection:
+                    connection.request("POST", path, json.dumps(payload), {
+                        "Origin": origin, "Content-Type": "application/json",
+                        "Cookie": cookie,
+                    })
+                    response = connection.getresponse()
+                    body = json.loads(response.read())
+                    return response.status, response.getheader("Set-Cookie"), body
+
+            status, cookie_header, _ = post("/api/credentials", {
+                "username": "offline@example.invalid", "password": "offline-secret",
+            })
+            self.assertEqual(status, 200)
+            cookie = cookie_header.split(";", 1)[0]
+            status, _, launched = post("/api/plan", {
+                "workflow": "regular", "region": "USA",
+                "dataset_ids": ["analyst10"], "delay": 1,
+            }, cookie)
+            self.assertEqual(status, 202)
+            self.assertTrue(entered.wait(3))
+
+            deadline = time.monotonic() + 3
+            report = None
+            while time.monotonic() < deadline:
+                with closing(http.client.HTTPConnection(
+                        "127.0.0.1", port, timeout=5)) as connection:
+                    connection.request("GET", "/api/launch")
+                    response = connection.getresponse()
+                    report = json.loads(response.read())
+                if report["status"] != "running":
+                    break
+                time.sleep(0.01)
+
+            self.assertEqual(report["status"], "exited")
+            self.assertEqual(report["workflow"], "regular_plan")
+            self.assertEqual(report["plan_id"], "plan-123")
+            self.assertEqual(report["dataset_count"], 1)
+            self.assertEqual(report["combination_count"], 2)
+            self.assertEqual(child_credentials, [{
+                "username": "offline@example.invalid", "password": "offline-secret",
+            }])
+            self.assertIn("plan-regular", commands[0])
+            self.assertNotIn("--lead", commands[0])
+            self.assertNotIn("--executor", commands[0])
+            self.assertNotIn("run-campaign", commands[0])
+            self.assertEqual(launched["workflow"], "regular_plan")
+
+
 class WorkbenchLaunchTests(unittest.TestCase):
     def test_launch_keeps_scope_and_rejects_cross_origin_and_duplicate_start(self):
         entered = threading.Event()
