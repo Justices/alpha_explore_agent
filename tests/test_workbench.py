@@ -67,6 +67,91 @@ class WorkbenchArgumentTests(unittest.TestCase):
                 serve.research_arguments(request)
 
 
+class WorkbenchPlanTests(unittest.TestCase):
+    def test_regular_plan_keeps_only_explicit_scope_constraints(self):
+        workflow, args, primary = serve.plan_arguments({
+            "workflow": "regular", "region": "USA",
+            "dataset_ids": ["analyst10", "fundamental6"],
+            "category": "Financial", "delay": 1, "universe": "TOP3000",
+        })
+        self.assertEqual(workflow, "regular")
+        self.assertIsNone(primary)
+        self.assertEqual(args, [
+            "plan-regular", "--region=USA", "--delay=1",
+            "--dataset=analyst10", "--dataset=fundamental6",
+            "--category=Financial", "--universe=TOP3000",
+        ])
+
+    def test_super_plan_uses_native_platform_selection_preflight(self):
+        workflow, args, primary = serve.plan_arguments({
+            "workflow": "super", "region": "USA",
+            "objective": "selection research", "delay": 1,
+        })
+        self.assertEqual(workflow, "super")
+        self.assertIsNone(primary)
+        self.assertEqual(args, [
+            "plan-super", "--region=USA",
+            "--objective=selection research", "--delay=1",
+        ])
+
+    def test_optimization_plan_pins_the_source_alpha(self):
+        workflow, args, primary = serve.plan_arguments({
+            "workflow": "optimization", "alpha_id": "YPaepL9o",
+            "objective": "reduce turnover", "region": "USA",
+        })
+        self.assertEqual(workflow, "optimization")
+        self.assertEqual(primary, "YPaepL9o")
+        self.assertEqual(args, [
+            "plan-optimization", "--alpha-id=YPaepL9o",
+            "--objective=reduce turnover", "--region=USA",
+        ])
+
+    def test_preflight_rejects_ambiguous_or_unsupported_scope(self):
+        invalid = [
+            {"workflow": "regular", "region": "USA", "dataset_ids": []},
+            {"workflow": "regular", "region": "USA",
+             "dataset_ids": ["analyst10", "analyst10"]},
+            {"workflow": "regular", "region": "USA", "delay": 0},
+            {"workflow": "super", "region": "USA", "objective": "x",
+             "dataset_ids": ["analyst10"]},
+            {"workflow": "optimization", "alpha_id": "A", "surprise": True},
+        ]
+        for request in invalid:
+            with self.subTest(request=request), self.assertRaises(ValueError):
+                serve.plan_arguments(request)
+
+
+class WorkbenchRecordStoreTests(unittest.TestCase):
+    def test_project_records_round_trip_through_locked_store(self):
+        with TemporaryDirectory() as root:
+            payload = {
+                "version": 1,
+                "cases": [{"id": "case-1", "workflow": "regular"}],
+                "alphas": [{"id": "alpha-1", "caseId": "case-1"}],
+            }
+            result = serve.save_workbench_records(root, payload)
+            self.assertEqual(result, {
+                "saved": True, "case_count": 1, "alpha_count": 1,
+            })
+            self.assertEqual(serve.load_workbench_records(root), payload)
+
+    def test_project_records_reject_duplicate_ids_and_non_finite_values(self):
+        duplicate = {
+            "version": 1,
+            "cases": [{"id": "same"}, {"id": "same"}],
+            "alphas": [],
+        }
+        non_finite = {
+            "version": 1,
+            "cases": [{"id": "case-1", "metric": float("nan")}],
+            "alphas": [],
+        }
+        with self.assertRaisesRegex(ValueError, "重复"):
+            serve._validate_workbench_records(duplicate)
+        with self.assertRaisesRegex(ValueError, "无法保存"):
+            serve._validate_workbench_records(non_finite)
+
+
 class WorkbenchLaunchTests(unittest.TestCase):
     def test_launch_keeps_scope_and_rejects_cross_origin_and_duplicate_start(self):
         entered = threading.Event()
