@@ -327,9 +327,9 @@ function board(){
  const labels=["研究任务","Alpha 记录",livePool?"Agent Candidate":"手工 Candidate",
    livePool?"Agent Preferred":"手工 Preferred"];
  const stat='<div class="stats">'+labels.map((s,i)=>'<div class="stat"><span>'+s+'</span><strong>'+counts[i]+'</strong></div>').join("")+'</div>';
- return stat+panel("候选 Alpha 看板",toolbar()+(rows().length?table(["Alpha","区域 / 流程","状态","Sharpe","Turnover","PC / SC","对比"],rows().map(a=>{
+ return stat+panel("手工 Alpha 记录看板",toolbar()+(rows().length?table(["Alpha","区域 / 流程","状态","Sharpe","Turnover","PC / SC","对比"],rows().map(a=>{
  const c=findCase(a.caseId),m=a.metrics;
- return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的 Alpha":"看板等待研究记录",data.alphas.length?"调整筛选条件后再试。":"创建研究任务，然后记录 Alpha 的研究设计、回测指标和审计证据。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
+ return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的手工 Alpha 记录":"等待手工 Alpha 记录","此处筛选和对比手工录入记录；Agent 实际 Candidate / Preferred 池及审核证据见下方项目状态与审核视图。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
 }
 function runtimeTasks(){
  if(!localAgent)return "";
