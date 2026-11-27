@@ -449,9 +449,16 @@ function compare(){
  ]):blank("选择要对比的 Alpha","保留原始指标数值，并同时核对工作流、有效设置、来源 Alpha 与回测证据。")));
 }
 function audit(){
+ const policy=qualificationPolicy(),gate=policy.candidate,preferred=policy.preferred;
+ const policySummary='<div class="details"><div><h3>当前生效策略 · '+esc(policy.version||"preferred-v1")+'</h3><div class="detail">'+
+  'PC &lt; '+esc(gate.prod_corr_max)+' · SC &lt; '+esc(gate.self_corr_max)+' · 组内相关性 &lt; '+esc(gate.pairwise_corr_max)+
+  '\\nPreferred Sharpe ≥ '+esc(preferred.sharpe_min)+' · Fitness ≥ '+esc(preferred.fitness_min)+
+  ' · Turnover '+esc(preferred.turnover_min)+'–'+esc(preferred.turnover_max)+
+  ' · 最大权重 ≤ '+esc(preferred.weight_max)+
+  '\\nSHA-256：'+esc(policy.policy_sha256)+'</div></div></div>';
  const steps='<div class="steps"><span>01 · 终态 RA / fail count = 0</span><span>02 · 本地自相关预检</span><span>03 · 平台 PC / SC</span><span>04 · Candidate 审计</span><span>05 · Preferred 复核</span></div>';
  const rows=data.alphas.map(a=>[button(a.name,"alpha",a.id,"quiet"),num(a.raCount),num(a.metrics.local),num(a.metrics.prod)+" / "+num(a.metrics.self),badge(a),esc(review(a,findCase(a.caseId))[1]),button("录入审计","edit-alpha",a.id)]);
- return panel("共享审核队列",steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
+ return panel("共享审核队列",policySummary+steps+(rows.length?table(["Alpha","RA fail count","本地 SC","PC / SC","结论","下一步","操作"],rows):blank("等待 Alpha 审计记录","缺失或未终结的证据保持待补。Candidate 通过后再核对 preferred-v1。")));
 }
 function render(){
  const [crumb,title,desc]=pages[view];
@@ -715,7 +722,7 @@ function alphaForm(c,a={}){
  field("idea","Idea",a.idea,"area"),field("dataReason","Rationale for data used",a.dataReason,"area"),field("operatorReason","Rationale for operators used",a.operatorReason,"area"),field("economics","经济含义、失效条件和不确定性",a.economics,"area"),field("settings","固定回测设置、字段验证与预回测证据",a.settings,"area"),field("receipt","模拟回执 / 恢复 ID / 分支引用",a.receipt,"area"))
  +section("回测指标 · 保留原始口径")+grid(...Object.entries(metrics).filter(([k])=>!["local","prod","self","pairwise"].includes(k)).map(([k,v])=>field("metric_"+k,v,m[k],"number")),field("units","成本、覆盖率和稳健性口径",a.units,"area"))
  +section("01 · RA 终态")+grid(field("raCount","RA fail count",a.raCount,"number"),field("raFinal","RA 检查已终结",a.raFinal,"text",false,choices),field("raRef","RA 终态证据引用",a.raRef,"area"))
- +'<div id="corr-fields">'+section("02–03 · 相关性证据")+grid(field("corrLimit","当前 SC 阈值（严格小于）",a.corrLimit??policy.candidate.self_corr_max,"number",false,null,true),field("policyRef","当前策略 SHA-256",a.policyRef??policy.policy_sha256,"text",false,null,true),field("metric_local","本地自相关",m.local,"number"),field("localRef","近四年同区域非 PPA OS 预检证据",a.localRef),field("localComplete","本地预检完整性结论",a.localComplete,"text",false,choices),...["prod","self","pairwise"].map(k=>field("metric_"+k,metrics[k],m[k],"number")),field("corrRef","平台 PC / SC 回读证据",a.corrRef,"area"))+'</div>'
+ +'<div id="corr-fields">'+section("02–03 · 相关性证据")+grid(field("corrLimit","当前 SC 阈值（严格小于）",policy.candidate.self_corr_max,"number",false,null,true),field("policyRef","当前策略 SHA-256",policy.policy_sha256,"text",false,null,true),field("metric_local","本地自相关",m.local,"number"),field("localRef","近四年同区域非 PPA OS 预检证据",a.localRef),field("localComplete","本地预检完整性结论",a.localComplete,"text",false,choices),...["prod","self","pairwise"].map(k=>field("metric_"+k,metrics[k],m[k],"number")),field("corrRef","平台 PC / SC 回读证据",a.corrRef,"area"))+'</div>'
  +section("04–05 · Agent 审计回读")+grid(field("pairwise","组内去重 / 用户裁决",a.pairwise,"text",false,choices),field("pairRef","去重或裁决证据",a.pairRef),field("auditStatus","Agent Candidate 结论",a.auditStatus,"text",false,{candidate:"CANDIDATE",failed:"失败",pending:"待补"}),field("auditRef","Candidate 完整审计引用",a.auditRef),field("subUniverse","LOW_SUB_UNIVERSE_SHARPE",a.subUniverse,"text",false,choices),field("preferredStatus","Agent Preferred 结论",a.preferredStatus,"text",false,{preferred:"PREFERRED",failed:"NOT_PREFERRED",pending:"待补"}),field("preferredRef","Preferred 评估引用",a.preferredRef),field("submissionNote","提交候选人工复核决定 / 复盘备注",a.submissionNote,"area")),
  {kind:"alpha",record:a,caseId:c.id});
  syncGate();
@@ -881,7 +888,7 @@ function inspectCase(c){
  show("研究任务详情",grid(line("任务",c.name),line("工作流",workflow(c)),line("区域",c.region),line("阶段",phases[c.phase]),line("阶段流转",(c.history||[]).map(h=>phases[h.phase]+" · "+new Date(h.at).toLocaleString("zh-CN")).join("\n")),line("硬约束",[c.dataset,c.category,c.delay,c.universe,c.constraints].filter(v=>v!=null).join(" / ")),line("研究目标",c.objective),line("来源 Alpha / 快照",[c.sourceId,c.sourceType,c.sourceSnapshot].filter(Boolean).join(" / ")),line("范围证据",c.scopeEvidence),line("范围覆盖",c.coverage),line("预算与停止原因",c.budget))+'<div class="actions">'+button("编辑研究证据","edit-case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div>',null);
 }
 function inspectAlpha(a){
- const c=findCase(a.caseId),policy=qualificationPolicy();
+ const c=findCase(a.caseId);
  show(a.name,'<p>'+esc(workflow(c))+' · '+esc(c.region||"待解析")+' · '+badge(a)+'</p>'+grid(line("当前审核",review(a,c)[1]),line("Alpha ID",a.alphaId),line("表达式 / Selection / Combo",a.expression),line("数据字段",a.fields),line("操作符",a.operators),line("Idea",a.idea),line("Rationale for data used",a.dataReason),line("Rationale for operators used",a.operatorReason),line("经济含义",a.economics),line("有效设置",a.settings),line("回测回执",a.receipt),line("RA 证据",[a.raCount,a.raRef].filter(v=>v!=null).join(" / ")),line("策略版本",a.policyRef),line("相关性证据",[a.localRef,a.corrRef,a.pairRef].filter(Boolean).join(" / ")),line("审计与优选证据",[a.auditRef,a.preferredRef].filter(Boolean).join(" / ")),line("人工复核决定",a.submissionNote))+'<div class="actions">'+button("编辑记录与审核","edit-alpha",a.id,"primary")+'</div>',null);
 }
 function addComparison(id){if(!id)return;if(selected.size>=4&&!selected.has(id)){notify("最多对比四条 Alpha");return;}selected.add(id);}
