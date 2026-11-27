@@ -506,7 +506,15 @@ def restore_launch_state(log_dir):
                 "新任务已阻断；请先确认旧 Agent 子进程已退出。"
             )
         latest["updated_at"] = datetime.now(timezone.utc).isoformat()
-        write_launch_manifest(log_dir, launch_id, latest)
+        try:
+            write_launch_manifest(log_dir, launch_id, latest)
+        except (OSError, ValueError):
+            latest["manifest_persist_failed"] = True
+            if latest.get("execution_unknown"):
+                latest["recovery_message"] = (
+                    "旧任务状态仍无法确认，且任务清单无法更新。为避免重复 Simulation，"
+                    "新任务继续阻断；请检查 state-root 写入权限并人工核实旧进程。"
+                )
     return latest
 
 
