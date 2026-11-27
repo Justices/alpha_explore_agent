@@ -550,7 +550,7 @@ function audit(){
    const ra=row.ra_fail_count===0?"0":row.ra_fail_count??"未取得";
    const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
    return [
-     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.status||"—"),
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.candidate_status||row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
      esc(corr.prod??"—")+" / "+esc(corr.self??"—"),
      esc(maxPairwise??"—"),esc((row.failures||[]).join(", ")||"—"),
