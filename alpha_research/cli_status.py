@@ -174,7 +174,7 @@ def run_status_command(args, root, stop_flag):
                         batch_id = item.get("batch_id")
                         if (isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id)
                                 and isinstance(batch_id, str)
-                                and re.fullmatch(r"\\d{8}_\\d{6}_[0-9a-f]{8}", batch_id)):
+                                and re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", batch_id)):
                             prereg_path = (root / "state" / "research_v1_1" / "super_runs" /
                                            f"{run_id}_{batch_id}_prereg.json")
                             try:
