@@ -146,6 +146,47 @@ class WorkbenchRecoveryPathTests(unittest.TestCase):
 
 
 class WorkbenchStatusPolicyTests(unittest.TestCase):
+    def test_status_keeps_unqualified_candidate_and_preferred_evaluations_visible(self):
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            config = root_path / "config" / "nastu_quant.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"scope": {"region": "USA"}}), encoding="utf-8")
+            candidate_dir = root_path / "state" / "research_v1_1" / "candidate"
+            preferred_dir = root_path / "state" / "research_v1_1" / "preferred"
+            candidate_dir.mkdir(parents=True)
+            preferred_dir.mkdir(parents=True)
+            (candidate_dir / "candidate-1.json").write_text(json.dumps({
+                "candidate_id": "candidate-1", "alpha_id": "ALPHA-1",
+                "workflow": "super", "status": "RA_UNAVAILABLE",
+                "failures": [], "pending": ["ra_checks_unsettled_or_unavailable"],
+                "metrics": {"sharpe": 1.25}, "gate_evidence": {"ra_fail_count": None},
+                "updated_at": "2026-11-27T10:00:00+00:00",
+            }), encoding="utf-8")
+            (preferred_dir / "candidate-1.json").write_text(json.dumps({
+                "candidate_id": "candidate-1", "alpha_id": "ALPHA-1",
+                "workflow": "super", "status": "NOT_PREFERRED",
+                "qualified": False, "pending": ["candidate_not_qualified"],
+                "updated_at": "2026-11-27T10:00:00+00:00",
+            }), encoding="utf-8")
+            output = StringIO()
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"status": "available", "entries": []}), \\
+                    redirect_stdout(output):
+                self.assertEqual(run_status_command(
+                    SimpleNamespace(config=config), root_path,
+                    root_path / "state" / "stop.flag"), 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(len(report["v11_candidate_evaluations"]), 1)
+            candidate = report["v11_candidate_evaluations"][0]
+            self.assertEqual(candidate["status"], "RA_UNAVAILABLE")
+            self.assertEqual(candidate["pending"], ["ra_checks_unsettled_or_unavailable"])
+            self.assertEqual(candidate["metrics"]["sharpe"], 1.25)
+            self.assertEqual(len(report["v11_preferred_evaluations"]), 1)
+            self.assertEqual(report["v11_preferred_evaluations"][0]["status"], "NOT_PREFERRED")
+            self.assertEqual(report["v11_candidates"], [])
+            self.assertEqual(report["v11_preferred"], [])
+
     def test_status_exposes_canonical_application_owned_policy(self):
         with TemporaryDirectory() as root:
             config = Path(root) / "config" / "nastu_quant.json"
