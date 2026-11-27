@@ -439,9 +439,9 @@ def inspect_execution_trace(state_root, task_id):
             continue
         path = root / "state" / "research_v1_1" / "super_runs" / f"{run_id}.json"
         saved = _read_object(path, root=root)
-        if not saved:
+        if not saved and current_id not in event_research_ids:
             continue
-        run_evidence = {
+        run_evidence = ({
             key: saved.get(key) for key in (
                 "run_id", "status", "region", "objective", "batch_id",
                 "alpha_id", "candidate_id", "candidate_status",
@@ -449,7 +449,7 @@ def inspect_execution_trace(state_root, task_id):
                 "preferred_record_ref", "prereg_ref", "simulation_intent_ref",
                 "response_ref", "readback_ref", "audit_ref")
             if key in saved
-        }
+        } if saved else {"run_id": run_id, "record_status": "missing"})
         run_evidence["record_ref"] = str(path)
         domain["super_runs"].append(run_evidence)
         if domain["super_run"] is None:
