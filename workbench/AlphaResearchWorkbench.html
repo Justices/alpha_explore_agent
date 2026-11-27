@@ -659,11 +659,11 @@ async function launchForm(workflow="regular"){
  const liveWarning='<p class="toolbar">注意：启动实际研究会调用 BRAIN 平台，可能发起真实 Simulation；系统不会自动提交 Alpha。建议先执行范围预检。Regular 预检会调用 set_case 建立 BRAIN Case 上下文，但不会发起 Simulation。</p>';
  if(workflow==="regular"){
    title="启动 Regular Campaign";
-   description='<p>Regular 支持多 Dataset Campaign；已填写的 Dataset、Category、Delay、Universe 均作为硬约束，留空项由 Agent 探索。PPA 是可选 Profile。</p>';
+   description='<p>Regular 支持多 Dataset Campaign；当前 Regular 执行器固定使用 Delay 1。Dataset、Category、Universe 可选，已填写项作为硬约束，留空项由 Agent 探索。PPA 是可选 Profile。</p>';
    fields=grid(...shared,
      field("region","Region","", "text",true),
      field("dataset_ids","Dataset ID（留空时探索可用 Dataset；多个用逗号分隔）"),
-     field("category","Category"),field("delay","Delay",1,"number"),
+     field("category","Category"),field("delay","Delay（当前固定为 1）",1,"number"),
      field("universe","Universe"),
      field("max_batches","每个 Dataset 的批次预算（留空使用 Agent 默认预算）","", "number"),
      field("ppa","PPA Profile","no","text",true,{no:"普通 Regular",yes:"启用 PPA"}),
