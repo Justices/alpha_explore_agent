@@ -6,6 +6,8 @@ import math
 from http.cookies import CookieError, SimpleCookie
 import json
 import os
+import re
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -425,6 +427,86 @@ def recent_progress(path):
     return events
 
 
+def launch_manifest_path(log_dir, launch_id):
+    """Return the manifest path for a validated workbench launch identifier."""
+    if not isinstance(launch_id, str) or re.fullmatch(r"[0-9a-f]{32}", launch_id) is None:
+        raise ValueError("工作台启动 ID 无效")
+    return Path(log_dir) / f"{launch_id}.launch.json"
+
+
+def write_launch_manifest(log_dir, launch_id, manifest):
+    """Atomically persist non-secret launch metadata and its terminal outcome."""
+    directory = Path(log_dir)
+    path = launch_manifest_path(directory, launch_id)
+    if directory.is_symlink() or path.is_symlink():
+        raise ValueError("工作台任务记录路径不能是符号链接")
+    directory.mkdir(parents=True, exist_ok=True)
+    if directory.is_symlink() or path.is_symlink():
+        raise ValueError("工作台任务记录路径不能是符号链接")
+    payload = dict(manifest)
+    payload["schema_version"] = 1
+    payload["launch_id"] = launch_id
+    atomic_write_json(path, payload)
+    return payload
+
+
+def read_launch_history(log_dir, limit=50):
+    """Read recent launch manifests, skipping malformed or unsafe legacy files."""
+    directory = Path(log_dir)
+    if directory.is_symlink() or not directory.is_dir():
+        return []
+    records = []
+    for path in directory.glob("*.launch.json"):
+        try:
+            if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
+                continue
+            launch_id = path.name[:-len(".launch.json")]
+            if re.fullmatch(r"[0-9a-f]{32}", launch_id) is None:
+                continue
+            value = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(value, dict):
+                continue
+            value.setdefault("launch_id", launch_id)
+            if value["launch_id"] != launch_id:
+                continue
+            value["_mtime_ns"] = path.stat().st_mtime_ns
+            records.append(value)
+        except (OSError, UnicodeError, ValueError):
+            continue
+    records.sort(key=lambda item: item["_mtime_ns"], reverse=True)
+    return [{key: value for key, value in item.items() if key != "_mtime_ns"}
+            for item in records[:max(1, min(int(limit), 200))]]
+
+
+def restore_launch_state(log_dir):
+    """Restore the latest launch; ambiguous in-flight work is blocked, never replayed."""
+    history = read_launch_history(log_dir, limit=1)
+    if not history:
+        return {"status": "idle"}
+    latest = history[0]
+    status = latest.get("status")
+    if status in {"running", "starting"}:
+        launch_id = latest["launch_id"]
+        log_path = Path(log_dir) / f"{launch_id}.jsonl"
+        events = recent_progress(log_path)
+        last_message = events[-1].get("message", "") if events else ""
+        if last_message.startswith(("研究进程已结束", "研究进程退出", "研究进程启动失败")):
+            latest["status"] = "exited" if last_message.startswith("研究进程已结束") else "failed"
+            latest["result_status"] = latest.get("result_status", "legacy_completion_observed")
+            latest["recovered_from_legacy_log"] = True
+        else:
+            latest["status"] = "execution_unknown"
+            latest["execution_unknown"] = True
+            latest["recovery_required"] = True
+            latest["recovery_message"] = (
+                "工作台服务重启，无法证明旧子进程是否结束。为避免并发 Simulation，"
+                "新任务已阻断；请先确认旧 Agent 子进程已退出。"
+            )
+        latest["updated_at"] = datetime.now(timezone.utc).isoformat()
+        write_launch_manifest(log_dir, launch_id, latest)
+    return latest
+
+
 def recovery_intent_path(root, target):
     """Resolve only an existing, non-symlink Simulation Intent under state-root."""
     if not isinstance(target, str) or not target.strip():
@@ -457,10 +539,10 @@ def handler_for(agent_args, port):
     launch_lock = Lock()
     session_lock = Lock()
     sessions = {}
-    launch = {"status": "idle"}
     root = (expand_path(agent_args[agent_args.index("--state-root") + 1]).resolve()
             if "--state-root" in agent_args else default_state_root())
     log_dir = root / "state" / "logs" / "workbench"
+    launch = restore_launch_state(log_dir)
 
     def launch_stop_flag(launch_id):
         return root / "state" / f"workbench-{launch_id}.stop"
@@ -543,6 +625,12 @@ def handler_for(agent_args, port):
             with launch_lock:
                 launch.update(outcome)
                 try:
+                    manifest = launch_manifest_path(log_dir, log_path.stem)
+                    saved = json.loads(manifest.read_text(encoding="utf-8"))
+                    saved.update(outcome)
+                    saved["updated_at"] = datetime.now(timezone.utc).isoformat()
+                    saved["finished_at"] = saved["updated_at"]
+                    write_launch_manifest(log_dir, log_path.stem, saved)
                     campaign_id = launch.get("campaign_id")
                     if campaign_id:
                         atomic_write_json(log_path.with_suffix(".campaign.json"),
@@ -557,8 +645,14 @@ def handler_for(agent_args, port):
 
     def start_workflow(args, credentials, selection, campaign_id=None,
                        workflow="regular", primary_id=None):
+        if launch.get("status") == "execution_unknown":
+            return 409, {"error": launch.get("recovery_message",
+                "旧任务执行状态未知；请先确认旧 Agent 子进程已退出。")}
         launch.clear()
-        launch.update(status="running", launch_id=uuid4().hex, workflow=workflow)
+        launch_id = uuid4().hex
+        started_at = datetime.now(timezone.utc).isoformat()
+        launch.update(status="running", launch_id=launch_id, workflow=workflow,
+                      started_at=started_at, updated_at=started_at)
         if selection:
             launch.update(lead=selection["lead"], executor=selection["executor"])
         if campaign_id:
@@ -569,14 +663,24 @@ def handler_for(agent_args, port):
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
             log_path.touch(exist_ok=False)
-            atomic_write_json(log_path.with_suffix(".launch.json"), {
+            write_launch_manifest(log_dir, launch_id, {
                 "args": args, "models": selection, "workflow": workflow,
-                "primary_id": primary_id, "status": "starting"})
+                "primary_id": primary_id, "status": "running",
+                "started_at": started_at, "updated_at": started_at,
+            })
             Thread(target=run_workflow,
                    args=(args, credentials, log_path, selection, workflow),
                    daemon=True).start()
         except (OSError, RuntimeError):
             launch["status"] = "failed"
+            launch["updated_at"] = datetime.now(timezone.utc).isoformat()
+            try:
+                write_launch_manifest(log_dir, launch_id, {
+                    **launch, "args": args, "models": selection,
+                    "primary_id": primary_id, "finished_at": launch["updated_at"],
+                })
+            except (OSError, ValueError):
+                pass
             return 503, {"error": "无法启动研究进程"}
         return 202, dict(launch)
 
@@ -682,8 +786,10 @@ def handler_for(agent_args, port):
                 self.respond_json(400, {"error": str(exc)})
                 return
             with launch_lock:
-                if launch["status"] == "running":
-                    code, payload = 409, {"error": "已有研究任务正在运行"}
+                if launch["status"] in {"running", "execution_unknown"}:
+                    code, payload = 409, {"error": (
+                        launch.get("recovery_message") if launch["status"] == "execution_unknown"
+                        else "已有研究任务正在运行")}
                 else:
                     code, payload = start_workflow(
                         args, credentials, selection,
@@ -716,7 +822,7 @@ def handler_for(agent_args, port):
             if action == "resume":
                 if set(request) != {"action", "id", "lead", "executor"}:
                     raise ValueError("恢复 Campaign 必须明确选择 Lead 与 Executor")
-            elif action in {"stop", "delete"}:
+            elif action in {"stop", "delete", "acknowledge-interrupted"}:
                 if set(request) != {"action", "id"}:
                     raise ValueError("研究操作参数无效")
             else:
@@ -724,7 +830,25 @@ def handler_for(agent_args, port):
 
             with launch_lock:
                 running = launch["status"] == "running"
-                if action == "stop":
+                if action == "acknowledge-interrupted":
+                    if launch.get("status") != "execution_unknown" or target != launch.get("launch_id"):
+                        code, payload = 409, {"error": "没有匹配的待核实任务"}
+                    else:
+                        launch["status"] = "interrupted_acknowledged"
+                        launch["execution_unknown"] = False
+                        launch["recovery_required"] = False
+                        launch["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
+                        launch["updated_at"] = launch["acknowledged_at"]
+                        try:
+                            saved = json.loads(launch_manifest_path(log_dir, target).read_text(encoding="utf-8"))
+                            saved.update({key: launch[key] for key in (
+                                "status", "execution_unknown", "recovery_required",
+                                "acknowledged_at", "updated_at")})
+                            write_launch_manifest(log_dir, target, saved)
+                            code, payload = 200, dict(launch)
+                        except (OSError, ValueError):
+                            code, payload = 503, {"error": "无法保存人工核实记录"}
+                elif action == "stop":
                     if not running or target != launch.get("launch_id"):
                         code, payload = 409, {"error": "本次网页启动已结束或已切换"}
                     elif str(launch.get("workflow", "")).endswith(("_recovery", "_plan")):
@@ -785,6 +909,9 @@ def handler_for(agent_args, port):
                 if "launch_id" in payload:
                     payload["events"] = recent_progress(log_dir / f"{payload['launch_id']}.jsonl")
                 self.respond_json(200, payload)
+                return
+            if self.path == "/api/launches":
+                self.respond_json(200, {"items": read_launch_history(log_dir, limit=50)})
                 return
             if self.path == "/api/credentials":
                 self.respond_json(200, {"configured": self.browser_credentials() is not None})
