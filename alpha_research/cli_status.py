@@ -4,6 +4,7 @@ State reads remain observational and preserve the CLI's existing JSON shape.
 """
 import json
 import re
+from pathlib import Path
 
 from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT
