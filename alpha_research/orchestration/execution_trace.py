@@ -228,7 +228,7 @@ def inspect_execution_trace(state_root, task_id):
             if isinstance(value, str))
     research_ids = list(dict.fromkeys(
         [value for value in [research_id] if isinstance(value, str)]
-        + event_research_ids)))
+        + event_research_ids))
 
     calls = []
     calls_root = root / "state" / "logs" / "model_calls"
