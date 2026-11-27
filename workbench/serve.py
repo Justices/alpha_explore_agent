@@ -1,13 +1,12 @@
 """Serve the local Alpha workbench and its guarded research workflows."""
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from http.cookies import CookieError, SimpleCookie
 import json
 import os
 import re
-from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
@@ -671,7 +670,7 @@ def handler_for(agent_args, port):
             Thread(target=run_workflow,
                    args=(args, credentials, log_path, selection, workflow),
                    daemon=True).start()
-        except (OSError, RuntimeError):
+        except (OSError, RuntimeError, ValueError):
             launch["status"] = "failed"
             launch["updated_at"] = datetime.now(timezone.utc).isoformat()
             try:
@@ -834,20 +833,28 @@ def handler_for(agent_args, port):
                     if launch.get("status") != "execution_unknown" or target != launch.get("launch_id"):
                         code, payload = 409, {"error": "没有匹配的待核实任务"}
                     else:
-                        launch["status"] = "interrupted_acknowledged"
-                        launch["execution_unknown"] = False
-                        launch["recovery_required"] = False
-                        launch["acknowledged_at"] = datetime.now(timezone.utc).isoformat()
-                        launch["updated_at"] = launch["acknowledged_at"]
+                        acknowledged_at = datetime.now(timezone.utc).isoformat()
                         try:
                             saved = json.loads(launch_manifest_path(log_dir, target).read_text(encoding="utf-8"))
-                            saved.update({key: launch[key] for key in (
-                                "status", "execution_unknown", "recovery_required",
-                                "acknowledged_at", "updated_at")})
+                            saved.update({
+                                "status": "interrupted_acknowledged",
+                                "execution_unknown": False,
+                                "recovery_required": False,
+                                "acknowledged_at": acknowledged_at,
+                                "updated_at": acknowledged_at,
+                            })
                             write_launch_manifest(log_dir, target, saved)
-                            code, payload = 200, dict(launch)
                         except (OSError, ValueError):
                             code, payload = 503, {"error": "无法保存人工核实记录"}
+                        else:
+                            launch.update({
+                                "status": "interrupted_acknowledged",
+                                "execution_unknown": False,
+                                "recovery_required": False,
+                                "acknowledged_at": acknowledged_at,
+                                "updated_at": acknowledged_at,
+                            })
+                            code, payload = 200, dict(launch)
                 elif action == "stop":
                     if not running or target != launch.get("launch_id"):
                         code, payload = 409, {"error": "本次网页启动已结束或已切换"}
