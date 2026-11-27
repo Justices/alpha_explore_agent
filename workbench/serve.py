@@ -1,6 +1,8 @@
 """Serve the local Alpha workbench and its guarded research workflows."""
 
 import argparse
+from datetime import datetime
+import math
 from http.cookies import CookieError, SimpleCookie
 import json
 import os
@@ -237,18 +239,121 @@ def _validate_workbench_records(payload):
             or not isinstance(payload.get("cases"), list)
             or not isinstance(payload.get("alphas"), list)):
         raise ValueError("工作台记录格式无效")
-    for name in ("cases", "alphas"):
-        items = payload[name]
-        if len(items) > 10000:
-            raise ValueError("工作台记录数量超出限制")
-        ids = set()
-        for item in items:
-            if not isinstance(item, dict):
-                raise ValueError("工作台记录必须是对象")
-            record_id = item.get("id")
-            if not isinstance(record_id, str) or not record_id.strip() or record_id in ids:
-                raise ValueError("工作台记录 ID 缺失或重复")
-            ids.add(record_id)
+
+    def required_text(item, key):
+        value = item.get(key)
+        if not isinstance(value, str) or not value.strip() or "\\x00" in value:
+            raise ValueError(f"工作台记录 {key} 缺失或无效")
+
+    def optional_text(item, keys):
+        for key in keys:
+            value = item.get(key)
+            if value is not None and (not isinstance(value, str) or "\\x00" in value):
+                raise ValueError(f"工作台记录 {key} 必须是文本")
+
+    case_ids = set()
+    for item in payload["cases"]:
+        if not isinstance(item, dict):
+            raise ValueError("研究任务记录必须是对象")
+        required_text(item, "id")
+        if item["id"] in case_ids:
+            raise ValueError("研究任务 ID 重复")
+        case_ids.add(item["id"])
+        required_text(item, "name")
+        if item.get("workflow") not in {"regular", "super", "optimization"}:
+            raise ValueError("研究任务工作流无效")
+        if item.get("phase") not in {"scope", "hypothesis", "simulation", "review", "closed"}:
+            raise ValueError("研究任务阶段无效")
+        if item["workflow"] == "optimization":
+            required_text(item, "sourceId")
+        else:
+            required_text(item, "region")
+        optional_text(item, (
+            "region", "dataset", "category", "universe", "objective", "constraints",
+            "scopeEvidence", "coverage", "budget", "sourceId", "sourceType", "sourceSnapshot",
+        ))
+        if item.get("sourceType") is not None and item["sourceType"] not in {"regular", "super"}:
+            raise ValueError("Alpha 来源类型无效")
+        if "ppa" in item and type(item["ppa"]) is not bool:
+            raise ValueError("PPA Profile 必须是布尔值")
+        if item.get("delay") is not None and (
+                type(item["delay"]) is not int or item["delay"] < 0):
+            raise ValueError("研究任务 Delay 必须是非负整数")
+        history = item.get("history")
+        if history is not None:
+            if not isinstance(history, list):
+                raise ValueError("研究阶段历史必须是列表")
+            for entry in history:
+                if (not isinstance(entry, dict)
+                        or entry.get("phase") not in
+                        {"scope", "hypothesis", "simulation", "review", "closed"}
+                        or not isinstance(entry.get("at"), str)
+                        or not entry["at"].strip()):
+                    raise ValueError("研究阶段历史记录无效")
+
+    alpha_ids = set()
+    metric_names = {
+        "sharpe", "fitness", "turnover", "drawdown", "coverage", "robustness",
+        "costs", "local", "prod", "self", "pairwise", "weight",
+    }
+    correlation_names = {"local", "prod", "self", "pairwise"}
+    text_names = (
+        "alphaId", "dataset", "category", "universe", "expression", "fields",
+        "operators", "idea", "dataReason", "operatorReason", "economics", "settings",
+        "receipt", "units", "raRef", "policyRef", "localRef", "corrRef", "pairRef",
+        "auditRef", "preferredRef", "submissionNote",
+    )
+    status_values = {
+        "raFinal": {"pass", "fail", "pending"},
+        "localComplete": {"pass", "fail", "pending"},
+        "pairwise": {"pass", "fail", "pending"},
+        "auditStatus": {"candidate", "failed", "pending"},
+        "preferredStatus": {"preferred", "failed", "pending"},
+        "subUniverse": {"pass", "fail", "pending"},
+    }
+    for item in payload["alphas"]:
+        if not isinstance(item, dict):
+            raise ValueError("Alpha 记录必须是对象")
+        required_text(item, "id")
+        if item["id"] in alpha_ids:
+            raise ValueError("Alpha 记录 ID 重复")
+        alpha_ids.add(item["id"])
+        required_text(item, "caseId")
+        if item["caseId"] not in case_ids:
+            raise ValueError("Alpha 记录引用了不存在的研究任务")
+        required_text(item, "name")
+        optional_text(item, text_names)
+        metrics = item.get("metrics")
+        if not isinstance(metrics, dict):
+            raise ValueError("Alpha 指标必须是对象")
+        for key, value in metrics.items():
+            if (key not in metric_names or isinstance(value, bool)
+                    or not isinstance(value, (int, float)) or not math.isfinite(value)):
+                raise ValueError("Alpha 指标名称或数值无效")
+            if key in correlation_names and abs(value) > 1:
+                raise ValueError("Alpha 相关性指标必须在 -1 到 1 之间")
+        for key, allowed in status_values.items():
+            if item.get(key) is not None and item[key] not in allowed:
+                raise ValueError(f"Alpha {key} 状态无效")
+        if item.get("corrLimit") is not None:
+            value = item["corrLimit"]
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 1:
+                raise ValueError("Alpha 相关性阈值必须在 0 到 1 之间")
+        for key in ("delay", "raCount", "operatorCount"):
+            value = item.get(key)
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"Alpha {key} 必须是非负整数")
+        case = next(row for row in payload["cases"] if row["id"] == item["caseId"])
+        if case["workflow"] == "regular":
+            if case.get("dataset") and item.get("dataset"):
+                allowed = [part.strip() for part in case["dataset"].replace("，", ",").split(",")
+                           if part.strip()]
+                if item["dataset"] not in allowed:
+                    raise ValueError("Alpha Dataset 超出研究任务硬约束")
+            for key in ("category", "delay", "universe"):
+                if case.get(key) is not None and item.get(key) is not None and case[key] != item[key]:
+                    raise ValueError(f"Alpha {key} 与研究任务硬约束冲突")
+
     try:
         encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False).encode("utf-8")
     except (TypeError, ValueError) as exc:
