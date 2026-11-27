@@ -374,6 +374,9 @@ function runtimeTasks(){
      esc(scope||"—"),
      esc(row.eligible_alpha_count??"—"),esc(row.unresolved_count??"—"),
      esc(row.objective||"—"),esc((row.changes||[]).join("；")||"—"),
+     esc(row.simulation_invoked===true?"是":row.simulation_invoked===false?"否":"未记录"),
+     esc(row.alpha_submission_invoked===true?"是":row.alpha_submission_invoked===false?"否":"未记录"),
+     esc(row.source_unchanged_verified===true?"已核验":row.source_unchanged_verified===false?"待核验":"—"),
      optimization?num(sourceMetrics.sharpe)+" → "+num(candidateMetrics.sharpe)+" ("+num(delta.sharpe)+")":"—",
      optimization?num(sourceMetrics.fitness)+" → "+num(candidateMetrics.fitness)+" ("+num(delta.fitness)+")":"—",
      optimization?num(sourceMetrics.turnover)+" → "+num(candidateMetrics.turnover)+" ("+num(delta.turnover)+")":"—",
@@ -394,6 +397,9 @@ function runtimeTasks(){
      selection:row.selection,combo:row.combo,hypothesis:row.hypothesis,
      rationale:row.rationale,failure_criterion:row.failure_criterion,
      settings:row.settings,validation:row.validation,platform_super_schema:row.platform_super_schema,
+     simulation_invoked:row.simulation_invoked,
+     alpha_submission_invoked:row.alpha_submission_invoked,
+     source_unchanged_verified:row.source_unchanged_verified,
      source_metrics:row.source_metrics,candidate_metrics:row.candidate_metrics,
      metric_deltas:row.metric_deltas,source_settings:row.source_settings,
      candidate_settings:row.candidate_settings,unresolved:row.unresolved,
@@ -402,7 +408,7 @@ function runtimeTasks(){
  })).filter(item=>item.refs||Object.values(item.details).some(value=>value!=null));
  const domainTable=domainRows.length
    ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
-     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","Super 范围","符合范围 Alpha 数","未解决项","优化目标","改动摘要","Sharpe 来源→候选 (Δ)","Fitness 来源→候选 (Δ)","Turnover 来源→候选 (Δ)","Returns 来源→候选 (Δ)","Drawdown 来源→候选 (Δ)","Margin 来源→候选 (Δ)","Weight 来源→候选 (Δ)","恢复核对"],domainRows)
+     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","Super 范围","符合范围 Alpha 数","未解决项","优化目标","改动摘要","Simulation 已调用","Alpha 提交已调用","来源完整性","Sharpe 来源→候选 (Δ)","Fitness 来源→候选 (Δ)","Turnover 来源→候选 (Δ)","Returns 来源→候选 (Δ)","Drawdown 来源→候选 (Δ)","Margin 来源→候选 (Δ)","Weight 来源→候选 (Δ)","恢复核对"],domainRows)
    :"";
  const evidenceTable=evidenceRows.length
    ?'<h3 style="padding:12px 17px 0">执行证据引用（只读）</h3>'+
