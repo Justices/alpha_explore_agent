@@ -156,33 +156,49 @@ def _verify_domain_handoffs(trace, workflow, expected_attempts):
         runs = domain.get("super_runs") or ([domain.get("super_run")]
                                            if domain.get("super_run") else [])
         qualifications = matching("super.qualification_completed")
-        domain_valid = len(runs) == expected_attempts and all(
-            all(run.get(key) for key in (
-                "run_id", "simulation_intent_ref", "readback_ref",
-                "candidate_id", "candidate_status", "preferred_status"))
-            and any(row.get("run_id") == run["run_id"]
+        missing_evidence = []
+        if len(runs) != expected_attempts:
+            missing_evidence.append(
+                f"super_run_count:{len(runs)}!=expected:{expected_attempts}")
+        for index, run in enumerate(runs):
+            for key in ("run_id", "simulation_intent_ref", "readback_ref",
+                        "candidate_id", "candidate_status", "preferred_status"):
+                if not run.get(key):
+                    missing_evidence.append(f"super_runs[{index}].{key}")
+            if run.get("run_id") and run.get("candidate_id") and not any(
+                    row.get("run_id") == run["run_id"]
                     and row.get("candidate_id") == run["candidate_id"]
-                    for row in qualifications)
-            for run in runs)
+                    for row in qualifications):
+                missing_evidence.append(f"super_runs[{index}].qualification_event")
+        domain_valid = not missing_evidence
     else:
         optimizations = domain.get("optimization_runs") or (
             [domain.get("optimization")] if domain.get("optimization") else [])
         qualifications = matching("optimization.qualification_completed")
-        domain_valid = len(optimizations) == expected_attempts and all(
-            (report := optimization.get("report") or {})
-            and all(report.get(key) for key in (
-                "source_snapshot_ref", "simulation_intent_ref", "readback_ref",
-                "candidate_id", "candidate_record_ref", "preferred_record_ref"))
-            and report.get("source_unchanged_verified") is True
-            and any(row.get("candidate_id") == report["candidate_id"]
-                    and row.get("run_id") == optimization.get("run_id")
-                    for row in qualifications)
-            for optimization in optimizations)
+        missing_evidence = []
+        if len(optimizations) != expected_attempts:
+            missing_evidence.append(
+                f"optimization_run_count:{len(optimizations)}!=expected:{expected_attempts}")
+        for index, optimization in enumerate(optimizations):
+            report = optimization.get("report") or {}
+            for key in ("source_snapshot_ref", "simulation_intent_ref", "readback_ref",
+                        "candidate_id", "candidate_record_ref", "preferred_record_ref"):
+                if not report.get(key):
+                    missing_evidence.append(f"optimization_runs[{index}].report.{key}")
+            if report.get("source_unchanged_verified") is not True:
+                missing_evidence.append(f"optimization_runs[{index}].source_unchanged_verified")
+            if (report.get("candidate_id") and optimization.get("run_id")
+                    and not any(row.get("candidate_id") == report["candidate_id"]
+                                and row.get("run_id") == optimization["run_id"]
+                                for row in qualifications)):
+                missing_evidence.append(f"optimization_runs[{index}].qualification_event")
+        domain_valid = not missing_evidence
     return {
         "status": "VERIFIED" if ordered and domain_valid else "INCOMPLETE",
         "missing_events": missing,
         "events_ordered": ordered,
         "domain_evidence_bound": bool(domain_valid),
+        "missing_domain_evidence": missing_evidence if workflow in {"super", "optimization"} else [],
         "review_evidence_bound": (review_evidence_bound
                                   if workflow == "regular" else None),
     }
