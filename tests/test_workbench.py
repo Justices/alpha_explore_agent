@@ -486,6 +486,16 @@ class WorkbenchLaunchTests(unittest.TestCase):
             self.assertIn("正在规划字段诊断", [event["message"] for event in report["events"]])
             self.assertNotIn(credentials["password"], json.dumps(report))
             self.assertNotIn("password", report)
+            manifest_path = Path(root) / "state/logs/workbench" / f"{report['launch_id']}.launch.json"
+            persisted = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(persisted["status"], "exited")
+            self.assertEqual(persisted["campaign_status"], "budget_complete")
+            with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as connection:
+                connection.request("GET", "/api/launches")
+                response = connection.getresponse()
+                history = json.loads(response.read())
+                self.assertEqual(response.status, 200)
+                self.assertIn(report["launch_id"], {item["launch_id"] for item in history["items"]})
             self.assertFalse(launch_flag.exists())
             entered.clear()
             self.assertEqual(action("resume", saved_id, ""), 401)
