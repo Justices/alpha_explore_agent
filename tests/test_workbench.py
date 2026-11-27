@@ -269,6 +269,57 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             self.assertEqual(policy["policy_sha256"], policy_hash(DEFAULT_CONFIG))
 
 
+    def test_status_projects_super_scope_eligibility_and_unresolved_evidence(self):
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            config = root_path / "config" / "nastu_quant.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"scope": {"region": "USA"}}), encoding="utf-8")
+            state = root_path / "state" / "research_v1_1"
+            records = state / "super_run"
+            snapshots = state / "super_runs"
+            records.mkdir(parents=True)
+            snapshots.mkdir(parents=True)
+            run_id = "a" * 32
+            snapshot = snapshots / f"{run_id}.json"
+            snapshot.write_text(json.dumps({
+                "run_id": run_id, "region": "USA",
+                "objective": "selection quality", "requested_delay": 1,
+                "allowed_delays": [1, 2],
+                "active_submitted_pool": [{"alpha_id": "A1"}, {"alpha_id": "A2"}],
+                "unresolved": [{"reason": "settings_unreadable"}],
+                "platform_super_schema": {"selectionLimit": {"type": "integer"}},
+            }), encoding="utf-8")
+            (records / f"{run_id}.json").write_text(json.dumps({
+                "run_id": run_id, "workflow": "super", "region": "USA",
+                "objective": "selection quality", "status": "candidate_evaluated",
+                "platform_record_ref": str(snapshot),
+                "simulation_intent_ref": str(root_path / "intent.json"),
+                "candidate_alpha_id": "C1", "candidate_status": "CANDIDATE",
+                "preferred_status": "NOT_PREFERRED",
+                "updated_at": "2026-11-27T10:00:00+00:00",
+            }), encoding="utf-8")
+            (records / "malformed.json").write_text("[]", encoding="utf-8")
+            output = StringIO()
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"status": "available", "entries": []}):
+                with redirect_stdout(output):
+                    self.assertEqual(run_status_command(
+                        SimpleNamespace(config=config), root_path,
+                        root_path / "state" / "stop.flag"), 0)
+            report = json.loads(output.getvalue())
+            run = next(row for row in report["v11_super_runs"] if row.get("run_id") == run_id)
+            self.assertEqual(run["region"], "USA")
+            self.assertEqual(run["requested_delay"], 1)
+            self.assertEqual(run["allowed_delays"], [1, 2])
+            self.assertEqual(run["eligible_alpha_count"], 2)
+            self.assertEqual(run["unresolved_count"], 1)
+            self.assertEqual(run["candidate_alpha_id"], "C1")
+            self.assertEqual(run["simulation_intent_ref"], str(root_path / "intent.json"))
+            self.assertTrue(any(row.get("status") == "unreadable"
+                                for row in report["v11_super_runs"]))
+
+
 class WorkbenchRecordStoreTests(unittest.TestCase):
     def test_project_records_round_trip_through_locked_store(self):
         with TemporaryDirectory() as root:
