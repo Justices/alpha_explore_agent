@@ -467,7 +467,7 @@ class WorkbenchLaunchRestartGuardTests(unittest.TestCase):
                 "status": "COMPLETED", "run_id": "new-super-run",
             }))
 
-        with TemporaryDirectory() as root, \\
+        with TemporaryDirectory() as root, \
                 patch.dict(os.environ, {
                     "ZAI_API_KEY": "offline-fixture",
                     "MOONSHOT_API_KEY": "offline-fixture",
