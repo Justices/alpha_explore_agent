@@ -288,6 +288,53 @@ class WorkbenchPlanEndpointTests(unittest.TestCase):
             self.assertEqual(launched["workflow"], "regular_plan")
 
 
+class WorkbenchLaunchPersistenceTests(unittest.TestCase):
+    def test_inflight_launch_is_restored_as_unknown_and_blocks_replay(self):
+        with TemporaryDirectory() as root:
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            launch_id = "a" * 32
+            serve.write_launch_manifest(log_dir, launch_id, {
+                "workflow": "super", "status": "running",
+                "started_at": "2026-11-27T10:00:00+00:00",
+                "args": ["run-super"], "models": None,
+            })
+
+            restored = serve.restore_launch_state(log_dir)
+
+            self.assertEqual(restored["launch_id"], launch_id)
+            self.assertEqual(restored["status"], "execution_unknown")
+            self.assertTrue(restored["recovery_required"])
+            self.assertIn("避免并发 Simulation", restored["recovery_message"])
+            persisted = json.loads(
+                (log_dir / f"{launch_id}.launch.json").read_text(encoding="utf-8"))
+            self.assertEqual(persisted["status"], "execution_unknown")
+            self.assertEqual(serve.read_launch_history(log_dir)[0]["launch_id"], launch_id)
+
+    def test_legacy_terminal_progress_is_not_misclassified_as_running(self):
+        with TemporaryDirectory() as root:
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            launch_id = "b" * 32
+            serve.write_launch_manifest(log_dir, launch_id, {
+                "workflow": "regular", "status": "starting",
+                "started_at": "2026-11-27T10:00:00+00:00",
+            })
+            (log_dir / f"{launch_id}.jsonl").write_text(
+                '{"time":"2026-11-27T10:01:00+00:00","message":"研究进程已结束，结果见 Agent 状态与证据记录"}\n',
+                encoding="utf-8")
+
+            restored = serve.restore_launch_state(log_dir)
+
+            self.assertEqual(restored["status"], "exited")
+            self.assertTrue(restored["recovered_from_legacy_log"])
+            self.assertEqual(restored["result_status"], "legacy_completion_observed")
+
+    def test_launch_manifest_rejects_untrusted_identifiers(self):
+        with TemporaryDirectory() as root:
+            for launch_id in ("../escape", "A" * 32, "", "not-a-uuid"):
+                with self.subTest(launch_id=launch_id), self.assertRaises(ValueError):
+                    serve.launch_manifest_path(root, launch_id)
+
+
 class WorkbenchLaunchTests(unittest.TestCase):
     def test_launch_keeps_scope_and_rejects_cross_origin_and_duplicate_start(self):
         entered = threading.Event()
