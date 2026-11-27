@@ -303,6 +303,23 @@ python3 -m pip install -e .
 python3 workbench/serve.py --port 8766 --state-root /var/lib/alpha-research
 ```
 
+For a Windows workstation, run the service from **Command Prompt** in the
+repository root. Use the same Python interpreter and persistent State Root as
+the CLI:
+
+```cmd
+cd /d D:\quant\alpha_explore_agent
+D:\quant-venv\Scripts\python.exe -m pip install -e .
+D:\quant-venv\Scripts\python.exe workbench\serve.py --port 8765 --state-root D:\quant\alpha_explore_agent\.alpha-runtime
+```
+
+Keep this terminal open and visit `http://127.0.0.1:8765/` in the browser.
+The server binds to loopback only; stop it with `Ctrl+C`. Starting the server
+does not call BRAIN or invoke a model. BRAIN credentials are entered through
+the Workbench and kept in the server process memory for up to 24 hours.
+Use the separate preflight action to inspect a scope; starting an actual
+research workflow requires a second, explicit confirmation.
+
 Give the service account write access to the checkout's `knowledge`
 directory. Keep the state directory on persistent storage and place the configuration
 in `config/nastu_quant.json` under that directory. Set model key environment
