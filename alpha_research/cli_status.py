@@ -311,6 +311,7 @@ def run_status_command(args, root, stop_flag):
                         "candidate_status": candidate_status,
                         "preferred_status": preferred_status,
                         "policy_current": policy_current,
+                        "policy_sha256": policy_sha,
                         "candidate_alpha_id": item.get("candidate_alpha_id"),
                         "status": item.get("status"),
                         "simulation_intent_ref": item.get("simulation_intent_ref"),
