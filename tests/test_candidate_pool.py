@@ -149,6 +149,9 @@ class TestGlobalCandidatePool(unittest.TestCase):
         _upsert(self.store, "candidate", self.sample(
             kind="candidate", candidate_id=identity,
             workflow="regular", status="CANDIDATE"))
+        _upsert(self.store, "preferred", self.sample(
+            kind="preferred", candidate_id=identity,
+            workflow="regular", status="PREFERRED"))
         self.assertIsNotNone(self.pool.find_reusable(
             "A_SAME", evidence_sha256="a" * 64, policy_sha256="b" * 64))
         self.assertIsNone(self.pool.find_reusable(
