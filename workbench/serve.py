@@ -567,7 +567,7 @@ def handler_for(agent_args, port):
                            if isinstance(value, str) and value)
             for secret in sorted(set(secrets), key=len, reverse=True):
                 text = text.replace(secret, "[REDACTED]")
-            return "\\n".join(text.splitlines()[-20:])[:4000]
+            return "\n".join(text.splitlines()[-20:])[:4000]
 
         try:
             write_progress("正在启动研究进程", log_path)
@@ -633,7 +633,7 @@ def handler_for(agent_args, port):
             diagnostic = safe_diagnostic(getattr(result, "stderr", ""))
             summary = f"研究进程异常：{type(exc).__name__}: {exc}"
             if diagnostic:
-                summary += "\\n诊断输出（已脱敏，末尾最多 20 行）：\\n" + diagnostic
+                summary += "\n诊断输出（已脱敏，末尾最多 20 行）：\n" + diagnostic
             write_progress(summary[:6000], log_path)
         finally:
             if outcome["status"] == "failed" and stop_flag.exists() and outcome.get("exit_code") == 2:
