@@ -753,6 +753,11 @@ function checkCase(c){
  if(c.workflow==="optimization"?!text(c.sourceId):!text(c.region))
    throw Error("请填写所需的区域或来源 Alpha ID。");
  if(c.region!=null&&!text(c.region))throw Error("Region 必须是文本。");
+ for(const key of ["dataset","category","universe","objective","constraints","scopeEvidence",
+                   "coverage","budget","sourceId","sourceType","sourceSnapshot"])
+   if(c[key]!=null&&typeof c[key]!=="string")throw Error(key+" 必须是文本。");
+ if(c.sourceType!=null&&!["regular","super"].includes(c.sourceType))
+   throw Error("来源类型必须是 Regular 或 Super。");
  if(c.ppa!=null&&typeof c.ppa!=="boolean")throw Error("PPA Profile 必须是布尔值。");
  if(c.delay!=null&&(!Number.isInteger(c.delay)||c.delay<0))
    throw Error("Delay 必须是非负整数。");
@@ -770,6 +775,19 @@ function checkAlpha(a,c){
    if(!Object.hasOwn(metrics,k)||!numeric(v))throw Error("无效的指标值。");
    if(["local","prod","self","pairwise"].includes(k)&&Math.abs(v)>1)throw Error("相关性必须在 -1 到 1 之间。");
  }
+ for(const key of ["alphaId","dataset","category","universe","expression","fields","operators",
+                   "idea","dataReason","operatorReason","economics","settings","receipt","units",
+                   "raRef","policyRef","localRef","corrRef","pairRef","auditRef","preferredRef",
+                   "submissionNote"])
+   if(a[key]!=null&&typeof a[key]!=="string")throw Error(key+" 必须是文本。");
+ for(const [key,allowed] of Object.entries({
+   raFinal:["pass","fail","pending"],localComplete:["pass","fail","pending"],
+   pairwise:["pass","fail","pending"],auditStatus:["candidate","failed","pending"],
+   preferredStatus:["preferred","failed","pending"],subUniverse:["pass","fail","pending"],
+ }))
+   if(a[key]!=null&&!allowed.includes(a[key]))throw Error(key+" 的审核状态无效。");
+ if(a.corrLimit!=null&&(!numeric(a.corrLimit)||a.corrLimit<=0||a.corrLimit>1))
+   throw Error("相关性阈值必须在 0 到 1 之间。");
  for(const k of ["delay","raCount","operatorCount"]) if(a[k]!=null&&(!Number.isInteger(a[k])||a[k]<0))throw Error("Delay、RA fail count 和操作符次数必须是非负整数。");
  if(c.workflow==="regular"){
    if(c.dataset&&a.dataset&&!fieldSet(c.dataset).includes(a.dataset))throw Error("有效 Dataset 超出用户指定范围。");
