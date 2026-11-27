@@ -553,6 +553,22 @@ def handler_for(agent_args, port):
     def run_workflow(args, credentials, log_path, selection, workflow="regular"):
         outcome = {"status": "failed", "workflow": workflow}
         stop_flag = launch_stop_flag(log_path.stem)
+        result = None
+
+        def safe_diagnostic(value):
+            text = str(value or "")
+            secrets = [
+                value for key, value in os.environ.items()
+                if any(marker in key.upper()
+                       for marker in ("KEY", "TOKEN", "PASSWORD", "SECRET", "CREDENTIAL"))
+                and isinstance(value, str) and value
+            ]
+            secrets.extend(value for value in credentials.values()
+                           if isinstance(value, str) and value)
+            for secret in sorted(set(secrets), key=len, reverse=True):
+                text = text.replace(secret, "[REDACTED]")
+            return "\\n".join(text.splitlines()[-20:])[:4000]
+
         try:
             write_progress("正在启动研究进程", log_path)
             command = []
@@ -566,7 +582,7 @@ def handler_for(agent_args, port):
                 cwd=PROJECT, env={**agent_env(), PROGRESS_ENV: str(log_path),
                                   "ALPHA_RESEARCH_LAUNCH_STOP": str(stop_flag)},
                 input=json.dumps(credentials, ensure_ascii=False),
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8")
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
             outcome["exit_code"] = result.returncode
             if result.returncode == 0:
                 report = json.loads(result.stdout)
@@ -613,8 +629,12 @@ def handler_for(agent_args, port):
                                 outcome["record_ref"] = str(
                                     root / "state" / "research_v1_1" / "plans"
                                     / f"{report['plan_id']}.json")
-        except (OSError, ValueError, subprocess.SubprocessError):
-            write_progress("无法启动研究进程或读取执行结果", log_path)
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            diagnostic = safe_diagnostic(getattr(result, "stderr", ""))
+            summary = f"研究进程异常：{type(exc).__name__}: {exc}"
+            if diagnostic:
+                summary += "\\n诊断输出（已脱敏，末尾最多 20 行）：\\n" + diagnostic
+            write_progress(summary[:6000], log_path)
         finally:
             if outcome["status"] == "failed" and stop_flag.exists() and outcome.get("exit_code") == 2:
                 outcome.update(status="exited", result_status="user_stopped")
