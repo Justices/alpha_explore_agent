@@ -76,8 +76,10 @@ def campaign_arguments(data):
     datasets = data.get("dataset_ids", [])
     if (not isinstance(datasets, list)
             or any(not isinstance(value, str) or not value.strip() or "\x00" in value
-                   for value in datasets)
-            or len(set(datasets)) != len(datasets)):
+                   for value in datasets)):
+        raise ValueError("Dataset ID 必须是互不重复的非空文本")
+    datasets = [value.strip() for value in datasets]
+    if len(set(datasets)) != len(datasets):
         raise ValueError("Dataset ID 必须是互不重复的非空文本")
     ppa = data.get("ppa", False)
     if type(ppa) is not bool:
@@ -85,7 +87,8 @@ def campaign_arguments(data):
     args = ["run-campaign"]
     for key in (*required, "max_batches", "category", "delay", "universe"):
         if key in data:
-            args.append(f"--{key.replace('_', '-')}={data[key]}")
+            value = data[key].strip() if key in (*required, *optional_text) else data[key]
+            args.append(f"--{key.replace('_', '-')}={value}")
     args.extend(f"--dataset={dataset}" for dataset in datasets)
     if ppa:
         args.append("--ppa")
