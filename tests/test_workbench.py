@@ -1,6 +1,8 @@
 import http.client
-from contextlib import closing
+from contextlib import closing, redirect_stdout
 from http.server import ThreadingHTTPServer
+from io import StringIO
+from types import SimpleNamespace
 import json
 import os
 from pathlib import Path
@@ -11,6 +13,9 @@ import unittest
 from subprocess import CompletedProcess
 from unittest.mock import patch
 
+from alpha_research.cli_status import run_status_command
+from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.qualification.pool import policy_hash
 from workbench import serve
 
 
@@ -119,6 +124,29 @@ class WorkbenchPlanTests(unittest.TestCase):
         for request in invalid:
             with self.subTest(request=request), self.assertRaises(ValueError):
                 serve.plan_arguments(request)
+
+
+class WorkbenchStatusPolicyTests(unittest.TestCase):
+    def test_status_exposes_canonical_application_owned_policy(self):
+        with TemporaryDirectory() as root:
+            config = Path(root) / "config" / "nastu_quant.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"scope": {"region": "USA"}}),
+                              encoding="utf-8")
+            output = StringIO()
+            args = SimpleNamespace(config=config)
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"status": "available", "entries": []}), \
+                    redirect_stdout(output):
+                self.assertEqual(
+                    run_status_command(args, Path(root), Path(root) / "state" / "stop.flag"),
+                    0)
+            report = json.loads(output.getvalue())
+            policy = report["qualification_policy"]
+            self.assertEqual(policy["status"], "available")
+            self.assertEqual(policy["candidate"], DEFAULT_CONFIG["gate"])
+            self.assertEqual(policy["preferred"], DEFAULT_CONFIG["preferred"])
+            self.assertEqual(policy["policy_sha256"], policy_hash(DEFAULT_CONFIG))
 
 
 class WorkbenchRecordStoreTests(unittest.TestCase):
