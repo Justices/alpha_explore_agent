@@ -129,6 +129,7 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
               "requested_delay": delay, "allowed_delays": allowed_delays,
               "platform_super_schema": super_schema,
               "active_submitted_pool": eligible, "unresolved": unresolved,
+              "simulation_invoked": False, "alpha_submission_invoked": False,
               "observed_at": datetime.now(timezone.utc).isoformat(),
               "status": "prepared" if eligible and not unresolved else "unresolved"}
     path = (Path(state_root).resolve() / "state" / "research_v1_1" /
@@ -146,10 +147,12 @@ def prepare_super_run(gateway, state_root: Path, *, region: str,
         "active_submitted_pool_ref": str(path),
         "simulation_intent_ref": None, "readback_ref": None,
         "audit_ref": None, "unresolved": unresolved,
+        "simulation_invoked": False, "alpha_submission_invoked": False,
         "status": record["status"], "created_at": now, "updated_at": now})
     return {"run_id": run_id, "status": record["status"],
             "eligible_alpha_count": len(eligible),
-            "unresolved_count": len(unresolved), "record_ref": str(path)}
+            "unresolved_count": len(unresolved), "simulation_invoked": False,
+            "alpha_submission_invoked": False, "record_ref": str(path)}
 
 
 def run_super_research(gateway, model, config: dict, state_root: Path, *,
@@ -351,8 +354,11 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
     _emit(execution_context, "super.simulation_posting",
           run_id=run_id, batch_id=batch_id, simulation_intent_ref=str(intent_path))
     run["status"] = "simulation_posting"
+    run["simulation_invoked"] = True
+    run["alpha_submission_invoked"] = False
     atomic_write_json(run_path, run)
-    persist_shared(status="simulation_posting")
+    persist_shared(status="simulation_posting", simulation_invoked=True,
+                   alpha_submission_invoked=False)
     try:
         result = gateway.call(
             "simulate_super", batch_id=batch_id, settings=settings,
@@ -447,4 +453,5 @@ def run_super_research(gateway, model, config: dict, state_root: Path, *,
             "preferred_ref": qualification["preferred_ref"],
             "proposal_sha256": proposal_sha256,
             "candidate_definition_sha256": candidate_definition_sha256,
+            "simulation_invoked": True, "alpha_submission_invoked": False,
             "status": run["status"], "record_ref": str(run_path)}
