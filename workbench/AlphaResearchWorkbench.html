@@ -574,7 +574,14 @@ function audit(){
      :[];
    const maxPairwise=pairwise.length?Math.max(...pairwise.map(Math.abs)):null;
    const ra=row.ra_fail_count===0?"0":row.ra_fail_count??"未取得";
-   const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
+   const evidence=[
+     row.policy_sha256?"policy_sha256: "+row.policy_sha256:"",
+     row.evidence_sha256?"evidence_sha256: "+row.evidence_sha256:"",
+     row.source_ref?"source_ref: "+row.source_ref:"",
+     row.candidate_ref?"candidate_ref: "+row.candidate_ref:"",
+     row.preferred_ref?"preferred_ref: "+row.preferred_ref:"",
+     ...Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string")
+   ].filter(Boolean).join("\n");
    return [
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.candidate_status||row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
@@ -587,7 +594,14 @@ function audit(){
  });
  const preferredEvaluations=(agentStatus?.v11_preferred_evaluations||[]).map(row=>{
    const metrics=row.metrics||{},thresholds=row.thresholds||{};
-   const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
+   const evidence=[
+     row.policy_sha256?"policy_sha256: "+row.policy_sha256:"",
+     row.evidence_sha256?"evidence_sha256: "+row.evidence_sha256:"",
+     row.source_ref?"source_ref: "+row.source_ref:"",
+     row.candidate_ref?"candidate_ref: "+row.candidate_ref:"",
+     row.preferred_ref?"preferred_ref: "+row.preferred_ref:"",
+     ...Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string")
+   ].filter(Boolean).join("\n");
    return [
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.preferred_status||row.status||"—"),
      esc(row.policy_current===false?"策略过期":row.policy_current!==true?"策略未核验":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
