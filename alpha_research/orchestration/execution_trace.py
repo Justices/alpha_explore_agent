@@ -272,7 +272,7 @@ def inspect_execution_trace(state_root, task_id):
             "batches": index.get("batches", []) if index else [],
         })
 
-    domain = {"campaign": None, "super_run": None,
+    domain = {"campaign": None, "super_run": None, "super_runs": [],
               "optimization": None, "optimization_runs": [],
               "simulation_intents": [],
               "qualification_records": {"status": "UNAVAILABLE",
@@ -409,14 +409,42 @@ def inspect_execution_trace(state_root, task_id):
                 "details_sha256", "source_properties_sha256")} if source else None),
         }
         domain["optimization_runs"].append(run_evidence)
-        if domain["optimization"] is None:
+        if not (domain["optimization"] or {}).get("report"):
             domain["optimization"] = run_evidence
+
+    for current_id in research_ids:
+        if not current_id.startswith("super:"):
+            continue
+        run_id = current_id.removeprefix("super:")
+        if any(row.get("run_id") == run_id for row in domain["super_runs"]):
+            continue
+        path = root / "state" / "research_v1_1" / "super_runs" / f"{run_id}.json"
+        saved = _read_object(path, root=root)
+        if not saved:
+            continue
+        run_evidence = {
+            key: saved.get(key) for key in (
+                "run_id", "status", "region", "objective", "batch_id",
+                "alpha_id", "candidate_id", "candidate_status",
+                "preferred_status", "candidate_record_ref",
+                "preferred_record_ref", "prereg_ref", "simulation_intent_ref",
+                "response_ref", "readback_ref", "audit_ref")
+            if key in saved
+        }
+        run_evidence["record_ref"] = str(path)
+        domain["super_runs"].append(run_evidence)
+        if domain["super_run"] is None:
+            domain["super_run"] = run_evidence
 
     candidate_ids = set()
     for event in events:
         candidate_ids.update(_collect_values(event.get("payload") or {}, "candidate_id"))
     if (domain.get("super_run") or {}).get("candidate_id"):
         candidate_ids.add((domain.get("super_run") or {})["candidate_id"])
+    for super_run in domain.get("super_runs", []):
+        candidate_id = super_run.get("candidate_id")
+        if isinstance(candidate_id, str):
+            candidate_ids.add(candidate_id)
     for optimization in domain.get("optimization_runs", []):
         candidate_id = (optimization.get("report") or {}).get("candidate_id")
         if isinstance(candidate_id, str):
