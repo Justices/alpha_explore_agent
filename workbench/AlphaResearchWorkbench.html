@@ -467,8 +467,10 @@ function runtimeTasks(){
      simulation_invoked:item.simulation_invoked,
      alpha_submission_invoked:item.alpha_submission_invoked,
      source_unchanged_verified:item.source_unchanged_verified,
-     simulation_intent_ref:item.simulation_intent_ref,receipt_ref:item.receipt_ref,
-     readback_ref:item.readback_ref,audit_ref:item.audit_ref,report_ref:item.report_ref
+     prereg_ref:item.prereg_ref,simulation_intent_ref:item.simulation_intent_ref,
+     response_ref:item.response_ref,receipt_ref:item.receipt_ref,readback_ref:item.readback_ref,
+     audit_ref:item.audit_ref,report_ref:item.report_ref,
+     candidate_ref:item.candidate_ref,preferred_ref:item.preferred_ref
    };
    return [
      esc(item.started_at||item.created_at||"—"),
