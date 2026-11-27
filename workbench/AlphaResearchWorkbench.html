@@ -369,7 +369,7 @@ function runtimeTasks(){
    return [
      esc(kind),esc(row.run_id||row.branch_id||row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
-     esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
+     esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"未绑定策略版本"),
      esc(row.candidate_alpha_id||"—"),
      esc(scope||"—"),
      esc(row.eligible_alpha_count??"—"),esc(row.unresolved_count??"—"),
@@ -588,12 +588,12 @@ function audit(){
    const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
    return [
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.preferred_status||row.status||"—"),
-     esc(row.policy_current===false?"策略过期":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
+     esc(row.policy_current===false?"策略过期":row.policy_current!==true?"策略未核验":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
      esc(metrics.sharpe??"—")+" / "+esc(thresholds.sharpe_min??"—"),
      esc(metrics.fitness??"—")+" / "+esc(thresholds.fitness_min??"—"),
      esc(metrics.turnover??"—")+" / "+esc([thresholds.turnover_min,thresholds.turnover_max].filter(v=>v!=null).join("–")||"—"),
      esc(metrics.weight??"—")+" / "+esc(thresholds.weight_max??"—"),
-     esc(row.policy_current===false?"策略已过期":row.policy_current===true?"策略一致":"—"),
+     esc(row.policy_current===false?"策略已过期":row.policy_current===true?"策略一致":"未绑定策略版本"),
      esc((row.failures||[]).join(", ")||"—"),esc((row.pending||[]).join(", ")||"—"),
      '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
    ];
