@@ -251,9 +251,16 @@ def _validate_workbench_records(payload):
             if value is not None and (not isinstance(value, str) or "\\x00" in value):
                 raise ValueError(f"工作台记录 {key} 必须是文本")
 
+    def finite_number(value):
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return False
+        try:
+            return math.isfinite(float(value))
+        except (OverflowError, ValueError):
+            return False
+
     def nonnegative_integer(value):
-        return (not isinstance(value, bool) and isinstance(value, (int, float))
-                and math.isfinite(value) and value >= 0 and int(value) == value)
+        return finite_number(value) and value >= 0 and int(value) == value
 
     case_ids = set()
     for item in payload["cases"]:
@@ -334,8 +341,7 @@ def _validate_workbench_records(payload):
         if not isinstance(metrics, dict):
             raise ValueError("Alpha 指标必须是对象")
         for key, value in metrics.items():
-            if (key not in metric_names or isinstance(value, bool)
-                    or not isinstance(value, (int, float)) or not math.isfinite(value)):
+            if key not in metric_names or not finite_number(value):
                 raise ValueError("Alpha 指标名称或数值无效")
             if key in correlation_names and abs(value) > 1:
                 raise ValueError("Alpha 相关性指标必须在 -1 到 1 之间")
@@ -344,7 +350,7 @@ def _validate_workbench_records(payload):
                 raise ValueError(f"Alpha {key} 状态无效")
         if item.get("corrLimit") is not None:
             value = item["corrLimit"]
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not 0 < value <= 1:
+            if not finite_number(value) or not 0 < value <= 1:
                 raise ValueError("Alpha 相关性阈值必须在 0 到 1 之间")
         for key in ("delay", "raCount", "operatorCount"):
             value = item.get(key)
