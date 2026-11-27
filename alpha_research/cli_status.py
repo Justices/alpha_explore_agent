@@ -100,6 +100,29 @@ def run_status_command(args, root, stop_flag):
                     "path": str(path)})
             except (OSError, ValueError):
                 v11_campaigns.append({"path": str(path), "status": "unreadable"})
+    def _read_optimization_snapshot(snapshot_ref):
+        if not isinstance(snapshot_ref, str) or not snapshot_ref:
+            return {}
+        try:
+            snapshot_path = Path(snapshot_ref)
+            snapshot_root = (root / "state" / "research_v1_1" /
+                             "optimization" / "snapshots").resolve()
+            resolved = snapshot_path.resolve()
+            if (snapshot_path.is_symlink() or not resolved.is_relative_to(snapshot_root)
+                    or not resolved.is_file() or resolved.stat().st_size > 5 * 1024 * 1024):
+                return {}
+            value = json.loads(resolved.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (OSError, ValueError, TypeError):
+            return {}
+
+    def _metric_snapshot(details):
+        block = details.get("is") if isinstance(details.get("is"), dict) else {}
+        keys = ("sharpe", "fitness", "turnover", "returns", "drawdown", "margin", "weight")
+        return {key: block[key] for key in keys
+                if isinstance(block.get(key), (int, float))
+                and not isinstance(block[key], bool)}
+
     def _record_summaries(kind):
         storage_kind = {"candidate_evaluations": "candidate",
                         "preferred_evaluations": "preferred"}.get(kind, kind)
@@ -124,11 +147,64 @@ def run_status_command(args, root, stop_flag):
                         preferred_status = "NOT_CANDIDATE"
                     if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
                         preferred_status = "NOT_CANDIDATE"
+                    extra = {}
+                    if storage_kind == "optimization_source":
+                        source_details = _read_optimization_snapshot(item.get("snapshot_ref"))
+                        extra = {
+                            "source_metrics": _metric_snapshot(source_details),
+                            "source_settings": source_details.get("settings", {}),
+                            "source_definition": {
+                                "regular": source_details.get("regular"),
+                                "selection": source_details.get("selection"),
+                                "combo": source_details.get("combo"),
+                            },
+                            "source_snapshot_ref": item.get("snapshot_ref"),
+                        }
+                    elif storage_kind == "candidate_branch":
+                        source_details = _read_optimization_snapshot(
+                            item.get("source_snapshot_ref"))
+                        source_metrics = _metric_snapshot(source_details)
+                        candidate_record = {}
+                        candidate_folder = root / "state" / "research_v1_1" / "candidate"
+                        if candidate_folder.is_dir() and not candidate_folder.is_symlink():
+                            for candidate_path in candidate_folder.glob("*.json"):
+                                try:
+                                    if candidate_path.is_symlink() or candidate_path.stat().st_size > 1024 * 1024:
+                                        continue
+                                    candidate_value = json.loads(
+                                        candidate_path.read_text(encoding="utf-8"))
+                                    if (candidate_value.get("candidate_ref") == item.get("branch_id")
+                                            and candidate_value.get("alpha_id") == item.get("candidate_alpha_id")):
+                                        candidate_record = candidate_value
+                                        break
+                                except (OSError, ValueError, AttributeError):
+                                    continue
+                        candidate_metrics = candidate_record.get("metrics", {})
+                        metric_deltas = {
+                            key: candidate_metrics[key] - value
+                            for key, value in source_metrics.items()
+                            if isinstance(candidate_metrics.get(key), (int, float))
+                            and not isinstance(candidate_metrics.get(key), bool)
+                        }
+                        extra = {
+                            "objective": item.get("objective"),
+                            "rationale": item.get("rationale"),
+                            "changes": item.get("changes", []),
+                            "source_metrics": source_metrics,
+                            "candidate_metrics": candidate_metrics,
+                            "metric_deltas": metric_deltas,
+                            "source_settings": source_details.get("settings", {}),
+                            "candidate_settings": item.get("effective_settings", {}),
+                            "candidate_failures": candidate_record.get("failures", []),
+                            "candidate_pending": candidate_record.get("pending", []),
+                            "source_snapshot_ref": item.get("source_snapshot_ref"),
+                        }
                     output.append({
                         "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                               item.get("source_id"),
                         "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                         "workflow": item.get("workflow"),
+                        **extra,
                         "candidate_status": candidate_status,
                         "preferred_status": preferred_status,
                         "policy_current": policy_current,
