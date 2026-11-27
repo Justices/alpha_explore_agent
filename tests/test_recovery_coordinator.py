@@ -398,12 +398,20 @@ class RecoveryCoordinatorTests(unittest.TestCase):
                 reconciled = coordinator.recover_task(
                     runner, task["task_id"], gateway=self.gateway, config={"offline": True},
                     expected_workflow=workflow)
-                self.assertEqual(reconciled["steps"]["execute"], "DONE")
-                self.assertEqual(reconciled["budget"], {"limit": 1, "used": 1, "reserved": 0})
+                self.assertEqual(
+                    reconciled["status"], "RECOVERED_AWAITING_EXPLICIT_CONTINUATION")
+                self.assertTrue(reconciled["task_remains_blocked"])
+                self.assertFalse(reconciled["automatic_resume_allowed"])
+                self.assertFalse(reconciled["simulation_invoked"])
+                self.assertFalse(reconciled["alpha_submission_invoked"])
+                receipt = json.loads(
+                    Path(reconciled["recovery_receipt_ref"]).read_text(encoding="utf-8"))
+                self.assertEqual(receipt["status"], "RECOVERED_AWAITING_EXPLICIT_CONTINUATION")
+                self.assertFalse(receipt["automatic_resume_allowed"])
                 self.assertEqual(len(calls), 1)
-                completed = runner.execute(task["task_id"])
-                self.assertEqual(completed["status"], "COMPLETED")
-                self.assertEqual(len(calls), 1)
+                persisted = runner.load(task["task_id"])
+                self.assertEqual(persisted["status"], "BLOCKED")
+                self.assertEqual(persisted["steps"]["execute"], "RUNNING")
 
     def test_regular_task_recovery_reconciles_campaign_without_starting_another_batch(self):
         request = {
@@ -487,9 +495,16 @@ class RecoveryCoordinatorTests(unittest.TestCase):
         coordinator = RecoveryCoordinator(self.root)
         reconciled = coordinator.recover_task(
             runner, task["task_id"], gateway=self.gateway, agent=agent)
-        self.assertEqual(reconciled["checkpoints"]["execute"]["status"], "budget_complete")
-        self.assertEqual(reconciled["checkpoints"]["execute"]["completed"][0]["batch_dir"],
-                         str(batch))
+        self.assertEqual(
+            reconciled["status"], "RECOVERED_AWAITING_EXPLICIT_CONTINUATION")
+        self.assertTrue(reconciled["task_remains_blocked"])
+        self.assertFalse(reconciled["automatic_resume_allowed"])
+        self.assertFalse(reconciled["simulation_invoked"])
+        receipt = json.loads(
+            Path(reconciled["recovery_receipt_ref"]).read_text(encoding="utf-8"))
+        self.assertEqual(receipt["status"], "RECOVERED_AWAITING_EXPLICIT_CONTINUATION")
+        self.assertFalse(receipt["automatic_resume_allowed"])
+        self.assertEqual(agent.calls, 1)
         with self.assertRaisesRegex(ValueError, "missing from Campaign receipts"):
             run_regular_campaign(
                 agent, self.gateway, **request, recovery_batch=batch.with_name("other-batch"))
