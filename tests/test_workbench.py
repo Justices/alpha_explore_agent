@@ -126,6 +126,25 @@ class WorkbenchPlanTests(unittest.TestCase):
                 serve.plan_arguments(request)
 
 
+class WorkbenchRecoveryPathTests(unittest.TestCase):
+    def test_recovery_accepts_only_existing_intents_inside_state_root(self):
+        with TemporaryDirectory() as root, TemporaryDirectory() as outside:
+            intent = Path(root) / "state" / "research_v1_1" / "optimization" / "run_simulation_intent.json"
+            intent.parent.mkdir(parents=True)
+            intent.write_text('{"status":"POSTING"}', encoding="utf-8")
+            self.assertEqual(serve.recovery_intent_path(root, str(intent)), intent)
+            arbitrary = intent.with_name("report.json")
+            arbitrary.write_text("{}", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                serve.recovery_intent_path(root, str(arbitrary))
+            foreign = Path(outside) / "run_simulation_intent.json"
+            foreign.write_text("{}", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "之外"):
+                serve.recovery_intent_path(root, str(foreign))
+            with self.assertRaises(ValueError):
+                serve.recovery_intent_path(root, str(intent.parent / ".." / intent.name))
+
+
 class WorkbenchStatusPolicyTests(unittest.TestCase):
     def test_status_exposes_canonical_application_owned_policy(self):
         with TemporaryDirectory() as root:
