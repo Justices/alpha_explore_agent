@@ -223,16 +223,17 @@ def inspect_execution_trace(state_root, task_id):
         top_level_id = event.get("research_id")
         payload = event.get("payload")
         payload_id = payload.get("research_id") if isinstance(payload, dict) else None
-        event_research_ids.extend(
-            value for value in (top_level_id, payload_id)
-            if isinstance(value, str))
         event_type = event.get("event_type")
         domain_run_id = payload.get("run_id") if isinstance(payload, dict) else None
-        if isinstance(domain_run_id, str) and isinstance(event_type, str):
-            if event_type.startswith("super."):
-                event_research_ids.append("super:" + domain_run_id)
-            elif event_type.startswith("optimization."):
-                event_research_ids.append("optimization:" + domain_run_id)
+        if isinstance(domain_run_id, str) and isinstance(event_type, str) and event_type.startswith("super."):
+            event_research_ids.append("super:" + domain_run_id)
+        elif (isinstance(domain_run_id, str) and isinstance(event_type, str)
+              and event_type.startswith("optimization.")):
+            event_research_ids.append("optimization:" + domain_run_id)
+        else:
+            event_research_ids.extend(
+                value for value in (top_level_id, payload_id)
+                if isinstance(value, str))
     research_ids = list(dict.fromkeys(
         [value for value in [research_id] if isinstance(value, str)]
         + event_research_ids))
@@ -391,7 +392,7 @@ def inspect_execution_trace(state_root, task_id):
         base = root / "state" / "research_v1_1" / "optimization"
         report_path = base / f"{run_id}_optimization_report.json"
         report = _read_object(report_path, root=root)
-        if not report:
+        if not report and current_id not in event_research_ids:
             continue
         branch_id = next((event.get("payload", {}).get("branch_id")
                           for event in events
