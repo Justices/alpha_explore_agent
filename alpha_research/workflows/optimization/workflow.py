@@ -214,6 +214,7 @@ def create_branch(state_root: Path, *, source_ref: str, objective: str,
         "changes": changes, "effective_settings": effective_settings,
         "prereg_ref": None, "simulation_intent_ref": None,
         "receipt_ref": None, "audit_ref": None,
+        "simulation_invoked": False, "alpha_submission_invoked": False,
         "status": "draft", "created_at": _now(), "updated_at": _now()}
     path = store.put("candidate_branch", branch)
     return {"branch_id": branch["branch_id"], "branch_ref": str(path),
@@ -482,7 +483,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
     _emit(execution_context, "optimization.simulation_posting",
           run_id=run_id, batch_id=batch_id,
           simulation_intent_ref=str(intent_path))
-    branch.update(status="simulation_posting")
+    branch.update(status="simulation_posting", simulation_invoked=True,
+                  alpha_submission_invoked=False)
     _put_advanced(store, branch)
     try:
         if family == "regular":
@@ -621,6 +623,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
             "report_ref": str(report_path), "source_unchanged_verified": True,
+            "simulation_invoked": True, "alpha_submission_invoked": False,
             "proposal_sha256": proposal_sha256,
             "candidate_definition_sha256": candidate_definition_sha256,
             "status": branch["status"]}
