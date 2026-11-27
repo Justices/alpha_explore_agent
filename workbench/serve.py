@@ -453,28 +453,44 @@ def write_launch_manifest(log_dir, launch_id, manifest):
     return payload
 
 
-def read_launch_history(log_dir, limit=50):
-    """Read recent launch manifests, skipping malformed or unsafe legacy files."""
+def read_launch_history(log_dir, limit=50, *, strict=False):
+    """Read recent launch manifests; strict mode fails closed on unsafe history."""
     directory = Path(log_dir)
-    if directory.is_symlink() or not directory.is_dir():
+    if directory.is_symlink():
+        if strict:
+            raise ValueError("工作台任务历史目录不能是符号链接")
+        return []
+    try:
+        directory.stat()
+    except FileNotFoundError:
+        return []
+    except OSError as exc:
+        if strict:
+            raise ValueError("无法读取工作台任务历史目录") from exc
+        return []
+    if not directory.is_dir():
+        if strict:
+            raise ValueError("工作台任务历史路径不是目录")
         return []
     records = []
     for path in directory.glob("*.launch.json"):
         try:
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
-                continue
+                raise ValueError("任务清单文件类型或大小无效")
             launch_id = path.name[:-len(".launch.json")]
             if re.fullmatch(r"[0-9a-f]{32}", launch_id) is None:
-                continue
+                raise ValueError("任务清单文件名包含无效启动 ID")
             value = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(value, dict):
-                continue
+                raise ValueError("任务清单必须是 JSON 对象")
             value.setdefault("launch_id", launch_id)
             if value["launch_id"] != launch_id:
-                continue
+                raise ValueError("任务清单 ID 与文件名不一致")
             value["_mtime_ns"] = path.stat().st_mtime_ns
             records.append(value)
-        except (OSError, UnicodeError, ValueError):
+        except (OSError, UnicodeError, ValueError) as exc:
+            if strict:
+                raise ValueError(f"工作台任务历史包含不可读取记录：{path.name}") from exc
             continue
     records.sort(key=lambda item: item["_mtime_ns"], reverse=True)
     return [{key: value for key, value in item.items() if key != "_mtime_ns"}
@@ -483,7 +499,17 @@ def read_launch_history(log_dir, limit=50):
 
 def restore_launch_state(log_dir):
     """Restore the latest launch; ambiguous in-flight work is blocked, never replayed."""
-    history = read_launch_history(log_dir, limit=1)
+    try:
+        history = read_launch_history(log_dir, limit=1, strict=True)
+    except ValueError as exc:
+        return {
+            "status": "execution_unknown", "execution_unknown": True,
+            "recovery_required": True, "manifest_history_unreadable": True,
+            "recovery_message": (
+                "工作台任务历史不可读取，无法证明旧 Simulation 是否结束。"
+                "新任务已阻断；请检查 state-root 的任务清单文件，修复后再启动。"
+            ),
+        }
     if not history:
         return {"status": "idle"}
     latest = history[0]
