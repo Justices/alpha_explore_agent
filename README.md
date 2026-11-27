@@ -332,8 +332,9 @@ backends and select their IDs through the `--lead` and `--executor` flags.
 The Workbench loads the same model registry as the CLI and provides Lead and
 Executor selection for all three live research workflows:
 
-- **Regular** launches multi-Dataset Campaigns, with optional Category,
-  Delay, Universe, batch budget, and PPA Profile constraints.
+- **Regular** launches multi-Dataset Campaigns. The current Regular
+  executor is restricted to Delay 1; Dataset, Category, Universe, batch
+  budget, and PPA Profile remain optional constraints.
 - **Super** launches the BRAIN-native Selection / Combo workflow with a
   bounded 1–20 iteration budget.
 - **Optimization** launches an independent candidate branch from a required
