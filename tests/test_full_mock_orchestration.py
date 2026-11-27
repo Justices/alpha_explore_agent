@@ -149,10 +149,9 @@ class FullMockWorkflowTests(unittest.TestCase):
         self.assertEqual(result["budget"]["used"], 1)
         self.assertEqual(result["result"]["qualification"]["candidate_status"],
                          "RA_UNAVAILABLE")
-        self.assertIn(
-            "ra_checks_unsettled_or_unavailable",
-            result["result"]["qualification"]["candidate_pending"])
-        self.assertEqual(len(ResearchRecordStore(self.root).list("candidate")), 1)
+        candidate_records = ResearchRecordStore(self.root).list("candidate")
+        self.assertEqual(len(candidate_records), 1)
+        self.assertIn("ra_checks_unsettled_or_unavailable", candidate_records[0]["pending"])
         self.assertEqual(len(ResearchRecordStore(self.root).list("preferred")), 1)
         self.assertEqual(result["result"]["pool"]["alpha_count"], 1)
         self.assertEqual(result["result"]["pool"]["candidate_count"], 0)
