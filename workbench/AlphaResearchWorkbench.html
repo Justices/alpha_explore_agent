@@ -349,12 +349,18 @@ function runtimeTasks(){
    const canRecover=!launchBlocked&&row.simulation_intent_ref&&recoverableStates.has(state);
    const sourceMetrics=row.source_metrics||{},candidateMetrics=row.candidate_metrics||{},delta=row.metric_deltas||{};
    const optimization=workflow==="optimization";
+   const scope=optimization
+     ?[row.source_settings?.region,row.source_settings?.delay==null?null:"D"+row.source_settings.delay,
+       row.source_settings?.universe].filter(value=>value!=null).join(" / ")+" → "+
+      [row.candidate_settings?.region,row.candidate_settings?.delay==null?null:"D"+row.candidate_settings.delay,
+       row.candidate_settings?.universe].filter(value=>value!=null).join(" / ")
+     :[row.region,row.requested_delay==null?"Delay 未限定":"D"+row.requested_delay].filter(Boolean).join(" / ");
    return [
      esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
      esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
      esc(row.candidate_alpha_id||"—"),
-     esc([row.region,row.requested_delay==null?"Delay 未限定":"D"+row.requested_delay].filter(Boolean).join(" / ")||"—"),
+     esc(scope||"—"),
      esc(row.eligible_alpha_count??"—"),esc(row.unresolved_count??"—"),
      esc(row.objective||"—"),esc((row.changes||[]).join("；")||"—"),
      optimization?num(sourceMetrics.sharpe)+" → "+num(candidateMetrics.sharpe)+" ("+num(delta.sharpe)+")":"—",
@@ -369,7 +375,9 @@ function runtimeTasks(){
  });
  const evidenceRows=domainRecords.map(({kind,row})=>({
    kind,id:row.id||"—",
-   refs:["path","record_ref","report_ref","simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
+   refs:["path","record_ref","report_ref","platform_record_ref","active_submitted_pool_ref",
+         "source_snapshot_ref","candidate_record_ref","preferred_record_ref",
+         "simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
      .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n"),
    details:{
      source_metrics:row.source_metrics,candidate_metrics:row.candidate_metrics,
