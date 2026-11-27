@@ -62,7 +62,15 @@ class WorkflowAdapterTests(unittest.TestCase):
                 with patch("alpha_research.orchestration.dispatch." + functions[workflow],
                            return_value=outputs[workflow]) as mocked:
                     result = adapter.run(workflow, "execute", request, {})
-                    self.assertEqual(result, outputs[workflow])
+                    if workflow == "regular":
+                        self.assertEqual(result, outputs[workflow])
+                    else:
+                        for key, value in outputs[workflow].items():
+                            self.assertEqual(result[key], value)
+                        self.assertEqual(result["iterations_completed"], 1)
+                        self.assertEqual(result["iteration_budget"]["limit"], 1)
+                        self.assertEqual(result["iteration_budget"]["used"], 1)
+                        self.assertEqual(result["iteration_results"], [outputs[workflow]])
                     mocked.assert_called_once()
                     if workflow == "regular":
                         self.assertEqual(mocked.call_args.kwargs["max_batches"], 1)
