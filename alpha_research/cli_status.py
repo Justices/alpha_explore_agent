@@ -135,9 +135,12 @@ def run_status_command(args, root, stop_flag):
         storage_kind = {"candidate_evaluations": "candidate",
                         "preferred_evaluations": "preferred",
                         "super_run": "super_runs"}.get(kind, kind)
-        folder = root / "state" / "research_v1_1" / storage_kind
+        state_dir = root / "state"
+        research_dir = state_dir / "research_v1_1"
+        folder = research_dir / storage_kind
         output = []
-        if folder.is_dir() and not folder.is_symlink():
+        if (not any(path.is_symlink() for path in (state_dir, research_dir, folder))
+                and folder.is_dir()):
             for record_path in sorted(folder.glob("*.json")):
                 try:
                     if (record_path.is_symlink() or not record_path.is_file()
