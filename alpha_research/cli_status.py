@@ -15,17 +15,25 @@ from alpha_research.workflows.regular.campaign import campaign_can_resume
 def run_status_command(args, root, stop_flag):
     config_path = args.config or root / "config" / "nastu_quant.json"
     config_status = "loaded"
+    # Gate and Preferred policies are application-owned. Scope-only config
+    # edits must not make existing assessments appear stale or redefine the
+    # thresholds displayed by the workbench.
+    current_policy = policy_hash(DEFAULT_CONFIG)
     try:
         pool_config = json.loads(config_path.read_text(encoding="utf-8"))
         if not isinstance(pool_config, dict):
             raise ValueError("configuration must be an object")
-        current_policy = policy_hash(pool_config)
     except FileNotFoundError:
         config_status = "missing"
-        current_policy = policy_hash(DEFAULT_CONFIG)
     except (OSError, ValueError, TypeError):
         config_status = "unreadable"
-        current_policy = None
+    qualification_policy = {
+        "status": "available",
+        "version": "preferred-v1",
+        "candidate": DEFAULT_CONFIG["gate"],
+        "preferred": DEFAULT_CONFIG["preferred"],
+        "policy_sha256": current_policy,
+    }
     runs = root / "runs"
     unfinished = []
     if runs.exists():
@@ -143,6 +151,7 @@ def run_status_command(args, root, stop_flag):
     except (OSError, ValueError, KeyError, TypeError) as exc:
         global_pool = {"status": "unavailable", "reason": type(exc).__name__}
     print(json.dumps({"global_alpha_pool": global_pool,
+                      "qualification_policy": qualification_policy,
                       "research_config": {"status": config_status, "path": str(config_path)},
                       "catalog_snapshot_root": str(CATALOG_SNAPSHOT_ROOT),
                       "stopped": stop_flag.exists(),
