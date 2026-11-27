@@ -362,11 +362,17 @@ function runtimeTasks(){
  const domainRows=domainRecords.map(({kind,workflow,row})=>{
    const state=String(row.status||"").toLowerCase();
    const canRecover=!launchBlocked&&row.simulation_intent_ref&&recoverableStates.has(state);
+   const sourceMetrics=row.source_metrics||{},candidateMetrics=row.candidate_metrics||{},delta=row.metric_deltas||{};
+   const optimization=workflow==="optimization";
    return [
      esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
      esc(row.policy_current===false?"策略版本已变化":row.policy_current===true?"策略版本一致":"—"),
      esc(row.candidate_alpha_id||"—"),
+     esc(row.objective||"—"),esc((row.changes||[]).join("；")||"—"),
+     optimization?num(sourceMetrics.sharpe)+" → "+num(candidateMetrics.sharpe)+" ("+num(delta.sharpe)+")":"—",
+     optimization?num(sourceMetrics.turnover)+" → "+num(candidateMetrics.turnover)+" ("+num(delta.turnover)+")":"—",
+     optimization?num(sourceMetrics.drawdown)+" → "+num(candidateMetrics.drawdown)+" ("+num(delta.drawdown)+")":"—",
      canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):"—"
    ];
  });
@@ -377,7 +383,7 @@ function runtimeTasks(){
  })).filter(item=>item.refs);
  const domainTable=domainRows.length
    ?'<h3 style="padding:12px 17px 0">Super / Optimization 执行证据</h3>'+
-     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","恢复核对"],domainRows)
+     table(["流程","运行 / 分支 ID","来源 Alpha","执行状态","Candidate","Preferred","策略","候选 Alpha","优化目标","改动摘要","Sharpe 来源→候选 (Δ)","Turnover 来源→候选 (Δ)","Drawdown 来源→候选 (Δ)","恢复核对"],domainRows)
    :"";
  const evidenceTable=evidenceRows.length
    ?'<h3 style="padding:12px 17px 0">执行证据引用（只读）</h3>'+
