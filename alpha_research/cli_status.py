@@ -106,10 +106,17 @@ def run_status_command(args, root, stop_flag):
             return {}
         try:
             snapshot_path = Path(snapshot_ref)
-            snapshot_root = (root / "state" / "research_v1_1" /
-                             "optimization" / "snapshots").resolve()
-            resolved = snapshot_path.resolve()
+            state_dir = root / "state"
+            research_dir = state_dir / "research_v1_1"
+            optimization_dir = research_dir / "optimization"
+            snapshot_dir = optimization_dir / "snapshots"
+            if any(path.is_symlink() for path in
+                   (state_dir, research_dir, optimization_dir, snapshot_dir)):
+                return {}
+            snapshot_root = snapshot_dir.resolve(strict=True)
+            resolved = snapshot_path.resolve(strict=True)
             if (snapshot_path.is_symlink() or not resolved.is_relative_to(snapshot_root)
+                    or not resolved.is_relative_to(root.resolve())
                     or not resolved.is_file() or resolved.stat().st_size > 5 * 1024 * 1024):
                 return {}
             value = json.loads(resolved.read_text(encoding="utf-8"))
@@ -159,14 +166,22 @@ def run_status_command(args, root, stop_flag):
                         run_snapshot = {}
                         run_id = item.get("run_id")
                         if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id):
-                            snapshot_path = (root / "state" / "research_v1_1" /
-                                             "super_runs" / f"{run_id}.json")
+                            state_dir = root / "state"
+                            research_dir = state_dir / "research_v1_1"
+                            super_dir = research_dir / "super_runs"
+                            snapshot_path = super_dir / f"{run_id}.json"
                             try:
-                                if (not snapshot_path.is_symlink() and snapshot_path.is_file()
-                                        and snapshot_path.stat().st_size <= 5 * 1024 * 1024):
-                                    loaded = json.loads(snapshot_path.read_text(encoding="utf-8"))
-                                    if isinstance(loaded, dict):
-                                        run_snapshot = loaded
+                                if not any(path.is_symlink() for path in
+                                           (state_dir, research_dir, super_dir)):
+                                    resolved = snapshot_path.resolve(strict=True)
+                                    if (not snapshot_path.is_symlink()
+                                            and resolved.is_relative_to(super_dir.resolve())
+                                            and resolved.is_relative_to(root.resolve())
+                                            and resolved.is_file()
+                                            and resolved.stat().st_size <= 5 * 1024 * 1024):
+                                        loaded = json.loads(resolved.read_text(encoding="utf-8"))
+                                        if isinstance(loaded, dict):
+                                            run_snapshot = loaded
                             except (OSError, ValueError, RuntimeError):
                                 run_snapshot = {}
                         eligible = run_snapshot.get("active_submitted_pool")
@@ -176,14 +191,19 @@ def run_status_command(args, root, stop_flag):
                         if (isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id)
                                 and isinstance(batch_id, str)
                                 and re.fullmatch(r"\d{8}_\d{6}_[0-9a-f]{8}", batch_id)):
-                            prereg_path = (root / "state" / "research_v1_1" / "super_runs" /
-                                           f"{run_id}_{batch_id}_prereg.json")
+                            prereg_path = super_dir / f"{run_id}_{batch_id}_prereg.json"
                             try:
-                                if (not prereg_path.is_symlink() and prereg_path.is_file()
-                                        and prereg_path.stat().st_size <= 5 * 1024 * 1024):
-                                    loaded = json.loads(prereg_path.read_text(encoding="utf-8"))
-                                    if isinstance(loaded, dict):
-                                        prereg = loaded
+                                if (not any(path.is_symlink() for path in
+                                            (state_dir, research_dir, super_dir))):
+                                    resolved = prereg_path.resolve(strict=True)
+                                    if (not prereg_path.is_symlink()
+                                            and resolved.is_relative_to(super_dir.resolve())
+                                            and resolved.is_relative_to(root.resolve())
+                                            and resolved.is_file()
+                                            and resolved.stat().st_size <= 5 * 1024 * 1024):
+                                        loaded = json.loads(resolved.read_text(encoding="utf-8"))
+                                        if isinstance(loaded, dict):
+                                            prereg = loaded
                             except (OSError, ValueError, RuntimeError):
                                 prereg = {}
                         proposal = prereg.get("proposal")
