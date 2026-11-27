@@ -109,9 +109,9 @@ def run_status_command(args, root, stop_flag):
             for record_path in sorted(folder.glob("*.json")):
                 try:
                     item = json.loads(record_path.read_text(encoding="utf-8"))
-                    if storage_kind == "candidate" and item.get("status") != "CANDIDATE":
+                    if kind != "candidate_evaluations" and storage_kind == "candidate" and item.get("status") != "CANDIDATE":
                         continue
-                    if storage_kind == "preferred" and item.get("status") != "PREFERRED":
+                    if kind != "preferred_evaluations" and storage_kind == "preferred" and item.get("status") != "PREFERRED":
                         continue
                     policy_current = (current_policy is not None and
                                       item.get("policy_sha256") == current_policy)
@@ -149,13 +149,31 @@ def run_status_command(args, root, stop_flag):
                         "eligible_alpha_count": item.get("eligible_alpha_count"),
                         "unresolved_count": item.get("unresolved_count"),
                         "unresolved": item.get("unresolved"),
+                        "ra_fail_count": (item.get("gate_evidence") or {}).get("ra_fail_count")
+                            if isinstance(item.get("gate_evidence"), dict)
+                            else item.get("ra_fail_count"),
+                        "failures": item.get("failures", []),
+                        "pending": item.get("pending", []),
+                        "metrics": item.get("metrics", {}),
+                        "correlations": item.get("correlations", {}),
+                        "gate_evidence": item.get("gate_evidence", {}),
+                        "thresholds": item.get("thresholds", {}),
+                        "qualified": item.get("qualified"),
+                        "evidence_refs": item.get("evidence_refs", {}),
+                        "evidence_sha256": item.get("evidence_sha256"),
+                        "policy_sha256": item.get("policy_sha256"),
+                        "source_ref": item.get("source_ref"),
+                        "candidate_ref": item.get("candidate_ref"),
+                        "created_at": item.get("created_at"),
+                        "updated_at": item.get("updated_at"),
                         "simulation_invoked": item.get("simulation_invoked"),
                         "alpha_submission_invoked": item.get("alpha_submission_invoked"),
                         "source_unchanged_verified": item.get("source_unchanged_verified"),
                         "path": str(record_path)})
                 except (OSError, ValueError):
                     output.append({"path": str(record_path), "status": "unreadable"})
-        return output
+        output.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+        return output[:200]
     try:
         if current_policy is None:
             raise ValueError("current admission policy is unavailable")
