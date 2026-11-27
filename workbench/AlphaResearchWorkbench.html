@@ -23,7 +23,8 @@ const DEFAULT_QUALIFICATION_POLICY = {
 function qualificationPolicy(){
  const current=agentStatus?.qualification_policy;
  return current?.status==="available"&&current.candidate&&current.preferred
-  ?current:DEFAULT_QUALIFICATION_POLICY;
+  ?{...current,available:true}
+  :{...DEFAULT_QUALIFICATION_POLICY,available:false};
 }
 const statuses = {draft:"研究草稿",pending:"证据待补",raFail:"RA 未通过",corrReady:"待相关性",corrFail:"相关性未通过",audit:"待完整审计",candidate:"Candidate",preferred:"优选",blocked:"审核阻塞"};
 const key = "alpha-research-desk-v1";
@@ -270,6 +271,8 @@ function raPassed(a){return a.raCount===0 && a.raFinal==="pass" && text(a.raRef)
 function review(a,c){
   const m=a.metrics??{}, pending=[];
   const policy=qualificationPolicy(), gate=policy.candidate, preferred=policy.preferred;
+  if(!policy.available)
+    return ["pending","Agent 当前审核策略不可读取；本地参考阈值不能用于 Candidate / Preferred 判定"];
   if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
   if(!raPassed(a)) return [a.receipt?"pending":"draft","待补终态 RA 证据与失败数"];
   if(!numeric(a.corrLimit)||a.corrLimit!==gate.self_corr_max||!text(a.policyRef)||a.policyRef!==policy.policy_sha256)
@@ -564,7 +567,7 @@ function compare(){
 }
 function audit(){
  const policy=qualificationPolicy(),gate=policy.candidate,preferred=policy.preferred;
- const policySummary='<div class="details"><div><h3>当前生效策略 · '+esc(policy.version||"preferred-v1")+'</h3><div class="detail">'+
+ const policySummary='<div class="details"><div><h3>'+esc(policy.available?"Agent 当前生效策略":"本地参考策略（不可用于资格判定）")+' · '+esc(policy.version||"preferred-v1")+'</h3><div class="detail">'+
   'PC &lt; '+esc(gate.prod_corr_max)+' · SC &lt; '+esc(gate.self_corr_max)+' · 组内相关性 &lt; '+esc(gate.pairwise_corr_max)+
   '\nPreferred Sharpe ≥ '+esc(preferred.sharpe_min)+' · Fitness ≥ '+esc(preferred.fitness_min)+
   ' · Turnover '+esc(preferred.turnover_min)+'–'+esc(preferred.turnover_max)+
