@@ -173,8 +173,14 @@ class WorkbenchRecordStoreTests(unittest.TestCase):
         with TemporaryDirectory() as root:
             payload = {
                 "version": 1,
-                "cases": [{"id": "case-1", "workflow": "regular"}],
-                "alphas": [{"id": "alpha-1", "caseId": "case-1"}],
+                "cases": [{
+                    "id": "case-1", "name": "USA Regular", "workflow": "regular",
+                    "region": "USA", "phase": "scope", "ppa": False,
+                }],
+                "alphas": [{
+                    "id": "alpha-1", "caseId": "case-1", "name": "Analyst Alpha",
+                    "metrics": {},
+                }],
             }
             result = serve.save_workbench_records(root, payload)
             self.assertEqual(result, {
@@ -183,14 +189,21 @@ class WorkbenchRecordStoreTests(unittest.TestCase):
             self.assertEqual(serve.load_workbench_records(root), payload)
 
     def test_project_records_reject_duplicate_ids_and_non_finite_values(self):
+        valid_case = {
+            "id": "same", "name": "USA Regular", "workflow": "regular",
+            "region": "USA", "phase": "scope", "ppa": False,
+        }
         duplicate = {
             "version": 1,
-            "cases": [{"id": "same"}, {"id": "same"}],
+            "cases": [valid_case, dict(valid_case)],
             "alphas": [],
         }
         non_finite = {
             "version": 1,
-            "cases": [{"id": "case-1", "metric": float("nan")}],
+            "cases": [{
+                "id": "case-1", "name": "USA Regular", "workflow": "regular",
+                "region": "USA", "phase": "scope", "metric": float("nan"),
+            }],
             "alphas": [],
         }
         with self.assertRaisesRegex(ValueError, "重复"):
