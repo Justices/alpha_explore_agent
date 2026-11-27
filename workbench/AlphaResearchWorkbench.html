@@ -356,7 +356,9 @@ function runtimeTasks(){
        [row.candidate_settings?.region,row.candidate_settings?.delay==null?null:"D"+row.candidate_settings.delay,
         row.candidate_settings?.universe].filter(value=>value!=null).join(" / ")
       ].filter(Boolean).join(" → ")
-     :[row.region,row.requested_delay==null?"Delay 未限定":"D"+row.requested_delay].filter(Boolean).join(" / ");
+     :[row.region,row.requested_delay!=null?"D"+row.requested_delay:
+       Array.isArray(row.allowed_delays)&&row.allowed_delays.length
+         ?"可选 D"+row.allowed_delays.join(","):"Delay 未限定"].filter(Boolean).join(" / ");
    return [
      esc(kind),esc(row.id||"—"),esc(row.source_alpha_id||"—"),
      esc(row.status||"—"),esc(row.candidate_status||"—"),esc(row.preferred_status||"—"),
