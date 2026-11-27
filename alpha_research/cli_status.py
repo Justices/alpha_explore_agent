@@ -170,6 +170,24 @@ def run_status_command(args, root, stop_flag):
                                 run_snapshot = {}
                         eligible = run_snapshot.get("active_submitted_pool")
                         unresolved = item.get("unresolved", run_snapshot.get("unresolved", []))
+                        prereg = {}
+                        batch_id = item.get("batch_id")
+                        if (isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id)
+                                and isinstance(batch_id, str)
+                                and re.fullmatch(r"\\d{8}_\\d{6}_[0-9a-f]{8}", batch_id)):
+                            prereg_path = (root / "state" / "research_v1_1" / "super_runs" /
+                                           f"{run_id}_{batch_id}_prereg.json")
+                            try:
+                                if (not prereg_path.is_symlink() and prereg_path.is_file()
+                                        and prereg_path.stat().st_size <= 5 * 1024 * 1024):
+                                    loaded = json.loads(prereg_path.read_text(encoding="utf-8"))
+                                    if isinstance(loaded, dict):
+                                        prereg = loaded
+                            except (OSError, ValueError, RuntimeError):
+                                prereg = {}
+                        proposal = prereg.get("proposal")
+                        if not isinstance(proposal, dict):
+                            proposal = {}
                         extra = {
                             "region": item.get("region") or run_snapshot.get("region"),
                             "objective": item.get("objective") or run_snapshot.get("objective"),
@@ -181,6 +199,15 @@ def run_status_command(args, root, stop_flag):
                             "platform_super_schema": run_snapshot.get("platform_super_schema", {}),
                             "platform_record_ref": item.get("platform_record_ref"),
                             "active_submitted_pool_ref": item.get("active_submitted_pool_ref"),
+                            "prereg_ref": item.get("prereg_ref"),
+                            "batch_id": batch_id,
+                            "selection": proposal.get("selection"),
+                            "combo": proposal.get("combo"),
+                            "hypothesis": proposal.get("hypothesis"),
+                            "rationale": proposal.get("rationale"),
+                            "failure_criterion": proposal.get("failure_criterion"),
+                            "settings": proposal.get("settings", {}),
+                            "validation": prereg.get("validation", {}),
                         }
                     elif storage_kind == "optimization_source":
                         source_details = _read_optimization_snapshot(item.get("snapshot_ref"))
@@ -255,6 +282,9 @@ def run_status_command(args, root, stop_flag):
                         "receipt_ref": item.get("receipt_ref") or item.get("readback_ref"),
                         "audit_ref": item.get("audit_ref"),
                         "report_ref": item.get("report_ref"),
+                        "prereg_ref": item.get("prereg_ref") or extra.get("prereg_ref"),
+                        "manifest_ref": item.get("manifest_ref"),
+                        "batch_id": item.get("batch_id") or extra.get("batch_id"),
                         "iteration_session_id": item.get("iteration_session_id"),
                         "iterations_completed": item.get("iterations_completed"),
                         "iteration_budget": item.get("iteration_budget"),
