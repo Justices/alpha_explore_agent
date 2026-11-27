@@ -184,7 +184,6 @@ function agentPanel(){
    ? '<p class="toolbar">Agent 候选池暂不可读，任务与评估记录仍可查看。</p>' : "";
  const evaluations=(agentStatus.v11_candidate_evaluations||[]).map(row=>{
    const metrics=row.metrics||{};
-   const gate=row.gate_evidence||{};
    return [
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),
      esc(row.ra_fail_count===0?"0":row.ra_fail_count??"未取得"),
