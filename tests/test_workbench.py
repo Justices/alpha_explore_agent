@@ -5,6 +5,9 @@ from io import StringIO
 from types import SimpleNamespace
 import json
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
@@ -327,6 +330,23 @@ class WorkbenchPlanEndpointTests(unittest.TestCase):
             self.assertNotIn("--executor", commands[0])
             self.assertNotIn("run-campaign", commands[0])
             self.assertEqual(launched["workflow"], "regular_plan")
+
+
+class WorkbenchFrontendSyntaxTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
+    def test_inline_workbench_javascript_parses(self):
+        html_path = Path(__file__).resolve().parent.parent / "workbench" / "AlphaResearchWorkbench.html"
+        html = html_path.read_text(encoding="utf-8")
+        scripts = re.findall(r"<script\\b[^>]*>(.*?)</script\\s*>", html, re.IGNORECASE | re.DOTALL)
+        self.assertTrue(scripts, "Workbench must contain an inline application script")
+        with TemporaryDirectory() as root:
+            for index, source in enumerate(scripts):
+                script_path = Path(root) / f"workbench-{index}.js"
+                script_path.write_text(source, encoding="utf-8")
+                result = subprocess.run(
+                    ["node", "--check", str(script_path)],
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class WorkbenchLaunchPersistenceTests(unittest.TestCase):
