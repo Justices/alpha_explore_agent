@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from alpha_research.cli import main
+from alpha_research.config import DEFAULT_CONFIG
 from alpha_research.cli_parser import build_parser
 from alpha_research.cli_orchestration import ORCHESTRATION_COMMANDS
 
@@ -66,6 +67,9 @@ class CliBoundaryTests(unittest.TestCase):
 
     def test_orchestration_requires_roles_not_live_transport(self):
         with tempfile.TemporaryDirectory() as location:
+            config_path = Path(location) / "config" / "nastu_quant.json"
+            config_path.parent.mkdir(parents=True)
+            config_path.write_text(json.dumps(DEFAULT_CONFIG), encoding="utf-8")
             output, error = io.StringIO(), io.StringIO()
             with (patch("alpha_research.cli.Gateway",
                         side_effect=AssertionError("BRAIN access denied")),
