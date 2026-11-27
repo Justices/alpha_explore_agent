@@ -411,9 +411,18 @@ function runtimeTasks(){
        (Object.values(item.details).some(value=>value!=null)?"\n\n结构化详情：\n"+esc(JSON.stringify(item.details,null,2)):"")+'</pre>'
      ]))
    :"";
+ const safetyFacts=[
+   launchState?.simulation_invoked===true?"Simulation 已调用":
+     launchState?.simulation_invoked===false?"Simulation 未调用":"",
+   launchState?.alpha_submission_invoked===true?"Alpha 提交已调用":
+     launchState?.alpha_submission_invoked===false?"Alpha 未提交":"",
+   launchState?.source_unchanged_verified===true?"来源 Alpha 完整性已核验":
+     launchState?.source_unchanged_verified===false?"来源 Alpha 完整性待核验":""
+ ].filter(Boolean).join(" · ");
  const latest=launchState&&launchState.status!=="idle"?
    '<p class="toolbar">最近一次网页启动 · '+esc($("#launch-status").textContent)+
    (launchState.launch_id?' · <code>'+esc(launchState.launch_id)+'</code>':"")+
+   (safetyFacts?" · "+esc(safetyFacts):"")+
    (running&&!launchState.stop_requested&&
       !String(launchState.workflow||"").endsWith("_recovery")&&
       !String(launchState.workflow||"").endsWith("_plan")
@@ -445,6 +454,9 @@ function runtimeTasks(){
      branch_id:item.branch_id,candidate_alpha_id:item.candidate_alpha_id,
      iterations_completed:item.iterations_completed,iteration_budget:item.iteration_budget,
      iteration_stop_reason:item.iteration_stop_reason,
+     simulation_invoked:item.simulation_invoked,
+     alpha_submission_invoked:item.alpha_submission_invoked,
+     source_unchanged_verified:item.source_unchanged_verified,
      simulation_intent_ref:item.simulation_intent_ref,receipt_ref:item.receipt_ref,
      readback_ref:item.readback_ref,audit_ref:item.audit_ref,report_ref:item.report_ref
    };
