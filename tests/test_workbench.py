@@ -190,6 +190,63 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             self.assertEqual(report["v11_candidates"], [])
             self.assertEqual(report["v11_preferred"], [])
 
+    def test_status_projects_optimization_source_and_candidate_metrics_side_by_side(self):
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            config = root_path / "config" / "nastu_quant.json"
+            config.parent.mkdir(parents=True)
+            config.write_text(json.dumps({"scope": {"region": "USA"}}), encoding="utf-8")
+            state = root_path / "state" / "research_v1_1"
+            snapshot_dir = state / "optimization" / "snapshots"
+            source_dir = state / "optimization_source"
+            branch_dir = state / "candidate_branch"
+            candidate_dir = state / "candidate"
+            for folder in (snapshot_dir, source_dir, branch_dir, candidate_dir):
+                folder.mkdir(parents=True)
+            snapshot = snapshot_dir / "source-1.json"
+            snapshot.write_text(json.dumps({
+                "id": "SOURCE", "type": "REGULAR",
+                "settings": {"region": "USA", "delay": 1, "universe": "TOP3000"},
+                "regular": "rank(signal_a)",
+                "is": {"sharpe": 1.0, "turnover": 0.2, "drawdown": 0.1},
+            }), encoding="utf-8")
+            (source_dir / "source-1.json").write_text(json.dumps({
+                "source_id": "source-1", "alpha_id": "SOURCE",
+                "snapshot_ref": str(snapshot), "status": "captured",
+                "workflow": "optimization",
+            }), encoding="utf-8")
+            (branch_dir / "branch-1.json").write_text(json.dumps({
+                "branch_id": "branch-1", "workflow": "optimization",
+                "source_alpha_id": "SOURCE", "source_snapshot_ref": str(snapshot),
+                "candidate_alpha_id": "CANDIDATE", "status": "completed",
+                "effective_settings": {"region": "USA", "delay": 1, "universe": "TOP3000"},
+                "objective": "improve risk adjusted return",
+                "changes": ["revise combo expression"],
+            }), encoding="utf-8")
+            (candidate_dir / "candidate-1.json").write_text(json.dumps({
+                "candidate_id": "candidate-1", "candidate_ref": "branch-1",
+                "alpha_id": "CANDIDATE", "workflow": "optimization",
+                "status": "RA_UNAVAILABLE", "metrics": {
+                    "sharpe": 1.4, "turnover": 0.25, "drawdown": 0.08,
+                }, "failures": [], "pending": ["ra_checks_unsettled_or_unavailable"],
+            }), encoding="utf-8")
+            output = StringIO()
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"status": "available", "entries": []}):
+                with redirect_stdout(output):
+                    self.assertEqual(run_status_command(
+                        SimpleNamespace(config=config), root_path,
+                        root_path / "state" / "stop.flag"), 0)
+            report = json.loads(output.getvalue())
+            branch = report["v11_candidate_branches"][0]
+            self.assertEqual(branch["source_metrics"]["sharpe"], 1.0)
+            self.assertEqual(branch["candidate_metrics"]["sharpe"], 1.4)
+            self.assertAlmostEqual(branch["metric_deltas"]["sharpe"], 0.4)
+            self.assertAlmostEqual(branch["metric_deltas"]["turnover"], 0.05)
+            self.assertAlmostEqual(branch["metric_deltas"]["drawdown"], -0.02)
+            self.assertEqual(branch["candidate_pending"], [
+                "ra_checks_unsettled_or_unavailable"])
+
     def test_status_exposes_canonical_application_owned_policy(self):
         with TemporaryDirectory() as root:
             config = Path(root) / "config" / "nastu_quant.json"
