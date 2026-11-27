@@ -588,7 +588,7 @@ def handler_for(agent_args, port):
                 diagnostic = safe_diagnostic(result.stderr)
                 if diagnostic:
                     write_progress(
-                        "研究子进程错误输出（已脱敏，末尾最多 20 行）：\\n" + diagnostic,
+                        "研究子进程错误输出（已脱敏，末尾最多 20 行）：\n" + diagnostic,
                         log_path)
             if result.returncode == 0:
                 report = json.loads(result.stdout)
