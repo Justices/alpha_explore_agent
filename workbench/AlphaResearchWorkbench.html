@@ -797,11 +797,21 @@ function invalidateAlphaEvidence(original,next,force=false){
   return next;
  }
  const definitionChanged=changedFields(original,next,[
-  "alphaId","expression","fields","operators","settings","receipt","dataset","category",
+  "expression","fields","operators","settings","dataset","category",
   "delay","universe","operatorCount","units"
  ]);
- if(definitionChanged||changedMetrics(original,next,performanceMetrics)){
+ const alphaIdChanged=changedFields(original,next,["alphaId"]);
+ const receiptChanged=changedFields(original,next,["receipt"]);
+ const performanceChanged=changedMetrics(original,next,performanceMetrics);
+ if(definitionChanged){
   clearAlphaEvidence(next,Object.keys(metrics),allEvidence);
+  if(!alphaIdChanged)next.alphaId=null;
+  if(!receiptChanged)next.receipt=null;
+  return next;
+ }
+ if(performanceChanged||receiptChanged||alphaIdChanged){
+  clearAlphaEvidence(next,correlationMetrics,allEvidence);
+  if((performanceChanged||alphaIdChanged)&&!receiptChanged)next.receipt=null;
   return next;
  }
  if(changedFields(original,next,["raCount","raFinal","raRef"])){
