@@ -554,17 +554,39 @@ function audit(){
      '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
    ];
  });
+ const preferredEvaluations=(agentStatus?.v11_preferred_evaluations||[]).map(row=>{
+   const metrics=row.metrics||{},thresholds=row.thresholds||{};
+   const evidence=Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string").join("\n");
+   return [
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.status||"—"),
+     esc(row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
+     esc(metrics.sharpe??"—")+" / "+esc(thresholds.sharpe_min??"—"),
+     esc(metrics.fitness??"—")+" / "+esc(thresholds.fitness_min??"—"),
+     esc(metrics.turnover??"—")+" / "+esc([thresholds.turnover_min,thresholds.turnover_max].filter(v=>v!=null).join("–")||"—"),
+     esc(metrics.weight??"—")+" / "+esc(thresholds.weight_max??"—"),
+     esc(row.policy_current===false?"策略已过期":row.policy_current===true?"策略一致":"—"),
+     esc((row.failures||[]).join(", ")||"—"),esc((row.pending||[]).join(", ")||"—"),
+     '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
+   ];
+ });
  const auditRefresh=localAgent?button("刷新 Agent 审核记录","agent-refresh"):"";
  const liveAudit=evaluations.length
-   ?panel("Agent 实际审核记录 · 只读",table(
+   ?panel("Agent 实际 Candidate 审核记录 · 只读",table(
       ["Alpha","流程","RA fail count","Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","失败项","待补证据","引用"],
       evaluations),auditRefresh)
-   :panel("Agent 实际审核记录 · 只读",blank(
+   :panel("Agent 实际 Candidate 审核记录 · 只读",blank(
       "当前没有 Agent Candidate 审核记录",
-      localAgent?"刷新 Agent 状态后，这里会显示实际 RA、相关性、Candidate 与 Preferred 证据。":"连接本地工作台服务后可读取 Agent 审核记录。"),auditRefresh);
+      localAgent?"刷新 Agent 状态后，这里会显示实际 RA、相关性及 Candidate 证据。":"连接本地工作台服务后可读取 Agent 审核记录。"),auditRefresh);
+ const livePreferred=preferredEvaluations.length
+   ?panel("Agent 实际 Preferred 复核记录 · 只读",table(
+      ["Alpha","流程","Preferred 状态","资格结论","Sharpe / 阈值","Fitness / 阈值","Turnover / 区间","Weight / 阈值","策略版本","失败项","待补证据","引用"],
+      preferredEvaluations),auditRefresh)
+   :panel("Agent 实际 Preferred 复核记录 · 只读",blank(
+      "当前没有 Preferred 复核记录",
+      "只有完成 Candidate 审核后才会出现 Preferred 复核记录；未通过和待补证据的记录同样保留。"),auditRefresh);
  return panel("共享审核队列",policySummary+steps+(rows.length
    ?table(["手工 Alpha","RA fail count","本地 SC","PC / SC","组内相关性","结论","下一步","操作"],rows)
-   :blank("等待手工 Alpha 审计记录","Agent 实际审核结果在下方只读展示；缺失或未终结的证据保持待补。")))+liveAudit;
+   :blank("等待手工 Alpha 审计记录","Agent 实际审核结果在下方只读展示；缺失或未终结的证据保持待补。")))+liveAudit+livePreferred;
 }
 function render(){
  const [crumb,title,desc]=pages[view];
