@@ -584,6 +584,12 @@ def handler_for(agent_args, port):
                 input=json.dumps(credentials, ensure_ascii=False),
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
             outcome["exit_code"] = result.returncode
+            if result.returncode != 0:
+                diagnostic = safe_diagnostic(result.stderr)
+                if diagnostic:
+                    write_progress(
+                        "研究子进程错误输出（已脱敏，末尾最多 20 行）：\\n" + diagnostic,
+                        log_path)
             if result.returncode == 0:
                 report = json.loads(result.stdout)
                 if isinstance(report, dict):
