@@ -114,7 +114,7 @@ def run_status_command(args, root, stop_flag):
                 return {}
             value = json.loads(resolved.read_text(encoding="utf-8"))
             return value if isinstance(value, dict) else {}
-        except (OSError, ValueError, TypeError):
+        except (OSError, ValueError, TypeError, RuntimeError):
             return {}
 
     def _metric_snapshot(details):
@@ -129,10 +129,15 @@ def run_status_command(args, root, stop_flag):
                         "preferred_evaluations": "preferred"}.get(kind, kind)
         folder = root / "state" / "research_v1_1" / storage_kind
         output = []
-        if folder.exists():
+        if folder.is_dir() and not folder.is_symlink():
             for record_path in sorted(folder.glob("*.json")):
                 try:
+                    if (record_path.is_symlink() or not record_path.is_file()
+                            or record_path.stat().st_size > 1024 * 1024):
+                        continue
                     item = json.loads(record_path.read_text(encoding="utf-8"))
+                    if not isinstance(item, dict):
+                        raise ValueError("research record must be a JSON object")
                     if kind != "candidate_evaluations" and storage_kind == "candidate" and item.get("status") != "CANDIDATE":
                         continue
                     if kind != "preferred_evaluations" and storage_kind == "preferred" and item.get("status") != "PREFERRED":
@@ -149,7 +154,35 @@ def run_status_command(args, root, stop_flag):
                     if storage_kind == "preferred" and item.get("status") == "PREFERRED" and not policy_current:
                         preferred_status = "NOT_CANDIDATE"
                     extra = {}
-                    if storage_kind == "optimization_source":
+                    if storage_kind == "super_run":
+                        run_snapshot = {}
+                        run_id = item.get("run_id")
+                        if isinstance(run_id, str) and re.fullmatch(r"[0-9a-f]{32}", run_id):
+                            snapshot_path = (root / "state" / "research_v1_1" /
+                                             "super_runs" / f"{run_id}.json")
+                            try:
+                                if (not snapshot_path.is_symlink() and snapshot_path.is_file()
+                                        and snapshot_path.stat().st_size <= 5 * 1024 * 1024):
+                                    loaded = json.loads(snapshot_path.read_text(encoding="utf-8"))
+                                    if isinstance(loaded, dict):
+                                        run_snapshot = loaded
+                            except (OSError, ValueError, RuntimeError):
+                                run_snapshot = {}
+                        eligible = run_snapshot.get("active_submitted_pool")
+                        unresolved = item.get("unresolved", run_snapshot.get("unresolved", []))
+                        extra = {
+                            "region": item.get("region") or run_snapshot.get("region"),
+                            "objective": item.get("objective") or run_snapshot.get("objective"),
+                            "requested_delay": run_snapshot.get("requested_delay"),
+                            "allowed_delays": run_snapshot.get("allowed_delays", []),
+                            "eligible_alpha_count": len(eligible) if isinstance(eligible, list) else None,
+                            "unresolved_count": len(unresolved) if isinstance(unresolved, list) else None,
+                            "unresolved": unresolved if isinstance(unresolved, list) else [],
+                            "platform_super_schema": run_snapshot.get("platform_super_schema", {}),
+                            "platform_record_ref": item.get("platform_record_ref"),
+                            "active_submitted_pool_ref": item.get("active_submitted_pool_ref"),
+                        }
+                    elif storage_kind == "optimization_source":
                         source_details = _read_optimization_snapshot(item.get("snapshot_ref"))
                         extra = {
                             "source_metrics": _metric_snapshot(source_details),
@@ -207,6 +240,10 @@ def run_status_command(args, root, stop_flag):
                               item.get("source_id"),
                         "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                         "workflow": item.get("workflow"),
+                        "region": item.get("region"),
+                        "objective": item.get("objective"),
+                        "requested_delay": item.get("requested_delay"),
+                        "allowed_delays": item.get("allowed_delays", []),
                         **extra,
                         "candidate_status": candidate_status,
                         "preferred_status": preferred_status,
@@ -249,9 +286,9 @@ def run_status_command(args, root, stop_flag):
                         "alpha_submission_invoked": item.get("alpha_submission_invoked"),
                         "source_unchanged_verified": item.get("source_unchanged_verified"),
                         "path": str(record_path)})
-                except (OSError, ValueError):
+                except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
                     output.append({"path": str(record_path), "status": "unreadable"})
-        output.sort(key=lambda item: item.get("updated_at") or "", reverse=True)
+        output.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
         return output[:200]
     try:
         if current_policy is None:
