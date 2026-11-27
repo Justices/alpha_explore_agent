@@ -473,7 +473,13 @@ def read_launch_history(log_dir, limit=50, *, strict=False):
             raise ValueError("工作台任务历史路径不是目录")
         return []
     records = []
-    for path in directory.glob("*.launch.json"):
+    try:
+        paths = list(directory.glob("*.launch.json"))
+    except OSError as exc:
+        if strict:
+            raise ValueError("无法枚举工作台任务历史") from exc
+        return []
+    for path in paths:
         try:
             if path.is_symlink() or not path.is_file() or path.stat().st_size > 1024 * 1024:
                 raise ValueError("任务清单文件类型或大小无效")
