@@ -587,6 +587,8 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                            "readback": str(readback_path), "audit": str(audit_path),
                            "optimization_report": str(report_path)},
             fallback_details=rows[0].get("details"))
+    candidate_record = store.get("candidate", qualification["candidate_id"])
+    policy_sha256 = candidate_record.get("policy_sha256")
     report["candidate_id"] = qualification["candidate_id"]
     report["candidate_status"] = qualification["candidate_status"]
     report["preferred_status"] = qualification["preferred"]["status"]
@@ -608,6 +610,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
                   candidate_id=qualification["candidate_id"],
                   candidate_status=qualification["candidate_status"],
                   preferred_status=qualification["preferred"]["status"],
+                  policy_sha256=policy_sha256,
                   candidate_record_ref=qualification["candidate_ref"],
                   preferred_record_ref=qualification["preferred_ref"],
                   budget={"limits": {"experiments": 1},
@@ -620,6 +623,7 @@ def run_optimization(gateway, model, config: dict, state_root: Path, *,
             "candidate_id": qualification["candidate_id"],
             "candidate_status": qualification["candidate_status"],
             "preferred_status": qualification["preferred"]["status"],
+            "policy_sha256": policy_sha256,
             "candidate_ref": qualification["candidate_ref"],
             "preferred_ref": qualification["preferred_ref"],
             "report_ref": str(report_path), "source_unchanged_verified": True,
