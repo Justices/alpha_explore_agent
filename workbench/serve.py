@@ -582,7 +582,8 @@ def handler_for(agent_args, port):
                 cwd=PROJECT, env={**agent_env(), PROGRESS_ENV: str(log_path),
                                   "ALPHA_RESEARCH_LAUNCH_STOP": str(stop_flag)},
                 input=json.dumps(credentials, ensure_ascii=False),
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE, encoding="utf-8")
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                encoding="utf-8", errors="replace")
             outcome["exit_code"] = result.returncode
             if result.returncode != 0:
                 diagnostic = safe_diagnostic(result.stderr)
