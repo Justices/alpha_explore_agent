@@ -251,6 +251,10 @@ def _validate_workbench_records(payload):
             if value is not None and (not isinstance(value, str) or "\\x00" in value):
                 raise ValueError(f"工作台记录 {key} 必须是文本")
 
+    def nonnegative_integer(value):
+        return (not isinstance(value, bool) and isinstance(value, (int, float))
+                and math.isfinite(value) and value >= 0 and int(value) == value)
+
     case_ids = set()
     for item in payload["cases"]:
         if not isinstance(item, dict):
@@ -276,8 +280,7 @@ def _validate_workbench_records(payload):
             raise ValueError("Alpha 来源类型无效")
         if "ppa" in item and type(item["ppa"]) is not bool:
             raise ValueError("PPA Profile 必须是布尔值")
-        if item.get("delay") is not None and (
-                type(item["delay"]) is not int or item["delay"] < 0):
+        if item.get("delay") is not None and not nonnegative_integer(item["delay"]):
             raise ValueError("研究任务 Delay 必须是非负整数")
         history = item.get("history")
         if history is not None:
@@ -290,6 +293,10 @@ def _validate_workbench_records(payload):
                         or not isinstance(entry.get("at"), str)
                         or not entry["at"].strip()):
                     raise ValueError("研究阶段历史记录无效")
+                try:
+                    datetime.fromisoformat(entry["at"].replace("Z", "+00:00"))
+                except ValueError as exc:
+                    raise ValueError("研究阶段历史时间无效") from exc
 
     alpha_ids = set()
     metric_names = {
@@ -341,13 +348,13 @@ def _validate_workbench_records(payload):
                 raise ValueError("Alpha 相关性阈值必须在 0 到 1 之间")
         for key in ("delay", "raCount", "operatorCount"):
             value = item.get(key)
-            if value is not None and (type(value) is not int or value < 0):
+            if value is not None and not nonnegative_integer(value):
                 raise ValueError(f"Alpha {key} 必须是非负整数")
         case = next(row for row in payload["cases"] if row["id"] == item["caseId"])
         if case["workflow"] == "regular":
             if case.get("dataset") and item.get("dataset"):
-                allowed = [part.strip() for part in case["dataset"].replace("，", ",").split(",")
-                           if part.strip()]
+                allowed = [part.strip() for part in case["dataset"].replace("，", ",")
+                           .replace("\\n", ",").split(",") if part.strip()]
                 if item["dataset"] not in allowed:
                     raise ValueError("Alpha Dataset 超出研究任务硬约束")
             for key in ("category", "delay", "universe"):
