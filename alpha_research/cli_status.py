@@ -266,6 +266,7 @@ def run_status_command(args, root, stop_flag):
                     output.append({
                         "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                               item.get("source_id"),
+                        "run_id": item.get("run_id"),
                         "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                         "workflow": item.get("workflow"),
                         "region": item.get("region"),
