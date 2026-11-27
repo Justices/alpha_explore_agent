@@ -348,7 +348,7 @@ function runtimeTasks(){
    ...(agentStatus?.v11_candidate_branches||[]).map(row=>({kind:"优化候选分支",workflow:"optimization",row}))
  ];
  const recoverableStates=new Set([
-   "simulation_posting","outcome_unknown","response_received","read_back",
+   "simulation_prepared","simulation_posting","outcome_unknown","response_received","read_back",
    "simulated_pending_audit","source_integrity_unresolved"
  ]);
  const domainRows=domainRecords.map(({kind,workflow,row})=>{
