@@ -600,7 +600,7 @@ def recovery_intent_path(root, target):
     return resolved
 
 
-def handler_for(agent_args, port):
+def handler_for(agent_args, port, *, credentials_from_config=False):
     origin = f"http://127.0.0.1:{port}"
     launch_lock = Lock()
     session_lock = Lock()
@@ -609,6 +609,18 @@ def handler_for(agent_args, port):
             if "--state-root" in agent_args else default_state_root())
     log_dir = root / "state" / "logs" / "workbench"
     launch = restore_launch_state(log_dir)
+
+    def configured_credentials_available():
+        source = os.environ.get("BRAIN_CREDENTIALS_FILE")
+        if not source:
+            return False
+        try:
+            path = expand_path(source)
+            if not path.is_absolute():
+                path = PROJECT / path
+            return path.is_file()
+        except (OSError, ValueError):
+            return False
 
     def launch_stop_flag(launch_id):
         return root / "state" / f"workbench-{launch_id}.stop"
@@ -619,6 +631,10 @@ def handler_for(agent_args, port):
         result = None
 
         def safe_diagnostic(value):
+            # File-mode secrets are never loaded into the workbench process;
+            # raw stderr cannot be safely redacted here.
+            if credentials is None:
+                return ""
             text = str(value or "")
             secrets = [
                 value for key, value in os.environ.items()
@@ -639,12 +655,17 @@ def handler_for(agent_args, port):
                 command.extend([
                     "--lead", selection["lead"], "--executor", selection["executor"],
                 ])
-            command.extend([*args, "--brain-credentials-stdin"])
+            command.extend(args)
+            if credentials is None:
+                input_options = {"stdin": subprocess.DEVNULL}
+            else:
+                command.append("--brain-credentials-stdin")
+                input_options = {"input": json.dumps(credentials, ensure_ascii=False)}
             result = subprocess.run(
                 agent_command(agent_args, command),
                 cwd=PROJECT, env={**agent_env(), PROGRESS_ENV: str(log_path),
                                   "ALPHA_RESEARCH_LAUNCH_STOP": str(stop_flag)},
-                input=json.dumps(credentials, ensure_ascii=False),
+                **input_options,
                 stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 encoding="utf-8", errors="replace")
             outcome["exit_code"] = result.returncode
@@ -701,7 +722,7 @@ def handler_for(agent_args, port):
                                     / f"{report['plan_id']}.json")
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             diagnostic = safe_diagnostic(getattr(result, "stderr", ""))
-            summary = f"研究进程异常：{type(exc).__name__}: {exc}"
+            summary = f"研究进程异常：{type(exc).__name__}"
             if diagnostic:
                 summary += "\n诊断输出（已脱敏，末尾最多 20 行）：\n" + diagnostic
             write_progress(summary[:6000], log_path)
@@ -845,6 +866,9 @@ def handler_for(agent_args, port):
                 self.connection.settimeout(5)
                 request = json.loads(self.rfile.read(length))
                 if self.path == "/api/credentials":
+                    if credentials_from_config:
+                        self.respond_json(409, {"error": "当前使用配置文件凭证，禁止网页覆盖"})
+                        return
                     self.browser_credentials()  # Remove expired entries before storing credentials.
                     self.save_credentials(request)
                     return
@@ -862,8 +886,11 @@ def handler_for(agent_args, port):
                     else:
                         self.respond_json(200, saved, etag=workbench_revision(request))
                     return
-                credentials = self.browser_credentials()
-                if credentials is None:
+                credentials = None if credentials_from_config else self.browser_credentials()
+                if credentials_from_config and not configured_credentials_available():
+                    self.respond_json(401, {"error": "请在启动环境配置 BRAIN_CREDENTIALS_FILE"})
+                    return
+                if not credentials_from_config and credentials is None:
                     self.respond_json(401, {"error": "请先设置 BRAIN 凭证，凭证有效期为 24 小时"})
                     return
                 if self.path == "/api/research":
@@ -1051,7 +1078,11 @@ def handler_for(agent_args, port):
                 self.respond_json(200, {"items": read_launch_history(log_dir, limit=50)})
                 return
             if self.path == "/api/credentials":
-                self.respond_json(200, {"configured": self.browser_credentials() is not None})
+                self.respond_json(200, {
+                    "configured": (configured_credentials_available() if credentials_from_config
+                                   else self.browser_credentials() is not None),
+                    "source": "config_file" if credentials_from_config else "browser_session",
+                    "authentication_verified": False})
                 return
             if self.path == "/api/models":
                 try:
@@ -1098,6 +1129,8 @@ if __name__ == "__main__":
     parser.add_argument("--state-root")
     parser.add_argument("--config")
     parser.add_argument("--registry")
+    parser.add_argument("--credentials-from-config", action="store_true",
+                        help="Use BRAIN_CREDENTIALS_FILE instead of browser credentials")
     args = parser.parse_args()
     agent_args = []
     for name in ("state_root", "config", "registry"):
@@ -1113,7 +1146,8 @@ if __name__ == "__main__":
             raise ValueError("工作台服务锁路径不能是符号链接")
         with SingleWriterLock(service_lock):
             with ThreadingHTTPServer(("127.0.0.1", args.port),
-                                     handler_for(agent_args, args.port)) as server:
+                                     handler_for(agent_args, args.port,
+                                         credentials_from_config=args.credentials_from_config)) as server:
                 print(f"Open http://127.0.0.1:{args.port}/", flush=True)
                 try:
                     server.serve_forever()
