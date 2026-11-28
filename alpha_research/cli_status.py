@@ -305,6 +305,8 @@ def run_status_command(args, root, stop_flag):
                         "run_id": item.get("run_id"),
                         "branch_id": item.get("branch_id"),
                         "candidate_id": item.get("candidate_id"),
+                        "alpha_id": item.get("alpha_id"),
+                        "evidence_origin": item.get("evidence_origin"),
                         "source_alpha_id": item.get("source_alpha_id") or item.get("alpha_id"),
                         "workflow": item.get("workflow"),
                         "region": item.get("region"),
@@ -357,6 +359,7 @@ def run_status_command(args, root, stop_flag):
                         "policy_sha256": item.get("policy_sha256"),
                         "source_ref": item.get("source_ref"),
                         "candidate_ref": item.get("candidate_ref"),
+                        "preferred_ref": item.get("preferred_ref"),
                         "created_at": item.get("created_at"),
                         "updated_at": item.get("updated_at"),
                         "simulation_invoked": item.get("simulation_invoked"),
@@ -372,6 +375,7 @@ def run_status_command(args, root, stop_flag):
             raise ValueError("current admission policy is unavailable")
         global_pool = CandidatePool(ResearchRecordStore(root)).build_index(
             current_policy_sha256=current_policy)
+        global_pool = {**global_pool, "status": "available"}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         global_pool = {"status": "unavailable", "reason": type(exc).__name__}
     print(json.dumps({"global_alpha_pool": global_pool,
