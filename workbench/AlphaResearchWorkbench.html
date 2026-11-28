@@ -329,17 +329,72 @@ function rows(){
  return data.alphas.filter(a=>{const c=findCase(a.caseId), m=a.metrics?.[filters.metric];
  return (!filters.region||c.region===filters.region)&&(!filters.workflow||(filters.workflow==="ppa"?c.ppa:c.workflow===filters.workflow))&&(!filters.status||review(a,c)[0]===filters.status)&&(!filters.metric||numeric(m)&&(!filters.min||m>=Number(filters.min))&&(!filters.max||m<=Number(filters.max)));});
 }
+
+function agentAlphaRows(){
+ const pool=agentStatus?.global_alpha_pool;
+ if(!localAgent||pool?.status!=="available"||!Array.isArray(pool.entries))return [];
+ const evaluations=Array.isArray(agentStatus.v11_candidate_evaluations)?agentStatus.v11_candidate_evaluations:[];
+ return pool.entries.filter(row=>typeof row.alpha_id==="string"&&row.alpha_id&&typeof row.candidate_id==="string").map(row=>{
+   const matches=evaluations.filter(e=>e.candidate_id===row.candidate_id&&e.alpha_id===row.alpha_id
+     &&e.evidence_origin!=="OFFLINE_DOMAIN_MOCK"
+     &&e.evidence_sha256===row.latest_evidence_sha256&&e.policy_sha256===row.latest_policy_sha256
+     &&typeof e.evidence_sha256==="string"&&e.evidence_sha256.length===64
+     &&typeof e.policy_sha256==="string"&&e.policy_sha256.length===64);
+   const e=matches.length===1?matches[0]:null;
+   const m=e?.metrics||{}, corr=e?.correlations||{};
+   const source=(row.sources||[]).find(v=>v.candidate_id===row.candidate_id);
+   const pairwise=corr.pairwise&&typeof corr.pairwise==="object"
+     ?Object.values(corr.pairwise).filter(numeric):[];
+   return {id:row.alpha_id,name:row.alpha_id,source:"Agent",workflow:e?.workflow||source?.workflow,
+     region:e?.region,alphaId:row.alpha_id,candidateId:row.candidate_id,
+     status:row.candidate_status,preferred:row.preferred_status,
+     evidenceAvailable:!!e,policy:row.latest_policy_sha256,evidence:row.latest_evidence_sha256,
+     reference:e?.candidate_ref||source?.candidate_ref,sourceRef:e?.source_ref||source?.source_ref,
+     receipt:e?.receipt_ref,ra:e?.ra_fail_count,failures:e?.failures,pending:e?.pending,
+     metrics:{...m,prod:corr.prod,self:corr.self,pairwise:pairwise.length?Math.max(...pairwise.map(Math.abs)):undefined}};
+ });
+}
+let agentSelected=new Set(),agentFilters={workflow:"",status:"",query:""};
+function agentSelectionControl(a){
+ return '<input type="checkbox" data-agent-compare="'+esc(a.id)+'" '+(agentSelected.has(a.id)?"checked":"")+' aria-label="对比 Agent Alpha '+esc(a.id)+'">';
+}
+function agentBoard(){
+ const pool=agentStatus?.global_alpha_pool;
+ if(!localAgent)return "";
+ if(pool?.status!=="available")return panel("Agent Alpha 看板 · 只读",blank("Agent 候选索引暂不可读","不使用手工记录替代真实候选池。"),button("刷新","agent-refresh"));
+ const all=agentAlphaRows();
+ const states=Object.fromEntries([...new Set(all.map(a=>a.status).filter(Boolean))].sort().map(x=>[x,x]));
+ const toolbar='<div class="toolbar"><select data-agent-filter="workflow" aria-label="Agent 工作流">'+opts(labels,agentFilters.workflow,"全部工作流")+'</select><select data-agent-filter="status" aria-label="Agent 状态">'+opts(states,agentFilters.status,"全部状态")+'</select><input data-agent-filter="query" aria-label="Alpha ID" placeholder="Alpha ID" value="'+esc(agentFilters.query)+'"></div>';
+ const rows=all.filter(a=>(!agentFilters.workflow||a.workflow===agentFilters.workflow)
+   &&(!agentFilters.status||a.status===agentFilters.status)&&(!agentFilters.query||a.id.toLowerCase().includes(agentFilters.query.toLowerCase())));
+ const body=rows.length?table(["Alpha ID","流程 / 区域","Candidate","Preferred","RA fail count","Sharpe","Fitness","Turnover","PC / SC","证据","对比"],rows.map(a=>[
+   button(a.id,"agent-alpha",a.id,"quiet"),esc([a.workflow,a.region].filter(Boolean).join(" / ")||"—"),
+   esc(a.status||"—"),esc(a.preferred||"—"),num(a.ra),num(a.metrics.sharpe),num(a.metrics.fitness),
+   num(a.metrics.turnover),num(a.metrics.prod)+" / "+num(a.metrics.self),
+   esc(a.evidenceAvailable?"已关联评估记录":"评估明细待补"),agentSelectionControl(a)
+ ])):blank("暂无匹配 Agent Alpha","仅展示 Agent 权威索引中的记录；未关联的评估明细不补造。");
+ return panel("Agent Alpha 看板 · 只读",toolbar+body,button("对比所选","compare"));
+}
+function inspectAgentAlpha(id){
+ const a=agentAlphaRows().find(row=>row.id===id);
+ if(!a){notify("Agent Alpha 当前不可读取");return;}
+ show("Agent Alpha · "+a.id,grid(line("Candidate",a.status),line("Preferred",a.preferred),
+   line("评估 ID",a.candidateId),line("RA fail count",a.ra),line("策略 SHA-256",a.policy),
+   line("证据 SHA-256",a.evidence),line("候选引用",a.reference),line("来源引用",a.sourceRef),
+   line("回执引用",a.receipt),line("失败项",(a.failures||[]).join("、")),line("待补证据",(a.pending||[]).join("、")),
+   line("评估明细",a.evidenceAvailable?"已关联":"不可读取 / 未匹配")),null);
+}
 function board(){
  const livePool=localAgent&&agentStatus?.global_alpha_pool?.status==="available";
  const manualCandidateCount=data.alphas.filter(a=>["candidate","preferred"].includes(review(a,findCase(a.caseId))[0])).length;
  const manualPreferredCount=data.alphas.filter(a=>review(a,findCase(a.caseId))[0]==="preferred").length;
  const counts=[data.cases.length,data.alphas.length,
-   livePool?agentStatus.global_alpha_pool.candidate_count:manualCandidateCount,
-   livePool?agentStatus.global_alpha_pool.preferred_count:manualPreferredCount];
- const labels=["研究任务","Alpha 记录",livePool?"Agent Candidate":"手工 Candidate",
-   livePool?"Agent Preferred":"手工 Preferred"];
+   localAgent?(livePool?agentStatus.global_alpha_pool.candidate_count:"—"):manualCandidateCount,
+   localAgent?(livePool?agentStatus.global_alpha_pool.preferred_count:"—"):manualPreferredCount];
+ const labels=["研究任务","Alpha 记录",localAgent?"Agent Candidate":"手工 Candidate",
+   localAgent?"Agent Preferred":"手工 Preferred"];
  const stat='<div class="stats">'+labels.map((s,i)=>'<div class="stat"><span>'+s+'</span><strong>'+counts[i]+'</strong></div>').join("")+'</div>';
- return stat+panel("手工 Alpha 记录看板",toolbar()+(rows().length?table(["Alpha","区域 / 流程","状态","Sharpe","Turnover","PC / SC","对比"],rows().map(a=>{
+ return stat+agentBoard()+panel("手工 Alpha 记录看板",toolbar()+(rows().length?table(["Alpha","区域 / 流程","状态","Sharpe","Turnover","PC / SC","对比"],rows().map(a=>{
  const c=findCase(a.caseId),m=a.metrics;
  return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的手工 Alpha 记录":"等待手工 Alpha 记录","此处筛选和对比手工录入记录；Agent 实际 Candidate / Preferred 池及审核证据见下方项目状态与审核视图。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
 }
@@ -564,16 +619,32 @@ function cases(){
  return '<article class="card"><h3>'+esc(c.name)+'</h3>'+tag(workflow(c))+tag(c.region||"区域待解析")+tag(phases[c.phase],"good")+'<p>'+esc(scope)+'</p><p>'+esc(c.objective||"研究目标待补")+'</p><p>'+alphas.length+' 条 Alpha 记录</p><div class="actions">'+button("任务详情","case",c.id)+button("新增 Alpha","new-alpha",c.id,"primary")+'</div></article>';}).join("")+'</div>';
 }
 function compare(){
- const items=data.alphas.filter(a=>selected.has(a.id));
- const chooser='<div class="toolbar"><select aria-label="选择 Alpha" id="comparison-options">'+opts(Object.fromEntries(data.alphas.filter(a=>!selected.has(a.id)).map(a=>[a.id,a.name])),"","选择 Alpha")+'</select>'+button("加入对比","add-comparison")+'</div>';
- return panel("并排对比",chooser+(items.length?table(["指标",...items.map(a=>esc(a.name)+" "+button("移除","remove-comparison",a.id,"quiet"))],[
-   ["审核状态",...items.map(badge)],
-   ["工作流 / 区域",...items.map(a=>{const c=findCase(a.caseId);return esc(workflow(c)+" / "+(c.region||"—"));})],
-   ["Dataset / Category / Delay / Universe",...items.map(a=>{const c=findCase(a.caseId);return esc([a.dataset||c.dataset,a.category||c.category,a.delay??c.delay,a.universe||c.universe].map(v=>v??"—").join(" / "));})],
-   ["来源 Alpha / 候选 Alpha",...items.map(a=>esc([findCase(a.caseId).sourceId||"—",a.alphaId||"—"].join(" / ")))],
-   ["回测设置 / 回执",...items.map(a=>esc([a.settings||"设置待补",a.receipt||"回执待补"].join(" / ")))],
-   ...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics[k]))])
- ]):blank("选择要对比的 Alpha","保留原始指标数值，并同时核对工作流、有效设置、来源 Alpha 与回测证据。")));
+ const manual=data.alphas.filter(a=>selected.has(a.id)).map(a=>{
+   const c=findCase(a.caseId);
+   return {id:a.id,name:a.name,source:"手工",workflow:workflow(c),region:c.region,alphaId:a.alphaId,
+     sourceRef:c.sourceId,reference:a.settings,receipt:a.receipt,status:review(a,c)[0],
+     preferred:a.preferredStatus,policy:a.policyRef,ra:a.raCount,metrics:a.metrics,
+     scope:[a.dataset||c.dataset,a.category||c.category,a.delay??c.delay,a.universe||c.universe].map(v=>v??"—").join(" / ")};
+ });
+ const live=agentAlphaRows(), agents=live.filter(a=>agentSelected.has(a.id));
+ const items=[...agents,...manual];
+ const chooser='<div class="toolbar"><select aria-label="选择手工 Alpha" id="comparison-options">'+opts(Object.fromEntries(data.alphas.filter(a=>!selected.has(a.id)).map(a=>[a.id,a.name])),"","选择手工 Alpha")+'</select>'+button("加入对比","add-comparison")+
+ (localAgent?'<select aria-label="选择 Agent Alpha" id="agent-comparison-options">'+opts(Object.fromEntries(live.filter(a=>!agentSelected.has(a.id)).map(a=>[a.id,a.id])),"","选择 Agent Alpha")+'</select>'+button("加入对比","add-agent-comparison"):"")+'</div>';
+ const unavailable=[...agentSelected].filter(id=>!live.some(a=>a.id===id));
+ const notice=unavailable.length?'<div class="toolbar">部分已选 Agent 记录暂不可读：'+unavailable.map(id=>esc(id)+" "+button("移除","remove-agent-comparison",id,"quiet")).join(" ")+'</div>':"";
+ return panel("并排对比 · 最多四条",chooser+notice+(items.length?table(["指标",...items.map(a=>esc(a.name)+" "+button("移除",a.source==="Agent"?"remove-agent-comparison":"remove-comparison",a.id,"quiet"))],[
+   ["证据来源",...items.map(a=>esc(a.source==="Agent"?"Agent · 只读":"手工 · 非权威"))],
+   ["Candidate / Preferred",...items.map(a=>esc([a.status,a.preferred].filter(Boolean).join(" / ")||"—"))],
+   ["工作流 / 区域",...items.map(a=>esc([a.workflow,a.region].filter(Boolean).join(" / ")||"—"))],
+   ["Dataset / Category / Delay / Universe",...items.map(a=>esc(a.scope||"—"))],
+   ["Alpha ID",...items.map(a=>esc(a.alphaId||"—"))],
+   ["来源引用",...items.map(a=>esc(a.sourceRef||"—"))],
+   ["候选引用 / 设置",...items.map(a=>esc(a.reference||"—"))],
+   ["回执",...items.map(a=>esc(a.receipt||"—"))],
+   ["策略 SHA-256",...items.map(a=>esc(a.policy||"—"))],
+   ["RA fail count",...items.map(a=>num(a.ra))],
+   ...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics?.[k]))])
+ ]):blank("选择要对比的 Alpha","保留指标原始数值；Agent 和手工证据来源明确区分，缺失值不填充。")));
 }
 function audit(){
  const policy=qualificationPolicy(),gate=policy.candidate,preferred=policy.preferred;
@@ -1142,7 +1213,8 @@ function inspectAlpha(a){
  const c=findCase(a.caseId);
  show(a.name,'<p>'+esc(workflow(c))+' · '+esc(c.region||"待解析")+' · '+badge(a)+'</p>'+grid(line("当前审核",review(a,c)[1]),line("Alpha ID",a.alphaId),line("表达式 / Selection / Combo",a.expression),line("数据字段",a.fields),line("操作符",a.operators),line("Idea",a.idea),line("Rationale for data used",a.dataReason),line("Rationale for operators used",a.operatorReason),line("经济含义",a.economics),line("有效设置",a.settings),line("回测回执",a.receipt),line("RA 证据",[a.raCount,a.raRef].filter(v=>v!=null).join(" / ")),line("策略版本",a.policyRef),line("相关性证据",[a.localRef,a.corrRef,a.pairRef].filter(Boolean).join(" / ")),line("审计与优选证据",[a.auditRef,a.preferredRef].filter(Boolean).join(" / ")),line("人工复核决定",a.submissionNote))+'<div class="actions">'+button("编辑记录与审核","edit-alpha",a.id,"primary")+'</div>',null);
 }
-function addComparison(id){if(!id)return;if(selected.size>=4&&!selected.has(id)){notify("最多对比四条 Alpha");return;}selected.add(id);}
+function addComparison(id){if(!id||!data.alphas.some(a=>a.id===id))return;if(selected.size+agentSelected.size>=4&&!selected.has(id)){notify("最多对比四条 Alpha");return;}selected.add(id);}
+function addAgentComparison(id){if(!id||!agentAlphaRows().some(a=>a.id===id))return;if(selected.size+agentSelected.size>=4&&!agentSelected.has(id)){notify("最多对比四条 Alpha");return;}agentSelected.add(id);}
 document.addEventListener("click",e=>{
  const b=e.target.closest("button");if(!b)return;
  if(b.dataset.view){view=b.dataset.view;render();return;}
@@ -1151,6 +1223,9 @@ document.addEventListener("click",e=>{
  const a=data.alphas.find(x=>x.id===id),c=findCase(id);
  switch(act){
  case "agent-refresh":refreshAgent();return;
+ case "agent-alpha":inspectAgentAlpha(id);return;
+ case "add-agent-comparison":addAgentComparison($("#agent-comparison-options").value);break;
+ case "remove-agent-comparison":agentSelected.delete(id);break;
  case "resume-research":resumeForm(id);return;
  case "stop-research":researchAction("stop",id);return;
  case "acknowledge-interrupted":researchAction("acknowledge-interrupted",id);return;
@@ -1173,6 +1248,8 @@ document.addEventListener("click",e=>{
 document.addEventListener("change",e=>{
  const t=e.target;
  if(t.dataset.filter){filters[t.dataset.filter]=t.value;render();}
+ if(t.dataset.agentFilter){agentFilters[t.dataset.agentFilter]=t.value;render();}
+ if(t.dataset.agentCompare){if(t.checked)addAgentComparison(t.dataset.agentCompare);else agentSelected.delete(t.dataset.agentCompare);t.checked=agentSelected.has(t.dataset.agentCompare);}
  if(t.dataset.compare){if(t.checked)addComparison(t.dataset.compare);else selected.delete(t.dataset.compare);t.checked=selected.has(t.dataset.compare);}
  if(t.name==="workflow"&&editing?.kind==="case"){
    const draft={...editing.record,...Object.fromEntries(new FormData($("#form")))};
