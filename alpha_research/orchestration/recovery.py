@@ -126,6 +126,35 @@ class RecoveryCoordinator:
         })
         return self.journal_root / f"{identity}.json"
 
+    def inspect_target(self, target, *, expected_workflow=None):
+        """Inspect existing recovery evidence without dispatching or writing."""
+        path = self._resolve_target(target)
+        workflow, resolved, intent, fingerprint = self._inspect(path)
+        if expected_workflow is not None and expected_workflow != workflow:
+            raise RecoveryError(
+                f"recovery target is {workflow}, not requested {expected_workflow}"
+            )
+        journal_path = self._journal_path(workflow, resolved)
+        status = "RECOVERABLE"
+        if journal_path.exists():
+            journal = self._read_json(journal_path, "recovery journal")
+            if (journal.get("target_fingerprint") != fingerprint
+                    or journal.get("task_id") is not None
+                    or journal.get("step") is not None):
+                raise RecoveryError("recovery evidence or task binding changed")
+            if journal.get("status") == "COMPLETED":
+                result = journal.get("result")
+                if (not isinstance(result, dict)
+                        or journal.get("result_sha256") != _canonical_sha256(result)):
+                    raise RecoveryError("completed recovery journal result is corrupt")
+                status = "COMPLETED"
+            else:
+                status = "BLOCKED"
+        return {"status": status, "workflow": workflow,
+                "target_ref": str(resolved), "intent_status": intent["status"],
+                "journal_ref": str(journal_path) if journal_path.exists() else None,
+                "simulation_invoked": False}
+
     def journal_for(self, target):
         """Return the durable journal for a target, if one has been created."""
         path = self._resolve_target(target)
