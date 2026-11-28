@@ -148,6 +148,44 @@ class WorkbenchRecoveryPathTests(unittest.TestCase):
                 serve.recovery_intent_path(root, str(intent.parent / ".." / intent.name))
 
 
+    def test_recovery_inspection_is_read_only_and_rejects_wrong_workflow(self):
+        with TemporaryDirectory() as root:
+            path = Path(root) / "run_simulation_intent.json"
+            record = {"workflow": "super", "status": "POSTING",
+                      "request": {}, "settings": {}, "run_id": "run-1"}
+            path.write_text(json.dumps(record), encoding="utf-8")
+            coordinator = serve.RecoveryCoordinator(root)
+            self.assertEqual(coordinator.inspect_target(path,
+                expected_workflow="super")["status"], "RECOVERABLE")
+            self.assertFalse(coordinator.journal_root.exists())
+            with self.assertRaises(serve.RecoveryError):
+                coordinator.inspect_target(path, expected_workflow="optimization")
+            record["status"] = "PREPARED"
+            path.write_text(json.dumps(record), encoding="utf-8")
+            with self.assertRaises(serve.RecoveryError):
+                coordinator.inspect_target(path, expected_workflow="super")
+            self.assertFalse(coordinator.journal_root.exists())
+
+    def test_recovery_inspection_rejects_unsettled_or_changed_journal(self):
+        with TemporaryDirectory() as root:
+            path = Path(root) / "run_simulation_intent.json"
+            path.write_text(json.dumps({"workflow": "optimization", "status": "POSTING",
+                "request": {}, "settings": {}, "run_id": "run-1"}), encoding="utf-8")
+            coordinator = serve.RecoveryCoordinator(root)
+            workflow, resolved, _, fingerprint = coordinator._inspect(path.resolve())
+            journal = coordinator._journal_path(workflow, resolved)
+            journal.parent.mkdir(parents=True)
+            value = {"target_fingerprint": fingerprint, "status": "RUNNING",
+                     "task_id": None, "step": None}
+            journal.write_text(json.dumps(value), encoding="utf-8")
+            self.assertEqual(coordinator.inspect_target(path,
+                expected_workflow="optimization")["status"], "BLOCKED")
+            value["target_fingerprint"] = "other"
+            journal.write_text(json.dumps(value), encoding="utf-8")
+            with self.assertRaises(serve.RecoveryError):
+                coordinator.inspect_target(path, expected_workflow="optimization")
+
+
 class WorkbenchStatusPolicyTests(unittest.TestCase):
     def test_status_keeps_unqualified_candidate_and_preferred_evaluations_visible(self):
         with TemporaryDirectory() as root:
@@ -577,6 +615,71 @@ class WorkbenchPlanEndpointTests(unittest.TestCase):
             self.assertNotIn("--executor", commands[0])
             self.assertNotIn("run-campaign", commands[0])
             self.assertEqual(launched["workflow"], "regular_plan")
+
+
+class WorkbenchConfiguredCredentialsTests(unittest.TestCase):
+    def test_file_mode_delegates_credentials_to_cli_without_browser_password(self):
+        with TemporaryDirectory() as root:
+            credential_path = Path(root) / "credentials.json"
+            credential_path.write_text(json.dumps({"email": "fixture@example.invalid",
+                "password": "fixture-secret"}), encoding="utf-8")
+            calls = []
+
+            def run(command, **kwargs):
+                calls.append((command, kwargs))
+                return CompletedProcess(command, 0, json.dumps({
+                    "status": "planned", "plan_id": "fixture-plan"}))
+
+            with patch.dict(os.environ, {"BRAIN_CREDENTIALS_FILE": str(credential_path)}), \
+                    patch.object(serve.subprocess, "run", side_effect=run):
+                server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
+                port = server.server_address[1]
+                server.RequestHandlerClass = serve.handler_for(
+                    ["--state-root", root], port, credentials_from_config=True)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    def call(method, path, payload=None):
+                        with closing(http.client.HTTPConnection(
+                                "127.0.0.1", port, timeout=5)) as conn:
+                            conn.request(method, path,
+                                json.dumps(payload) if payload is not None else None,
+                                {"Origin": f"http://127.0.0.1:{port}",
+                                 "Content-Type": "application/json"})
+                            response = conn.getresponse()
+                            return response.status, json.loads(response.read())
+
+                    status, credentials = call("GET", "/api/credentials")
+                    self.assertEqual(status, 200)
+                    self.assertEqual(credentials, {"configured": True,
+                        "source": "config_file", "authentication_verified": False})
+                    self.assertEqual(call("POST", "/api/credentials",
+                        {"username": "other", "password": "other"})[0], 409)
+                    status, launch = call("POST", "/api/plan",
+                        {"workflow": "regular", "region": "USA", "delay": 1})
+                    self.assertEqual(status, 202)
+                    deadline = time.monotonic() + 3
+                    while time.monotonic() < deadline:
+                        _, report = call("GET", "/api/launch")
+                        if report["status"] != "running":
+                            break
+                        time.sleep(0.01)
+                    self.assertEqual(report["status"], "exited")
+                    self.assertEqual(len(calls), 1)
+                    command, kwargs = calls[0]
+                    self.assertNotIn("--brain-credentials-stdin", command)
+                    self.assertNotIn("input", kwargs)
+                    self.assertEqual(kwargs["stdin"], subprocess.DEVNULL)
+                    self.assertNotIn("fixture-secret", json.dumps(report))
+                    credential_path.unlink()
+                    self.assertFalse(call("GET", "/api/credentials")[1]["configured"])
+                    self.assertEqual(call("POST", "/api/plan",
+                        {"workflow": "regular", "region": "USA", "delay": 1})[0], 401)
+                    self.assertEqual(len(calls), 1)
+                finally:
+                    server.shutdown()
+                    server.server_close()
+                    thread.join(timeout=3)
 
 
 class WorkbenchFrontendSyntaxTests(unittest.TestCase):
