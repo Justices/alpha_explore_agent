@@ -121,4 +121,20 @@ python workbench/serve.py --port 8765
 
 Regular Campaign 展示已保存的研究请求、Dataset 子任务、组合状态、预算及未解决范围。已有批次记录不意味着组合所有研究目标均已达成。启动、停止、恢复和删除仍由服务端状态与现有 Agent 契约控制，工作台不自行执行 BRAIN 回测或提交。
 
+### 工作台凭证、并发和恢复边界
+
+如已在本地配置 `BRAIN_CREDENTIALS_FILE`，无需在浏览器重复输入账户密码：
+
+```bash
+python workbench/serve.py --port 8765 --credentials-from-config
+```
+
+文件模式不读取凭证内容、不通过浏览器保存密码；由 CLI 和现有 BRAIN Client 负责读取与认证。工作台只检查配置文件是否存在，不能据此证明平台登录成功。未指定该参数时保留浏览器临时会话模式。文件模式禁止网页覆盖凭证。
+
+同一 state-root 只允许一个工作台服务进程（`state/workbench-service.lock`），与 CLI 的 `agent.lock` 独立。终态清单必须原子保存后才释放任务入口；重启检查所有启动清单，任何未核实进程均阻止新研究。非零退出码和终止标记不能替代真实停止结果。服务重启后，应先确认旧进程已退出，再通过界面确认，禁止直接删除清单或重发 Simulation。
+
+手工研究记录使用 `GET /api/workbench-records` 返回的 ETag，并通过 `If-Match` 条件写入。HTTP 412 表示记录已变化，428 表示缺失有效版本；不得直接重试覆盖，请重新读取记录并合并变更。
+
+Super / Optimization 的回执核对资格由 `RecoveryCoordinator.inspect_target` 提供：仅允许已有提交开始证据的 Intent；PREPARED、证据不匹配以及 RUNNING/BLOCKED 恢复日志均不得自动重放。已完成的恢复日志只读展示，不重新请求平台。启动时重复校验，真实恢复仍使用原有 CLI 与执行锁。
+
 页面验证不能代替真实环境验收；未获得真实执行授权前，仅使用隔离状态目录和离线数据检查工作台接口。
