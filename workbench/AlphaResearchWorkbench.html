@@ -30,7 +30,7 @@ const statuses = {draft:"研究草稿",pending:"证据待补",raFail:"RA 未通�
 const key = "alpha-research-desk-v1";
 const localAgent = location.protocol === "http:" && location.hostname === "127.0.0.1";
 let agentStatus, agentError, agentLoading = false, agentRefreshAt = 0;
-let launchState, launchTimer, launchSubmitting = false, launchHistory = [];
+let launchState, launchTimer, launchSubmitting = false, launchHistory = [], launchRefreshing = false, launchReadFailed = true;
 let credentialsSubmitting = false;
 let modelOptions = null;
 const credentialEndpointUnavailable = "当前端口的工作台服务不支持凭证接口。请打开新版服务启动时显示的地址。";
@@ -145,11 +145,16 @@ function launchEvents(){
 }
 
 async function refreshLaunch(){
+ if(launchRefreshing)return;
+ launchRefreshing=true;
  clearTimeout(launchTimer);
  try{
    const response=await fetch("/api/launch",{cache:"no-store"});
    if(!response.ok)throw Error();
-   showLaunchState(await response.json());
+   const nextState=await readWorkbenchJson(response);
+   if(!nextState||typeof nextState.status!=="string")throw Error("Invalid launch status");
+   launchReadFailed=false;
+   showLaunchState(nextState);
    const historyResponse=await fetch("/api/launches",{cache:"no-store"});
    if(historyResponse.ok){
      const history=await historyResponse.json();
@@ -160,11 +165,14 @@ async function refreshLaunch(){
      }
    }
  }catch{
-   $("#launch-status").textContent="启动状态暂不可读";
- }
- if(launchState?.status==="running"){
-   if(view==="cases"&&Date.now()-agentRefreshAt>=10000)refreshAgent();
-   launchTimer=setTimeout(refreshLaunch,2500);
+   launchReadFailed=true;
+   $("#launch-status").textContent="启动状态暂不可读，暂停研究操作，正在重试";
+   ["#launch-campaign","#launch-super","#launch-optimization"].forEach(selector=>$(selector).disabled=true);
+   if(view==="cases")render();
+ }finally{
+   launchRefreshing=false;
+   if(launchState?.status==="running"&&Date.now()-agentRefreshAt>=10000)refreshAgent();
+   launchTimer=setTimeout(refreshLaunch,launchReadFailed||launchState?.status==="running"?2500:10000);
  }
 }
 function agentPanel(){
@@ -213,6 +221,7 @@ async function refreshAgent(){
    agentStatus=await result.json();
    agentError=null;
  }catch{
+   agentStatus=null;
    agentError="请检查启动终端、Python 依赖及状态目录，然后重试。";
  }finally{
    agentLoading=false;
@@ -271,9 +280,9 @@ function raPassed(a){return a.raCount===0 && a.raFinal==="pass" && text(a.raRef)
 function review(a,c){
   const m=a.metrics??{}, pending=[];
   const policy=qualificationPolicy(), gate=policy.candidate, preferred=policy.preferred;
+  if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
   if(!policy.available)
     return ["pending","Agent 当前审核策略不可读取；本地参考阈值不能用于 Candidate / Preferred 判定"];
-  if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
   if(!raPassed(a)) return [a.receipt?"pending":"draft","待补终态 RA 证据与失败数"];
   if(!numeric(a.corrLimit)||a.corrLimit!==gate.self_corr_max||!text(a.policyRef)||a.policyRef!==policy.policy_sha256)
     return ["pending","策略版本已变化或未绑定当前审核策略"];
@@ -337,7 +346,7 @@ function board(){
 function runtimeTasks(){
  if(!localAgent)return "";
  const running=launchState?.status==="running";
- const launchBlocked=["running","execution_unknown"].includes(launchState?.status);
+ const launchBlocked=launchReadFailed||["running","execution_unknown"].includes(launchState?.status);
  const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
    esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—"),
    esc(row.batches_attempted??"—"),
@@ -495,6 +504,7 @@ function runtimeTasks(){
 }
 
 async function researchAction(action,id,selection={}){
+ if(launchReadFailed){notify("启动状态暂不可读，请等待状态刷新");return;}
  if(action==="delete"&&!window.confirm("删除这项研究及其本地文件？此操作无法撤销。"))return;
  if(action==="recover"&&!window.confirm("将核对该 Simulation Intent 的平台回执。不会自动重发 Simulation。是否继续？"))return;
  if(action==="acknowledge-interrupted"&&!window.confirm("请先在任务管理器/进程列表确认旧 alpha_research 子进程已经完全退出。确认后工作台才允许启动新任务。是否已确认？"))return;
@@ -594,8 +604,8 @@ function audit(){
      esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.candidate_status||row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
      esc(corr.prod??"—")+" / "+esc(corr.self??"—"),
-     esc(row.policy_sha256?row.policy_sha256.slice(0,12):"未绑定"),
-     esc(maxPairwise??"—"),esc((row.failures||[]).join(", ")||"—"),
+     esc(maxPairwise??"—"),
+     esc(row.policy_sha256?row.policy_sha256.slice(0,12):"未绑定"),esc((row.failures||[]).join(", ")||"—"),
      esc((row.pending||[]).join(", ")||"—"),
      '<details><summary>证据引用</summary><pre class="detail" style="white-space:pre-wrap">'+esc(evidence||"无引用")+'</pre></details>'
    ];
@@ -770,7 +780,7 @@ async function saveCredentials(form){
 }
 
 async function planResearch(form,button){
- if(launchSubmitting)return;
+ if(launchSubmitting||launchReadFailed)return;
  const workflow=editing.workflow||"regular";
  if(workflow==="regular"&&!window.confirm("Regular 范围预检会调用 BRAIN set_case 建立 Case 上下文，但不会发起 Simulation 或提交 Alpha。确认继续？"))return;
  const fields=Object.fromEntries(new FormData(form));
@@ -815,7 +825,7 @@ async function planResearch(form,button){
 }
 
 async function launchCampaign(form){
- if(launchSubmitting)return;
+ if(launchSubmitting||launchReadFailed)return;
  if(!window.confirm("即将启动真实 BRAIN 研究，可能发起 Simulation；系统不会自动提交 Alpha。确认已核对研究范围和预算并继续？"))return;
  const mode=editing, workflow=mode.workflow||"regular";
  const fields=Object.fromEntries(new FormData(form));
@@ -859,7 +869,7 @@ async function launchCampaign(form){
  }
 }
 async function resumeCampaign(form){
- if(launchSubmitting)return;
+ if(launchSubmitting||launchReadFailed)return;
  const mode=editing;
  const fields=Object.fromEntries(new FormData(form));
  launchSubmitting=true;
