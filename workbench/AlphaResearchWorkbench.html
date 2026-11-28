@@ -153,8 +153,10 @@ async function refreshLaunch(){
    if(!response.ok)throw Error();
    const nextState=await readWorkbenchJson(response);
    if(!nextState||typeof nextState.status!=="string")throw Error("Invalid launch status");
+   const recovered=launchReadFailed;
    launchReadFailed=false;
    showLaunchState(nextState);
+   if(recovered&&view==="cases")render();
    const historyResponse=await fetch("/api/launches",{cache:"no-store"});
    if(historyResponse.ok){
      const history=await historyResponse.json();
@@ -171,7 +173,8 @@ async function refreshLaunch(){
    if(view==="cases")render();
  }finally{
    launchRefreshing=false;
-   if(launchState?.status==="running"&&Date.now()-agentRefreshAt>=10000)refreshAgent();
+   const statusInterval=launchState?.status==="running"?10000:30000;
+   if(Date.now()-agentRefreshAt>=statusInterval)refreshAgent();
    launchTimer=setTimeout(refreshLaunch,launchReadFailed||launchState?.status==="running"?2500:10000);
  }
 }
@@ -218,7 +221,9 @@ async function refreshAgent(){
  try{
    const result=await fetch("/api/status",{cache:"no-store"});
    if(!result.ok)throw Error("本地 Agent 状态不可读");
-   agentStatus=await result.json();
+   const status=await readWorkbenchJson(result);
+   if(!status||typeof status!=="object"||Array.isArray(status))throw Error("Invalid agent status");
+   agentStatus=status;
    agentError=null;
  }catch{
    agentStatus=null;
@@ -281,7 +286,7 @@ function review(a,c){
   const m=a.metrics??{}, pending=[];
   const policy=qualificationPolicy(), gate=policy.candidate, preferred=policy.preferred;
   if(a.raFinal==="fail" || a.raCount>0) return ["raFail","RA 存在失败项"];
-  if(!policy.available)
+  if(!policy.available||agentError)
     return ["pending","Agent 当前审核策略不可读取；本地参考阈值不能用于 Candidate / Preferred 判定"];
   if(!raPassed(a)) return [a.receipt?"pending":"draft","待补终态 RA 证据与失败数"];
   if(!numeric(a.corrLimit)||a.corrLimit!==gate.self_corr_max||!text(a.policyRef)||a.policyRef!==policy.policy_sha256)
@@ -333,16 +338,23 @@ function rows(){
 function agentAlphaRows(){
  const pool=agentStatus?.global_alpha_pool;
  if(!localAgent||pool?.status!=="available"||!Array.isArray(pool.entries))return [];
- const evaluations=Array.isArray(agentStatus.v11_candidate_evaluations)?agentStatus.v11_candidate_evaluations:[];
+ const current=agentStatus.v11_current_candidate_evaluations;
+ const evaluations=Array.isArray(current)?current:Array.isArray(agentStatus.v11_candidate_evaluations)?agentStatus.v11_candidate_evaluations:[];
+ const byId=new Map();
+ for(const evaluation of evaluations){
+   if(!evaluation||typeof evaluation.candidate_id!=="string")continue;
+   const list=byId.get(evaluation.candidate_id)||[];
+   list.push(evaluation);byId.set(evaluation.candidate_id,list);
+ }
  return pool.entries.filter(row=>typeof row.alpha_id==="string"&&row.alpha_id&&typeof row.candidate_id==="string").map(row=>{
-   const matches=evaluations.filter(e=>e.candidate_id===row.candidate_id&&e.alpha_id===row.alpha_id
+   const matches=(byId.get(row.candidate_id)||[]).filter(e=>e.alpha_id===row.alpha_id
      &&e.evidence_origin!=="OFFLINE_DOMAIN_MOCK"
      &&e.evidence_sha256===row.latest_evidence_sha256&&e.policy_sha256===row.latest_policy_sha256
      &&typeof e.evidence_sha256==="string"&&e.evidence_sha256.length===64
      &&typeof e.policy_sha256==="string"&&e.policy_sha256.length===64);
    const e=matches.length===1?matches[0]:null;
    const m=e?.metrics||{}, corr=e?.correlations||{};
-   const source=(row.sources||[]).find(v=>v.candidate_id===row.candidate_id);
+   const source=(Array.isArray(row.sources)?row.sources:[]).find(v=>v.candidate_id===row.candidate_id);
    const pairwise=corr.pairwise&&typeof corr.pairwise==="object"
      ?Object.values(corr.pairwise).filter(numeric):[];
    return {id:row.alpha_id,name:row.alpha_id,source:"Agent",workflow:e?.workflow||source?.workflow,
