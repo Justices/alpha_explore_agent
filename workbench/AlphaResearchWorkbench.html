@@ -64,10 +64,11 @@ async function refreshCredentials(){
    const response=await fetch("/api/credentials",{cache:"no-store"});
    const data=await readWorkbenchJson(response);
    if(!response.ok||typeof data?.configured!=="boolean")throw Error(credentialEndpointUnavailable);
+   const fileMode=data.source==="config_file";
    credentials.textContent=data.configured?"BRAIN 凭证已设置":"BRAIN 凭证";
-   credentials.hidden=false;
-   launchButtons.forEach(button=>button.hidden=false);
-   status.textContent="";
+   credentials.hidden=fileMode;
+   launchButtons.forEach(button=>button.hidden=fileMode&&!data.configured);
+   status.textContent=fileMode?(data.configured?"配置文件凭证可用 · 登录待验证":"未配置 BRAIN_CREDENTIALS_FILE"):"";
  }catch(error){
    credentials.hidden=true;
    launchButtons.forEach(button=>button.hidden=true);
@@ -468,13 +469,8 @@ function runtimeTasks(){
    ...(agentStatus?.v11_optimization_sources||[]).map(row=>({kind:"优化来源快照",workflow:"optimization",row})),
    ...(agentStatus?.v11_candidate_branches||[]).map(row=>({kind:"优化候选分支",workflow:"optimization",row}))
  ];
- const recoverableStates=new Set([
-   "simulation_prepared","simulation_posting","outcome_unknown","response_received","read_back",
-   "simulated_pending_audit","source_integrity_unresolved"
- ]);
  const domainRows=domainRecords.map(({kind,workflow,row})=>{
-   const state=String(row.status||"").toLowerCase();
-   const canRecover=!launchBlocked&&row.simulation_intent_ref&&recoverableStates.has(state);
+   const canRecover=!launchBlocked&&row.simulation_intent_ref&&row.recovery_status==="RECOVERABLE";
    const sourceMetrics=row.source_metrics||{},candidateMetrics=row.candidate_metrics||{},delta=row.metric_deltas||{};
    const optimization=workflow==="optimization";
    const scope=optimization
@@ -505,7 +501,7 @@ function runtimeTasks(){
      optimization?num(sourceMetrics.drawdown)+" → "+num(candidateMetrics.drawdown)+" ("+num(delta.drawdown)+")":"—",
      optimization?num(sourceMetrics.margin)+" → "+num(candidateMetrics.margin)+" ("+num(delta.margin)+")":"—",
      optimization?num(sourceMetrics.weight)+" → "+num(candidateMetrics.weight)+" ("+num(delta.weight)+")":"—",
-     canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):"—"
+     canRecover?button("核对回测回执","recover-workflow",row.simulation_intent_ref,"quiet",workflow):esc(row.recovery_status||"—")
    ];
  });
  const evidenceRows=domainRecords.map(({kind,row})=>({
@@ -515,6 +511,7 @@ function runtimeTasks(){
          "simulation_intent_ref","response_ref","receipt_ref","audit_ref"]
      .filter(key=>row[key]).map(key=>key+"："+row[key]).join("\n\n"),
    details:{
+     recovery_status:row.recovery_status,recovery_journal_ref:row.recovery_journal_ref,
      selection:row.selection,combo:row.combo,hypothesis:row.hypothesis,
      rationale:row.rationale,failure_criterion:row.failure_criterion,
      settings:row.settings,validation:row.validation,platform_super_schema:row.platform_super_schema,
