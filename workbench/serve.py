@@ -955,6 +955,9 @@ def handler_for(agent_args, port):
                                 write_progress("终止标记已写入，但任务清单同步失败",
                                                log_dir / f"{target}.jsonl")
                             code, payload = 202, dict(launch)
+                elif launch.get("status") == "execution_unknown":
+                    code, payload = 409, {"error": launch.get("recovery_message",
+                        "旧任务执行状态未知；请先确认旧 Agent 子进程已退出。")}
                 elif running:
                     code, payload = 409, {"error": "请等待当前任务结束"}
                 elif action == "resume":
