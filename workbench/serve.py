@@ -24,6 +24,7 @@ if not __package__:
     sys.path.insert(0, str(PROJECT))
 
 from alpha_research.progress import PROGRESS_ENV, write_progress
+from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
 from alpha_research.state.paths import default_state_root, expand_path
 from alpha_research.state.operation_lock import SubmissionGateError
 from alpha_research.state.store import atomic_write_json, update_stop_flag
@@ -910,13 +911,25 @@ def handler_for(agent_args, port):
                     raise ValueError("仅支持 Super 或 Alpha 优化回执核对")
                 target_path = recovery_intent_path(root, target)
                 with launch_lock:
-                    if launch["status"] == "running":
-                        code, payload = 409, {"error": "请等待当前任务结束"}
+                    if launch["status"] in {"running", "execution_unknown"}:
+                        code, payload = 409, {"error": launch.get("recovery_message") or "请等待当前任务结束"}
                     else:
-                        code, payload = start_workflow(
-                            ["recover-workflow", f"--workflow={workflow}", str(target_path)],
-                            credentials, None, workflow=f"{workflow}_recovery",
-                            primary_id=str(target_path))
+                        try:
+                            admission = RecoveryCoordinator(root).inspect_target(
+                                target_path, expected_workflow=workflow)
+                        except (RecoveryError, OSError, TypeError, KeyError):
+                            code, payload = 409, {"error": "回执证据无效或与工作流不一致；请检查原始 Intent"}
+                        else:
+                            if admission["status"] != "RECOVERABLE":
+                                code, payload = 409, {
+                                    "error": "已完成回执核对" if admission["status"] == "COMPLETED"
+                                             else "回执核对已阻断；禁止自动重试",
+                                    "recovery": admission}
+                            else:
+                                code, payload = start_workflow(
+                                    ["recover-workflow", f"--workflow={workflow}", str(target_path)],
+                                    credentials, None, workflow=f"{workflow}_recovery",
+                                    primary_id=str(target_path))
                 self.respond_json(code, payload)
                 return
 
