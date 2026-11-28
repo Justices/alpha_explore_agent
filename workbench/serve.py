@@ -725,38 +725,57 @@ def handler_for(agent_args, port, *, credentials_from_config=False):
             summary = f"研究进程异常：{type(exc).__name__}"
             if diagnostic:
                 summary += "\n诊断输出（已脱敏，末尾最多 20 行）：\n" + diagnostic
-            write_progress(summary[:6000], log_path)
+            try:
+                write_progress(summary[:6000], log_path)
+            except (OSError, ValueError):
+                pass
         finally:
-            if outcome["status"] == "failed" and stop_flag.exists() and outcome.get("exit_code") == 2:
-                outcome.update(status="exited", result_status="user_stopped")
-                if workflow == "regular":
-                    outcome["campaign_status"] = "user_stopped"
-            if outcome["status"] == "failed":
-                code = outcome.get("exit_code")
-                write_progress(f"研究进程退出，退出码 {code}" if code is not None
-                               else "研究进程启动失败", log_path)
-            else:
-                write_progress("研究进程已结束，结果见 Agent 状态与证据记录", log_path)
+            # A generic exit code 2 plus a stop flag is not proof of a
+            # successful cooperative stop. Keep the actual child outcome.
+            if outcome["status"] == "failed" and outcome.get("exit_code") == 0:
+                outcome["result_status"] = "process_result_unreadable"
             with launch_lock:
-                launch.update(outcome)
+                finished_at = datetime.now(timezone.utc).isoformat()
                 try:
                     manifest = launch_manifest_path(log_dir, log_path.stem)
                     saved = json.loads(manifest.read_text(encoding="utf-8"))
                     saved.update(outcome)
-                    saved["updated_at"] = datetime.now(timezone.utc).isoformat()
-                    saved["finished_at"] = saved["updated_at"]
-                    write_launch_manifest(log_dir, log_path.stem, saved)
-                    campaign_id = launch.get("campaign_id")
-                    if campaign_id:
+                    saved["updated_at"] = finished_at
+                    saved["finished_at"] = finished_at
+                    campaign_id = outcome.get("campaign_id") or launch.get("campaign_id")
+                    if isinstance(campaign_id, str) and re.fullmatch(r"[0-9a-f]{32}", campaign_id):
+                        saved["campaign_id"] = campaign_id
                         atomic_write_json(log_path.with_suffix(".campaign.json"),
                                           {"campaign_id": campaign_id})
                         if outcome["status"] == "exited" and selection:
                             atomic_write_json(
                                 log_dir / (campaign_id + ".models.json"), {
                                     "campaign_id": campaign_id, **selection})
-                    stop_flag.unlink(missing_ok=True)
+                    # Persist the terminal state before releasing the launch slot.
+                    write_launch_manifest(log_dir, log_path.stem, saved)
+                except (OSError, ValueError, TypeError, AttributeError):
+                    launch.update(status="execution_unknown", execution_unknown=True,
+                                  recovery_required=True, manifest_persist_failed=True,
+                                  updated_at=finished_at,
+                                  recovery_message="研究进程结果无法持久化；请核对原始证据和旧进程后人工确认。")
+                else:
+                    launch.update(outcome, updated_at=finished_at, finished_at=finished_at)
+                    try:
+                        stop_flag.unlink(missing_ok=True)
+                    except OSError:
+                        launch["stop_flag_cleanup_pending"] = True
+                try:
+                    if launch["status"] == "execution_unknown":
+                        write_progress("研究进程终态未持久化，执行入口已阻断", log_path)
+                    elif outcome["status"] == "failed":
+                        code = outcome.get("exit_code")
+                        write_progress(f"研究进程退出，退出码 {code}" if code is not None
+                                       else "研究进程启动失败", log_path)
+                    else:
+                        write_progress("研究进程已结束，结果见 Agent 状态与证据记录", log_path)
                 except (OSError, ValueError):
-                    write_progress("无法保存本次启动的索引或清理终止标记", log_path)
+                    # Logging failure must not erase the persisted terminal state.
+                    pass
 
     def start_workflow(args, credentials, selection, campaign_id=None,
                        workflow="regular", primary_id=None):
@@ -780,7 +799,7 @@ def handler_for(agent_args, port, *, credentials_from_config=False):
             log_path.touch(exist_ok=False)
             write_launch_manifest(log_dir, launch_id, {
                 "args": args, "models": selection, "workflow": workflow,
-                "primary_id": primary_id, "status": "running",
+                "primary_id": primary_id, "campaign_id": campaign_id, "status": "running",
                 "started_at": started_at, "updated_at": started_at,
             })
             Thread(target=run_workflow,
