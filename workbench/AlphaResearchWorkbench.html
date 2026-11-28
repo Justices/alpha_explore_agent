@@ -197,7 +197,7 @@ function agentPanel(){
  const evaluations=(agentStatus.v11_candidate_evaluations||[]).map(row=>{
    const metrics=row.metrics||{};
    return [
-     esc(row.alpha_id||"—"),esc(row.workflow||"—"),
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(evidenceOrigin(row)),
      esc(row.ra_fail_count===0?"0":row.ra_fail_count??"未取得"),
      esc(row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
@@ -207,7 +207,7 @@ function agentPanel(){
  });
  const evaluationPanel=evaluations.length
    ?'<h3 style="padding:12px 17px 0">Candidate 审核记录（包含未通过与待补证据）</h3>'+
-     table(["Alpha","流程","RA fail count","审核状态","Sharpe","Turnover","Drawdown","失败项","待补证据"],evaluations)
+     table(["Alpha","流程","证据来源","RA fail count","历史审核状态","Sharpe","Turnover","Drawdown","失败项","待补证据"],evaluations)
    :"";
  return panel("Agent 项目状态 · 只读",warning+(records.length
    ? table(["记录类型","Alpha / 任务 ID","工作流","状态","优选"],records)
@@ -325,7 +325,7 @@ const opts=(items,value,placeholder)=> (placeholder?'<option value="">'+esc(plac
 const panel=(title,body,actions="")=>'<section class="panel"><div class="panel-head"><h2>'+title+'</h2>'+actions+'</div>'+body+'</section>';
 const blank=(title,desc,action="")=>'<div class="empty"><h3>'+title+'</h3><p>'+desc+'</p>'+action+'</div>';
 const table=(headers,rows)=>'<div class="scroll"><table><thead><tr>'+headers.map(h=>'<th scope="col">'+h+'</th>').join("")+'</tr></thead><tbody>'+rows.map(row=>'<tr>'+row.map(v=>'<td>'+v+'</td>').join("")+'</tr>').join("")+'</tbody></table></div>';
-const line=(name,v)=>'<div class="detail"><h3>'+esc(name)+'</h3>'+esc(v||"待补")+'</div>';
+const line=(name,v)=>'<div class="detail"><h3>'+esc(name)+'</h3>'+esc(v==null||v===""?"待补":v)+'</div>';
 function toolbar(){
  const regions=Object.fromEntries([...new Set(data.cases.map(c=>c.region).filter(Boolean))].sort().map(r=>[r,r]));
  return '<div class="toolbar"><select aria-label="区域" data-filter="region">'+opts(regions,filters.region,"全部区域")+'</select><select aria-label="工作流" data-filter="workflow">'+opts({...labels,ppa:"Regular · PPA"},filters.workflow,"全部工作流")+'</select><select aria-label="状态" data-filter="status">'+opts(statuses,filters.status,"全部状态")+'</select><select aria-label="指标" data-filter="metric">'+opts(metrics,filters.metric,"选择指标")+'</select><input aria-label="指标下限" type="number" step="any" placeholder="指标下限" data-filter="min" value="'+esc(filters.min)+'"><input aria-label="指标上限" type="number" step="any" placeholder="指标上限" data-filter="max" value="'+esc(filters.max)+'">'+button("清空","clear")+'</div>';
@@ -685,6 +685,9 @@ function compare(){
    ...Object.entries(metrics).map(([k,v])=>[v,...items.map(a=>num(a.metrics?.[k]))])
  ]):blank("选择要对比的 Alpha","保留指标原始数值；Agent 和手工证据来源明确区分，缺失值不填充。")));
 }
+function evidenceOrigin(row){
+ return row.evidence_origin==="OFFLINE_DOMAIN_MOCK"?"离线模拟 · 非真实证据":row.evidence_origin||"来源未标注";
+}
 function audit(){
  const policy=qualificationPolicy(),gate=policy.candidate,preferred=policy.preferred;
  const policySummary='<div class="details"><div><h3>'+esc(policy.available?"Agent 当前生效策略":"本地参考策略（不可用于资格判定）")+' · '+esc(policy.version||"preferred-v1")+'</h3><div class="detail">'+
@@ -711,7 +714,7 @@ function audit(){
      ...Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string")
    ].filter(Boolean).join("\n");
    return [
-     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(ra),esc(row.candidate_status||row.status||"—"),
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(evidenceOrigin(row)),esc(ra),esc(row.candidate_status||row.status||"—"),
      esc(metrics.sharpe??"—"),esc(metrics.turnover??"—"),esc(metrics.drawdown??"—"),
      esc(corr.prod??"—")+" / "+esc(corr.self??"—"),
      esc(maxPairwise??"—"),
@@ -731,8 +734,8 @@ function audit(){
      ...Object.values(row.evidence_refs||{}).filter(value=>typeof value==="string")
    ].filter(Boolean).join("\n");
    return [
-     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(row.preferred_status||row.status||"—"),
-     esc(row.policy_current===false?"策略过期":row.policy_current!==true?"策略未核验":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
+     esc(row.alpha_id||"—"),esc(row.workflow||"—"),esc(evidenceOrigin(row)),esc(row.preferred_status||row.status||"—"),
+     esc(row.evidence_origin==="OFFLINE_DOMAIN_MOCK"?"仅模拟结论":row.policy_current===false?"策略过期":row.policy_current!==true?"策略未核验":row.qualified===true?"符合":row.qualified===false?"不符合":"未判定"),
      esc(metrics.sharpe??"—")+" / "+esc(thresholds.sharpe_min??"—"),
      esc(metrics.fitness??"—")+" / "+esc(thresholds.fitness_min??"—"),
      esc(metrics.turnover??"—")+" / "+esc([thresholds.turnover_min,thresholds.turnover_max].filter(v=>v!=null).join("–")||"—"),
@@ -745,17 +748,17 @@ function audit(){
  });
  const auditRefresh=localAgent?button("刷新 Agent 审核记录","agent-refresh"):"";
  const liveAudit=evaluations.length
-   ?panel("Agent 实际 Candidate 审核记录 · 只读",table(
-      ["Alpha","流程","RA fail count","Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","策略 SHA","失败项","待补证据","引用"],
+   ?panel("Agent Candidate 审核历史 · 只读",table(
+      ["Alpha","流程","证据来源","RA fail count","历史 Candidate 状态","Sharpe","Turnover","Drawdown","PC / SC","最大组内相关性","策略 SHA","失败项","待补证据","引用"],
       evaluations),auditRefresh)
-   :panel("Agent 实际 Candidate 审核记录 · 只读",blank(
+   :panel("Agent Candidate 审核历史 · 只读",blank(
       "当前没有 Agent Candidate 审核记录",
       localAgent?"刷新 Agent 状态后，这里会显示实际 RA、相关性及 Candidate 证据。":"连接本地工作台服务后可读取 Agent 审核记录。"),auditRefresh);
  const livePreferred=preferredEvaluations.length
-   ?panel("Agent 实际 Preferred 复核记录 · 只读",table(
-      ["Alpha","流程","Preferred 状态","资格结论","Sharpe / 阈值","Fitness / 阈值","Turnover / 区间","Weight / 阈值","策略版本","策略 SHA","失败项","待补证据","引用"],
+   ?panel("Agent Preferred 复核历史 · 只读",table(
+      ["Alpha","流程","证据来源","历史 Preferred 状态","资格结论","Sharpe / 阈值","Fitness / 阈值","Turnover / 区间","Weight / 阈值","策略版本","策略 SHA","失败项","待补证据","引用"],
       preferredEvaluations),auditRefresh)
-   :panel("Agent 实际 Preferred 复核记录 · 只读",blank(
+   :panel("Agent Preferred 复核历史 · 只读",blank(
       "当前没有 Preferred 复核记录",
       "只有完成 Candidate 审核后才会出现 Preferred 复核记录；未通过和待补证据的记录同样保留。"),auditRefresh);
  return panel("共享审核队列",policySummary+steps+(rows.length
