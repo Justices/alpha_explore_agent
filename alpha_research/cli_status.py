@@ -131,7 +131,7 @@ def run_status_command(args, root, stop_flag):
                 if isinstance(block.get(key), (int, float))
                 and not isinstance(block[key], bool)}
 
-    def _record_summaries(kind):
+    def _record_summaries(kind, limit=200):
         storage_kind = {"candidate_evaluations": "candidate",
                         "preferred_evaluations": "preferred"}.get(kind, kind)
         state_dir = root / "state"
@@ -369,7 +369,7 @@ def run_status_command(args, root, stop_flag):
                 except (OSError, ValueError, TypeError, AttributeError, RuntimeError):
                     output.append({"path": str(record_path), "status": "unreadable"})
         output.sort(key=lambda item: str(item.get("updated_at") or ""), reverse=True)
-        return output[:200]
+        return output if limit is None else output[:limit]
     try:
         if current_policy is None:
             raise ValueError("current admission policy is unavailable")
@@ -378,6 +378,13 @@ def run_status_command(args, root, stop_flag):
         global_pool = {**global_pool, "status": "available"}
     except (OSError, ValueError, KeyError, TypeError) as exc:
         global_pool = {"status": "unavailable", "reason": type(exc).__name__}
+    # Keep the history bounded without dropping the current evaluation of an
+    # older Alpha that remains in the authoritative pool.
+    candidate_evaluations = _record_summaries("candidate_evaluations", limit=None)
+    current_candidate_ids = {row["candidate_id"] for row in global_pool.get("entries", [])}
+    current_candidate_evaluations = [row for row in candidate_evaluations
+                                     if row.get("candidate_id") in current_candidate_ids
+                                     and row.get("evidence_origin") != "OFFLINE_DOMAIN_MOCK"]
     print(json.dumps({"global_alpha_pool": global_pool,
                       "qualification_policy": qualification_policy,
                       "research_config": {"status": config_status, "path": str(config_path)},
@@ -396,7 +403,8 @@ def run_status_command(args, root, stop_flag):
                           row for row in global_pool.get("entries", [])
                           if row["candidate_status"] == "CANDIDATE" and
                              row["preferred_status"] == "PREFERRED"],
-                      "v11_candidate_evaluations": _record_summaries("candidate_evaluations"),
+                      "v11_current_candidate_evaluations": current_candidate_evaluations,
+                      "v11_candidate_evaluations": candidate_evaluations[:200],
                       "v11_preferred_evaluations": _record_summaries("preferred_evaluations")},
                      ensure_ascii=False))
     return 0
