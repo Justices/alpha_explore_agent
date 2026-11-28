@@ -222,6 +222,48 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             self.assertEqual([row["candidate_id"] for row in
                 report["v11_current_candidate_evaluations"]], ["candidate-000"])
 
+    def test_campaign_projection_preserves_scope_budget_and_partial_coverage(self):
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            folder = root_path / "state" / "research_v1_1" / "campaign_runs"
+            folder.mkdir(parents=True)
+            campaign_id = "a" * 32
+            first = {"dataset_id": "analyst10", "region": "USA",
+                     "delay": 1, "universe": "TOP3000", "category": "Analyst"}
+            second = {**first, "universe": "TOP1000"}
+            budget = {"limits": {"batches": 2}, "used": {"batches": 1},
+                      "reserved": {"batches": 1}}
+            request = {"objective": "revision research", "region": "USA",
+                       "dataset_ids": ["analyst10"], "category": None,
+                       "delay": 1, "universe": None, "max_batches": 2,
+                       "ppa_profile": False}
+            (folder / f"{campaign_id}.json").write_text(json.dumps({
+                "campaign_id": campaign_id, "status": "unresolved",
+                "request": request, "items": [first, second],
+                "completed": [{"item_index": 0}], "active_item": 1,
+                "budget": budget, "subtasks": [],
+                "plan": {"unresolved": [{"reason": "catalog unavailable"}],
+                         "unselected_dataset_ids": ["other"]},
+                "error": "evidence missing",
+            }), encoding="utf-8")
+            output = StringIO()
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"entries": []}), patch(
+                           "alpha_research.cli_status.campaign_can_resume",
+                           return_value=True):
+                with redirect_stdout(output):
+                    self.assertEqual(run_status_command(
+                        SimpleNamespace(config=None), root_path,
+                        root_path / "state" / "stop.flag"), 0)
+            row = json.loads(output.getvalue())["v11_campaigns"][0]
+            self.assertEqual(row["request"], request)
+            self.assertEqual(row["budget"], budget)
+            self.assertEqual(row["active_scope"], second)
+            self.assertEqual(row["coverage"], {"eligible_combinations": 2,
+                "completed_combinations": 1, "unexamined_combinations": 1})
+            self.assertEqual(row["unselected_dataset_ids"], ["other"])
+            self.assertEqual(row["error"], "evidence missing")
+
     def test_status_projects_optimization_source_and_candidate_metrics_side_by_side(self):
         with TemporaryDirectory() as root:
             root_path = Path(root)
