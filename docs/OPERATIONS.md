@@ -106,3 +106,19 @@ docker compose -f deploy/p7/compose.yaml ps
 当 `plan-regular` 返回 `CATALOG_UNKNOWN`、`DATA_SHAPE` 而没有 `catalog_error_stage`，新增 `catalog_error_phase` 指明 Driver 请求解码、参数检查、Runtime 调度或响应写出环节；`catalog_error_source` 仅在异常栈包含项目自身允许的模块时输出模块/函数/行号，不输出原始路径、原始异常或 BRAIN 响应。该标记本身是诊断证据，不代表已完成 Catalog 读取。使用完全相同的 BRAIN scope 重跑，检查当前提交 SHA 与新字段。
 
 Driver JSONL stdout 是机器协议，本轮改为 ASCII-escaped JSON，以避免平台 Dataset 文本包含不完整 Unicode 转义时，在 Windows UTF-8 管道输出阶段发生编码异常。该处理保持 Gateway 解码后的 JSON 字符串不变，不改变 BRAIN 接口参数或授权。
+
+## 本地中文研究工作台
+
+从仓库根目录使用与 Agent 相同的 Python 环境启动：
+
+```bash
+python workbench/serve.py --port 8765
+```
+
+如 Agent 使用自定义状态目录，启动工作台时必须传入相同的 `--state-root`。实际端口与配置参数以 `--help` 输出为准。服务仅绑定本机回环地址 `127.0.0.1`，不得将研究控制接口直接暴露到公网。
+
+工作台只读展示 `status` 投影中的权威候选池。当前候选评估通过 Alpha ID、Candidate ID、策略摘要、证据摘要关联；最近 200 条审核历史仅用于复盘，不决定当前资格。无法关联的明细保持待补；离线模拟记录不得计入真实 Candidate 或 Preferred 池。手工记录与 Agent 记录分开标记，可在同一个指标对比视图中选择，但不能用于替代 Agent 审核。
+
+Regular Campaign 展示已保存的研究请求、Dataset 子任务、组合状态、预算及未解决范围。已有批次记录不意味着组合所有研究目标均已达成。启动、停止、恢复和删除仍由服务端状态与现有 Agent 契约控制，工作台不自行执行 BRAIN 回测或提交。
+
+页面验证不能代替真实环境验收；未获得真实执行授权前，仅使用隔离状态目录和离线数据检查工作台接口。
