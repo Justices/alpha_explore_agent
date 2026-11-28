@@ -410,16 +410,43 @@ function board(){
  const c=findCase(a.caseId),m=a.metrics;
  return [button(a.name,"alpha",a.id,"quiet"),esc((c.region||"待解析")+" / "+workflow(c)),badge(a),'<span class="metric">'+num(m.sharpe)+'</span>',num(m.turnover),num(m.prod)+" / "+num(m.self),'<label><input type="checkbox" data-compare="'+esc(a.id)+'" '+(selected.has(a.id)?"checked":"")+' aria-label="对比 '+esc(a.name)+'"></label>'];})):blank(data.alphas.length?"没有匹配的手工 Alpha 记录":"等待手工 Alpha 记录","此处筛选和对比手工录入记录；Agent 实际 Candidate / Preferred 池及审核证据见下方项目状态与审核视图。",data.alphas.length?"":button("创建首个研究任务","new-case","","primary"))),button("查看所选对比","compare"));
 }
+
+function campaignDetails(row){
+ const request=row.request,coverage=row.coverage,budget=row.budget;
+ const knownScope=request&&typeof request==="object";
+ const displayConstraint=value=>value==null||value===""||Array.isArray(value)&&!value.length?"未指定 / 探索":Array.isArray(value)?value.join(", "):String(value);
+ const summaries=Array.isArray(row.subtasks)?row.subtasks:[];
+ const scope=knownScope?grid(line("研究目标",request.objective),line("Region",request.region),
+   line("Dataset 硬约束",displayConstraint(request.dataset_ids)),line("Category 硬约束",displayConstraint(request.category)),
+   line("Delay",displayConstraint(request.delay)),line("Universe 硬约束",displayConstraint(request.universe)),
+   line("Profile",request.ppa_profile===true?"PPA":request.ppa_profile===false?"Regular":"未记录"),
+   line("每 Dataset 批次预算",request.max_batches==null?"未指定":request.max_batches)):"<p>研究请求尚不可读。</p>";
+ const details=grid(line("计划组合数",coverage?.eligible_combinations),line("已有批次记录的组合数",coverage?.completed_combinations),
+   line("无完成批次记录的组合数",coverage?.unexamined_combinations),
+   line("总预算 / 已用 / 保留",[budget?.limits?.batches,budget?.used?.batches,budget?.reserved?.batches].map(v=>v??"—").join(" / ")),
+   line("当前组合",row.active_scope?JSON.stringify(row.active_scope):"—"),line("错误 / 停止原因",row.error),
+   line("范围证据",row.plan_evidence_ref));
+ const combinations=summaries.flatMap(task=>(Array.isArray(task.combinations)?task.combinations:[]).map(c=>[
+   esc(task.dataset_id||"—"),esc(task.status||"—"),esc(task.completed_batches??"—"),
+   esc([c.region,c.delay==null?null:"D"+c.delay,c.universe].filter(v=>v!=null).join(" / ")||"—"),
+   esc(c.status||"—"),esc(c.combination_id||"—"),
+   '<details><summary>证据</summary><pre class="detail">'+esc(JSON.stringify({failure_history:c.failure_history||[],dataset_review:task.dataset_review},null,2))+'</pre></details>'
+ ]));
+ const unresolved={unresolved:row.unresolved,unselected_dataset_ids:row.unselected_dataset_ids};
+ return '<details><summary>范围、预算与 Dataset 子任务</summary><div class="details">'+scope+details+
+   (combinations.length?table(["Dataset","子任务状态","Dataset 已完成批次","Region / Delay / Universe","组合状态","组合 ID","失败与复盘"],combinations):"<p>尚无子任务记录。</p>")+
+   '<h3>未解决范围与未选 Dataset</h3><pre class="detail">'+esc(JSON.stringify(unresolved,null,2))+'</pre></div></details>';
+}
 function runtimeTasks(){
  if(!localAgent)return "";
  const running=launchState?.status==="running";
  const launchBlocked=launchReadFailed||["running","execution_unknown"].includes(launchState?.status);
  const rows=(agentStatus?.v11_campaigns||[]).filter(row=>row.campaign_id).map(row=>[
    esc(row.campaign_id),esc(row.status||"—"),esc(row.batches_completed??"—"),
-   esc(row.batches_attempted??"—"),
+   esc(row.batches_attempted??"—"),campaignDetails(row),
    [row.has_summary?button("查看复盘","research-summary",row.campaign_id,"quiet"):"",
     !launchBlocked&&row.resumable?button("恢复研究","resume-research",row.campaign_id):"",
-    !launchBlocked?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
+    !launchBlocked&&row.status!=="unreadable"?button("删除研究","delete-research",row.campaign_id,"quiet"):""].filter(Boolean).join(" ")||"—"
  ]);
  const domainRecords=[
    ...(agentStatus?.v11_super_runs||[]).map(row=>({kind:"Super",workflow:"super",row})),
@@ -526,7 +553,7 @@ function runtimeTasks(){
  const warning=config&&config.status!=="loaded"?
    '<p class="toolbar">'+(config.status==="missing"?"缺少研究配置文件。":"研究配置文件无法读取。")+
    ' <code>'+esc(config.path)+'</code></p>':"";
- const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次","操作"],rows):
+ const records=rows.length?table(["Campaign ID","执行状态","已完成批次","已尝试批次","范围与证据","操作"],rows):
    launchState?.status==="running"
      ? blank("研究已启动，正在准备 Campaign","Agent 会先发现并核验研究范围。")
      : blank("暂无 Regular Campaign","通过网页或 CLI 启动的 Regular Campaign 会显示在这里。");
