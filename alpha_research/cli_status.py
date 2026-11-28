@@ -86,21 +86,55 @@ def run_status_command(args, root, stop_flag):
             if not re.fullmatch(r"[0-9a-f]{32}\.json", path.name):
                 continue
             try:
+                if path.is_symlink() or not path.is_file():
+                    raise ValueError("unsafe campaign state path")
                 saved = json.loads(path.read_text(encoding="utf-8"))
+                if not isinstance(saved, dict) or saved.get("campaign_id") != path.stem:
+                    raise ValueError("invalid campaign identity")
                 if saved.get("deleted_at"):
                     continue
+                request = saved.get("request")
+                plan = saved.get("plan")
+                items = saved.get("items")
+                completed = saved.get("completed", [])
+                active_index = saved.get("active_item")
+                if not isinstance(completed, list):
+                    raise ValueError("invalid completed batches")
+                completed_indexes = {entry["item_index"] for entry in completed
+                    if isinstance(entry, dict) and type(entry.get("item_index")) is int
+                    and isinstance(items, list) and 0 <= entry["item_index"] < len(items)}
+                scope = ({key: request.get(key) for key in (
+                    "region", "dataset_ids", "category", "delay", "universe",
+                    "objective", "max_batches", "ppa_profile")}
+                    if isinstance(request, dict) else None)
+                active_scope = (items[active_index] if isinstance(items, list)
+                    and type(active_index) is int and 0 <= active_index < len(items)
+                    else None)
+                coverage = ({
+                    "eligible_combinations": len(items),
+                    "completed_combinations": len(completed_indexes),
+                    "unexamined_combinations": len(items) - len(completed_indexes),
+                } if isinstance(items, list) else None)
                 v11_campaigns.append({
                     "campaign_id": saved.get("campaign_id"),
                     "status": saved.get("status"),
                     "batches_completed": len(saved.get("completed", [])),
                     "batches_attempted": saved.get("budget", {}).get("used", {}).get("batches"),
+                    "request": scope,
+                    "budget": saved.get("budget"),
+                    "coverage": coverage,
+                    "unresolved": plan.get("unresolved") if isinstance(plan, dict) else None,
+                    "unselected_dataset_ids": plan.get("unselected_dataset_ids") if isinstance(plan, dict) else None,
+                    "plan_evidence_ref": saved.get("plan_evidence_ref"),
+                    "error": saved.get("error"),
                     "subtasks": saved.get("subtasks", []),
-                    "active_item": saved.get("active_item"),
+                    "active_item": active_index,
+                    "active_scope": active_scope,
                     "resumable": campaign_can_resume(saved),
                     "has_summary": path.with_name(f"{path.stem}_summary.json").is_file(),
                     "path": str(path)})
-            except (OSError, ValueError):
-                v11_campaigns.append({"path": str(path), "status": "unreadable"})
+            except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                v11_campaigns.append({"campaign_id": path.stem, "path": str(path), "status": "unreadable"})
     def _read_optimization_snapshot(snapshot_ref):
         if not isinstance(snapshot_ref, str) or not snapshot_ref:
             return {}
