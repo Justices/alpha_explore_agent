@@ -429,6 +429,56 @@ class WorkbenchRecordStoreTests(unittest.TestCase):
             })
             self.assertEqual(serve.load_workbench_records(root), payload)
 
+    def test_project_records_reject_stale_revision(self):
+        with TemporaryDirectory() as root:
+            original = serve.load_workbench_records(root)
+            revision = serve.workbench_revision(original)
+            first = {"version": 1, "cases": [{"id": "first", "name": "First",
+                "workflow": "regular", "region": "USA", "phase": "scope"}], "alphas": []}
+            second = {"version": 1, "cases": [{"id": "second", "name": "Second",
+                "workflow": "regular", "region": "USA", "phase": "scope"}], "alphas": []}
+            serve.save_workbench_records(root, first, expected_revision=revision)
+            with self.assertRaises(serve.WorkbenchRecordConflict):
+                serve.save_workbench_records(root, second, expected_revision=revision)
+            self.assertEqual(serve.load_workbench_records(root), first)
+            serve.save_workbench_records(root, second,
+                expected_revision=serve.workbench_revision(first))
+            self.assertEqual(serve.load_workbench_records(root), second)
+
+    def test_records_http_contract_rejects_missing_and_stale_preconditions(self):
+        with TemporaryDirectory() as root:
+            server = ThreadingHTTPServer(("127.0.0.1", 0), serve.BaseHTTPRequestHandler)
+            port = server.server_address[1]
+            server.RequestHandlerClass = serve.handler_for(["--state-root", root], port)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            self.addCleanup(server.server_close)
+            self.addCleanup(server.shutdown)
+            origin = f"http://127.0.0.1:{port}"
+
+            def call(method, payload=None, revision=None):
+                headers = {"Origin": origin, "Content-Type": "application/json"}
+                if revision is not None:
+                    headers["If-Match"] = revision
+                with closing(http.client.HTTPConnection("127.0.0.1", port, timeout=5)) as conn:
+                    conn.request(method, "/api/workbench-records",
+                                 json.dumps(payload) if payload is not None else None,
+                                 headers)
+                    response = conn.getresponse()
+                    return response.status, response.getheader("ETag"), json.loads(response.read())
+
+            status, revision, original = call("GET")
+            self.assertEqual(status, 200)
+            self.assertEqual(revision, serve.workbench_revision(original))
+            first = {"version": 1, "cases": [{"id": "first", "name": "First",
+                "workflow": "regular", "region": "USA", "phase": "scope"}], "alphas": []}
+            self.assertEqual(call("POST", first)[0], 428)
+            status, next_revision, _ = call("POST", first, revision)
+            self.assertEqual(status, 200)
+            self.assertEqual(next_revision, serve.workbench_revision(first))
+            self.assertEqual(call("POST", original, revision)[0], 412)
+            self.assertEqual(call("GET")[2], first)
+
     def test_project_records_reject_duplicate_ids_and_non_finite_values(self):
         valid_case = {
             "id": "same", "name": "USA Regular", "workflow": "regular",
@@ -629,6 +679,38 @@ class WorkbenchLaunchPersistenceTests(unittest.TestCase):
             self.assertEqual(restored["status"], "exited")
             self.assertTrue(restored["recovered_from_legacy_log"])
             self.assertEqual(restored["result_status"], "legacy_completion_observed")
+
+    def test_older_unresolved_launch_is_not_hidden_by_newer_terminal_record(self):
+        with TemporaryDirectory() as root:
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            old_id, new_id = "a" * 32, "b" * 32
+            serve.write_launch_manifest(log_dir, old_id, {"status": "running"})
+            serve.write_launch_manifest(log_dir, new_id, {"status": "exited"})
+            restored = serve.restore_launch_state(log_dir)
+            self.assertEqual(restored["launch_id"], old_id)
+            self.assertEqual(restored["status"], "execution_unknown")
+
+    def test_corrupt_status_blocks_launch_restoration(self):
+        with TemporaryDirectory() as root:
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            serve.write_launch_manifest(log_dir, "a" * 32, {"status": []})
+            restored = serve.restore_launch_state(log_dir)
+            self.assertEqual(restored["status"], "execution_unknown")
+            self.assertTrue(restored["manifest_history_unreadable"])
+
+    def test_legacy_terminal_log_does_not_hide_other_unresolved_launch(self):
+        with TemporaryDirectory() as root:
+            log_dir = Path(root) / "state" / "logs" / "workbench"
+            old_id, new_id = "a" * 32, "b" * 32
+            serve.write_launch_manifest(log_dir, old_id, {"status": "running"})
+            serve.write_launch_manifest(log_dir, new_id, {"status": "starting"})
+            (log_dir / f"{new_id}.jsonl").write_text(json.dumps({
+                "time": "2026-11-27T10:01:00+00:00",
+                "message": "研究进程已结束，结果见 Agent 状态与证据记录",
+            }) + "\n", encoding="utf-8")
+            restored = serve.restore_launch_state(log_dir)
+            self.assertEqual(restored["launch_id"], old_id)
+            self.assertEqual(restored["status"], "execution_unknown")
 
     def test_launch_manifest_rejects_untrusted_identifiers(self):
         with TemporaryDirectory() as root:
