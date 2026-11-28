@@ -1,6 +1,7 @@
 """Serve the local Alpha workbench and its guarded research workflows."""
 
 import argparse
+import hashlib
 from datetime import datetime, timezone
 import math
 from http.cookies import CookieError, SimpleCookie
@@ -393,7 +394,17 @@ def load_workbench_records(root):
     return _validate_workbench_records(json.loads(path.read_text(encoding="utf-8")))
 
 
-def save_workbench_records(root, payload):
+class WorkbenchRecordConflict(ValueError):
+    """The browser snapshot is older than the current project records."""
+
+
+def workbench_revision(payload):
+    encoded = json.dumps(payload, ensure_ascii=False, allow_nan=False,
+                         sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return '"' + hashlib.sha256(encoded).hexdigest() + '"'
+
+
+def save_workbench_records(root, payload, *, expected_revision=None):
     payload = _validate_workbench_records(payload)
     path = _workbench_records_path(root)
     state_dir = Path(root) / "state"
@@ -405,6 +416,8 @@ def save_workbench_records(root, payload):
     with SingleWriterLock(state_dir / "workbench-records.lock"):
         if path.parent.is_symlink() or path.is_symlink():
             raise ValueError("工作台记录路径不能是符号链接")
+        if expected_revision is not None and workbench_revision(load_workbench_records(root)) != expected_revision:
+            raise WorkbenchRecordConflict("研究记录已被其他窗口修改，请刷新后重新编辑")
         atomic_write_json(path, payload)
     return {"saved": True, "case_count": len(payload["cases"]),
             "alpha_count": len(payload["alphas"])}
@@ -765,7 +778,7 @@ def handler_for(agent_args, port):
         return 202, dict(launch)
 
     class Handler(BaseHTTPRequestHandler):
-        def respond(self, code, content_type, body, cookie=None):
+        def respond(self, code, content_type, body, cookie=None, etag=None):
             self.send_response(code)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
@@ -773,12 +786,14 @@ def handler_for(agent_args, port):
             self.send_header("X-Content-Type-Options", "nosniff")
             if cookie:
                 self.send_header("Set-Cookie", cookie)
+            if etag:
+                self.send_header("ETag", etag)
             self.end_headers()
             self.wfile.write(body)
 
-        def respond_json(self, code, payload, cookie=None):
+        def respond_json(self, code, payload, cookie=None, etag=None):
             self.respond(code, "application/json; charset=utf-8",
-                         json.dumps(payload, ensure_ascii=False).encode("utf-8"), cookie)
+                         json.dumps(payload, ensure_ascii=False).encode("utf-8"), cookie, etag)
 
         def session_id(self):
             try:
@@ -833,12 +848,18 @@ def handler_for(agent_args, port):
                     self.save_credentials(request)
                     return
                 if self.path == "/api/workbench-records":
+                    revision = self.headers.get("If-Match", "")
+                    if not re.fullmatch(r'"[0-9a-f]{64}"', revision):
+                        self.respond_json(428, {"error": "保存前必须读取最新工作台记录"})
+                        return
                     try:
-                        saved = save_workbench_records(root, request)
+                        saved = save_workbench_records(root, request, expected_revision=revision)
+                    except WorkbenchRecordConflict as exc:
+                        self.respond_json(412, {"error": str(exc)})
                     except WriterLockError:
                         self.respond_json(409, {"error": "工作台记录正在被另一个进程保存，请重试"})
                     else:
-                        self.respond_json(200, saved)
+                        self.respond_json(200, saved, etag=workbench_revision(request))
                     return
                 credentials = self.browser_credentials()
                 if credentials is None:
@@ -1027,7 +1048,8 @@ def handler_for(agent_args, port):
                 return
             if self.path == "/api/workbench-records":
                 try:
-                    self.respond_json(200, load_workbench_records(root))
+                    payload = load_workbench_records(root)
+                    self.respond_json(200, payload, etag=workbench_revision(payload))
                 except (OSError, ValueError):
                     self.respond_json(503, {"error": "项目工作台记录不可读取"})
                 return
