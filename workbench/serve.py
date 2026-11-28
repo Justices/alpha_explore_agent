@@ -412,6 +412,8 @@ def save_workbench_records(root, payload):
 
 def recent_progress(path):
     try:
+        if path.is_symlink() or not path.is_file():
+            return []
         with path.open("rb") as stream:
             size = stream.seek(0, os.SEEK_END)
             stream.seek(max(0, size - 65536))
@@ -490,8 +492,8 @@ def read_launch_history(log_dir, limit=50, *, strict=False):
             if not isinstance(value, dict):
                 raise ValueError("任务清单必须是 JSON 对象")
             value.setdefault("launch_id", launch_id)
-            if value.get("status") not in {"starting", "running", "exited", "failed",
-                                          "execution_unknown", "interrupted_acknowledged"}:
+            if value.get("status") not in ("starting", "running", "exited", "failed",
+                                          "execution_unknown", "interrupted_acknowledged"):
                 raise ValueError("任务清单状态无效")
             if value["launch_id"] != launch_id:
                 raise ValueError("任务清单 ID 与文件名不一致")
@@ -521,38 +523,40 @@ def restore_launch_state(log_dir):
         }
     if not history:
         return {"status": "idle"}
-    # An older unresolved launch is not made safe by a newer terminal record.
-    latest = next((item for item in history if item["status"] in
-                   {"starting", "running", "execution_unknown"}), history[0])
-    status = latest.get("status")
-    if status in {"running", "starting"}:
-        launch_id = latest["launch_id"]
+    # Reconcile every in-flight record before admitting another launch.
+    # A newer terminal record cannot erase an older unresolved operation.
+    for item in history:
+        status = item["status"]
+        if status == "execution_unknown":
+            return item
+        if status not in {"running", "starting"}:
+            continue
+        launch_id = item["launch_id"]
         log_path = Path(log_dir) / f"{launch_id}.jsonl"
         events = recent_progress(log_path)
         last_message = events[-1].get("message", "") if events else ""
         if last_message.startswith(("研究进程已结束", "研究进程退出", "研究进程启动失败")):
-            latest["status"] = "exited" if last_message.startswith("研究进程已结束") else "failed"
-            latest["result_status"] = latest.get("result_status", "legacy_completion_observed")
-            latest["recovered_from_legacy_log"] = True
+            item["status"] = "exited" if last_message.startswith("研究进程已结束") else "failed"
+            item["result_status"] = item.get("result_status", "legacy_completion_observed")
+            item["recovered_from_legacy_log"] = True
         else:
-            latest["status"] = "execution_unknown"
-            latest["execution_unknown"] = True
-            latest["recovery_required"] = True
-            latest["recovery_message"] = (
+            item["status"] = "execution_unknown"
+            item["execution_unknown"] = True
+            item["recovery_required"] = True
+            item["recovery_message"] = (
                 "工作台服务重启，无法证明旧子进程是否结束。为避免并发 Simulation，"
                 "新任务已阻断；请先确认旧 Agent 子进程已退出。"
             )
-        latest["updated_at"] = datetime.now(timezone.utc).isoformat()
+        item["updated_at"] = datetime.now(timezone.utc).isoformat()
         try:
-            write_launch_manifest(log_dir, launch_id, latest)
+            write_launch_manifest(log_dir, launch_id, item)
         except (OSError, ValueError):
-            latest["manifest_persist_failed"] = True
-            if latest.get("execution_unknown"):
-                latest["recovery_message"] = (
-                    "旧任务状态仍无法确认，且任务清单无法更新。为避免重复 Simulation，"
-                    "新任务继续阻断；请检查 state-root 写入权限并人工核实旧进程。"
-                )
-    return latest
+            item.update(status="execution_unknown", execution_unknown=True,
+                        recovery_required=True, manifest_persist_failed=True,
+                        recovery_message="旧任务清单无法更新。新任务已阻断，请检查 state-root 并人工核实旧进程。")
+        if item["status"] == "execution_unknown":
+            return item
+    return history[0]
 
 
 def recovery_intent_path(root, target):
