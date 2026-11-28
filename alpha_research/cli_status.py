@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 
 from alpha_research.config import DEFAULT_CONFIG
+from alpha_research.orchestration.recovery import RecoveryCoordinator, RecoveryError
 from alpha_research.state.paths import CATALOG_SNAPSHOT_ROOT
 from alpha_research.state.records import ResearchRecordStore
 from alpha_research.qualification.pool import CandidatePool, policy_hash
@@ -333,6 +334,15 @@ def run_status_command(args, root, stop_flag):
                             "candidate_pending": candidate_record.get("pending", []),
                             "source_snapshot_ref": item.get("source_snapshot_ref"),
                         }
+                    if storage_kind in {"super_run", "candidate_branch"} and item.get("simulation_intent_ref"):
+                        expected = "super" if storage_kind == "super_run" else "optimization"
+                        try:
+                            admission = RecoveryCoordinator(root).inspect_target(
+                                item["simulation_intent_ref"], expected_workflow=expected)
+                            extra["recovery_status"] = admission["status"]
+                            extra["recovery_journal_ref"] = admission["journal_ref"]
+                        except (RecoveryError, OSError, TypeError, KeyError, RuntimeError):
+                            extra["recovery_status"] = "UNRESOLVED"
                     output.append({
                         "id": item.get("candidate_id") or item.get("run_id") or item.get("branch_id") or
                               item.get("source_id"),
