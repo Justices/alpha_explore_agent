@@ -193,6 +193,35 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             self.assertEqual(report["v11_candidates"], [])
             self.assertEqual(report["v11_preferred"], [])
 
+    def test_current_evaluation_is_not_lost_when_history_is_bounded(self):
+        with TemporaryDirectory() as root:
+            root_path = Path(root)
+            folder = root_path / "state" / "research_v1_1" / "candidate"
+            folder.mkdir(parents=True)
+            for index in range(201):
+                identifier = f"candidate-{index:03d}"
+                (folder / f"{identifier}.json").write_text(json.dumps({
+                    "candidate_id": identifier, "alpha_id": f"ALPHA-{index}",
+                    "workflow": "regular", "status": "RA_UNAVAILABLE",
+                    "updated_at": f"{index:03d}",
+                }), encoding="utf-8")
+            output = StringIO()
+            with patch("alpha_research.cli_status.CandidatePool.build_index",
+                       return_value={"entries": [{"alpha_id": "ALPHA-0",
+                           "candidate_id": "candidate-000",
+                           "candidate_status": "RA_UNAVAILABLE",
+                           "preferred_status": "NOT_CANDIDATE"}]}):
+                with redirect_stdout(output):
+                    self.assertEqual(run_status_command(
+                        SimpleNamespace(config=None), root_path,
+                        root_path / "state" / "stop.flag"), 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(len(report["v11_candidate_evaluations"]), 200)
+            self.assertNotIn("candidate-000", {row["candidate_id"]
+                for row in report["v11_candidate_evaluations"]})
+            self.assertEqual([row["candidate_id"] for row in
+                report["v11_current_candidate_evaluations"]], ["candidate-000"])
+
     def test_status_projects_optimization_source_and_candidate_metrics_side_by_side(self):
         with TemporaryDirectory() as root:
             root_path = Path(root)
@@ -495,6 +524,10 @@ let agentStatus={global_alpha_pool:{status:"available",entries:[entry]},
 """ + "function agentAlphaRows(){" + source + """
 assert.equal(agentAlphaRows()[0].metrics.sharpe,2);
 assert.equal(agentAlphaRows()[0].preferred,"PREFERRED");
+agentStatus.v11_current_candidate_evaluations=[evaluation];
+agentStatus.v11_candidate_evaluations=[];
+assert.equal(agentAlphaRows()[0].metrics.sharpe,2);
+delete agentStatus.v11_current_candidate_evaluations;
 for(const wrong of [{alpha_id:"B"},{candidate_id:"D"},
  {evidence_sha256:"c".repeat(64)},{policy_sha256:"d".repeat(64)},
  {evidence_origin:"OFFLINE_DOMAIN_MOCK"}]){
