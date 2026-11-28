@@ -174,14 +174,17 @@ class WorkbenchStatusPolicyTests(unittest.TestCase):
             }), encoding="utf-8")
             output = StringIO()
             with patch("alpha_research.cli_status.CandidatePool.build_index",
-                       return_value={"status": "available", "entries": []}):
+                       return_value={"entries": [], "candidate_count": 0, "preferred_count": 0}):
                 with redirect_stdout(output):
                     self.assertEqual(run_status_command(
                         SimpleNamespace(config=config), root_path,
                         root_path / "state" / "stop.flag"), 0)
             report = json.loads(output.getvalue())
             self.assertEqual(len(report["v11_candidate_evaluations"]), 1)
+            self.assertEqual(report["global_alpha_pool"]["status"], "available")
             candidate = report["v11_candidate_evaluations"][0]
+            self.assertEqual(candidate["alpha_id"], "ALPHA-1")
+            self.assertEqual(candidate["candidate_id"], "candidate-1")
             self.assertEqual(candidate["status"], "RA_UNAVAILABLE")
             self.assertEqual(candidate["pending"], ["ra_checks_unsettled_or_unavailable"])
             self.assertEqual(candidate["metrics"]["sharpe"], 1.25)
@@ -472,6 +475,46 @@ class WorkbenchFrontendSyntaxTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
 
+    @unittest.skipUnless(shutil.which("node"), "Node.js is not installed")
+    def test_agent_projection_requires_matching_identity_and_evidence(self):
+        html = (Path(__file__).resolve().parent.parent / "workbench" /
+                "AlphaResearchWorkbench.html").read_text(encoding="utf-8")
+        source = html.split("function agentAlphaRows(){", 1)[1].split(
+            "let agentSelected=", 1)[0]
+        script = """
+const assert=require("node:assert/strict");
+const localAgent=true;
+const numeric=v=>typeof v==="number"&&Number.isFinite(v);
+const sha="a".repeat(64), policy="b".repeat(64);
+const entry={alpha_id:"A",candidate_id:"C",candidate_status:"CANDIDATE",
+ preferred_status:"PREFERRED",latest_evidence_sha256:sha,latest_policy_sha256:policy};
+const evaluation={alpha_id:"A",candidate_id:"C",evidence_sha256:sha,
+ policy_sha256:policy,metrics:{sharpe:2},correlations:{prod:0.2,self:0.3}};
+let agentStatus={global_alpha_pool:{status:"available",entries:[entry]},
+ v11_candidate_evaluations:[evaluation]};
+""" + "function agentAlphaRows(){" + source + """
+assert.equal(agentAlphaRows()[0].metrics.sharpe,2);
+assert.equal(agentAlphaRows()[0].preferred,"PREFERRED");
+for(const wrong of [{alpha_id:"B"},{candidate_id:"D"},
+ {evidence_sha256:"c".repeat(64)},{policy_sha256:"d".repeat(64)},
+ {evidence_origin:"OFFLINE_DOMAIN_MOCK"}]){
+ agentStatus.v11_candidate_evaluations=[{...evaluation,...wrong}];
+ assert.equal(agentAlphaRows()[0].evidenceAvailable,false);
+ assert.equal(agentAlphaRows()[0].metrics.sharpe,undefined);
+}
+agentStatus.v11_candidate_evaluations=[evaluation,evaluation];
+assert.equal(agentAlphaRows()[0].evidenceAvailable,false);
+agentStatus.global_alpha_pool.status="unavailable";
+assert.deepEqual(agentAlphaRows(),[]);
+"""
+        with TemporaryDirectory() as root:
+            path = Path(root) / "agent-projection.js"
+            path.write_text(script, encoding="utf-8")
+            result = subprocess.run(["node", str(path)], capture_output=True,
+                                    text=True, check=False)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+
 class WorkbenchLaunchPersistenceTests(unittest.TestCase):
     def test_inflight_launch_is_restored_as_unknown_and_blocks_replay(self):
         with TemporaryDirectory() as root:
@@ -589,6 +632,14 @@ class WorkbenchLaunchRestartGuardTests(unittest.TestCase):
             status, _, blocked = post("/api/launch", request, cookie)
             self.assertEqual(status, 409)
             self.assertIn("旧子进程", blocked["error"])
+            self.assertEqual(commands, [])
+            for action in ("resume", "delete"):
+                payload = {"action": action, "id": "b" * 32}
+                if action == "resume":
+                    payload.update(lead="glm", executor="kimi")
+                status, _, blocked = post("/api/research", payload, cookie)
+                self.assertEqual(status, 409)
+                self.assertIn("旧子进程", blocked["error"])
             self.assertEqual(commands, [])
 
             status, _, acknowledged = post("/api/research", {
