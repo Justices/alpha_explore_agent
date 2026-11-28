@@ -234,7 +234,7 @@ async function refreshAgent(){
  }
 }
 const empty = () => ({version:1,cases:[],alphas:[]});
-let data=empty(), recordsReady=!localAgent;
+let data=empty(), recordsReady=!localAgent, recordsRevision=null;
 if(!localAgent){try { const saved=localStorage.getItem(key); if(saved) data=JSON.parse(saved); } catch {}}
 let view="board", selected=new Set(), filters={}, editing, toastTimer;
 const tag=(s,t="")=>'<span class="tag '+t+'">'+esc(s)+'</span>';
@@ -247,10 +247,21 @@ const findCase=(id)=>data.cases.find(c=>c.id===id);
 const fieldSet=(value)=>String(value??"").split(/[,，\n]+/).map(v=>v.trim()).filter(Boolean);
 function notify(message){$("#toast").textContent=message;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$("#toast").textContent="",4500);}
 async function saveWorkbenchRecords(next){
- const response=await fetch("/api/workbench-records",{method:"POST",
-   headers:{"Content-Type":"application/json"},body:JSON.stringify(next)});
- const result=await readWorkbenchJson(response);
- if(!response.ok)throw Error(result.error||"无法保存项目工作台记录");
+ try{
+   if(!recordsRevision)throw Error("未取得记录版本，请刷新页面后重试。");
+   const response=await fetch("/api/workbench-records",{method:"POST",
+     headers:{"Content-Type":"application/json","If-Match":recordsRevision},body:JSON.stringify(next)});
+   const result=await readWorkbenchJson(response);
+   if(!response.ok)throw Error(result.error||"无法保存项目工作台记录");
+   const revision=response.headers.get("ETag");
+   if(!revision||!/^"[0-9a-f]{64}"$/.test(revision))throw Error("保存结果缺少版本标识，请刷新页面核对。");
+   recordsRevision=revision;
+ }catch(error){
+   // An unknown save result or stale snapshot must not be overwritten by retry.
+   recordsReady=false;
+   recordsRevision=null;
+   throw error;
+ }
 }
 async function persist(next){
  if(localAgent){
@@ -273,11 +284,15 @@ async function loadWorkbenchRecords(){
    const response=await fetch("/api/workbench-records",{cache:"no-store"});
    const remote=await readWorkbenchJson(response);
    if(!response.ok)throw Error(remote.error||"项目记录不可读取");
+   const revision=response.headers.get("ETag");
+   if(!revision||!/^"[0-9a-f]{64}"$/.test(revision))throw Error("服务未返回记录版本，请升级工作台。");
    data=validateWorkbenchRecords(remote);
+   recordsRevision=revision;
    recordsReady=true;
    render();
  }catch(error){
    recordsReady=false;
+   recordsRevision=null;
    notify("项目记录读取失败："+error.message);
  }
 }
