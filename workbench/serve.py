@@ -490,6 +490,9 @@ def read_launch_history(log_dir, limit=50, *, strict=False):
             if not isinstance(value, dict):
                 raise ValueError("任务清单必须是 JSON 对象")
             value.setdefault("launch_id", launch_id)
+            if value.get("status") not in {"starting", "running", "exited", "failed",
+                                          "execution_unknown", "interrupted_acknowledged"}:
+                raise ValueError("任务清单状态无效")
             if value["launch_id"] != launch_id:
                 raise ValueError("任务清单 ID 与文件名不一致")
             value["_mtime_ns"] = path.stat().st_mtime_ns
@@ -500,13 +503,13 @@ def read_launch_history(log_dir, limit=50, *, strict=False):
             continue
     records.sort(key=lambda item: item["_mtime_ns"], reverse=True)
     return [{key: value for key, value in item.items() if key != "_mtime_ns"}
-            for item in records[:max(1, min(int(limit), 200))]]
+            for item in (records if limit is None else records[:max(1, min(int(limit), 200))])]
 
 
 def restore_launch_state(log_dir):
     """Restore the latest launch; ambiguous in-flight work is blocked, never replayed."""
     try:
-        history = read_launch_history(log_dir, limit=1, strict=True)
+        history = read_launch_history(log_dir, limit=None, strict=True)
     except ValueError as exc:
         return {
             "status": "execution_unknown", "execution_unknown": True,
@@ -518,7 +521,9 @@ def restore_launch_state(log_dir):
         }
     if not history:
         return {"status": "idle"}
-    latest = history[0]
+    # An older unresolved launch is not made safe by a newer terminal record.
+    latest = next((item for item in history if item["status"] in
+                   {"starting", "running", "execution_unknown"}), history[0])
     status = latest.get("status")
     if status in {"running", "starting"}:
         launch_id = latest["launch_id"]
@@ -919,13 +924,10 @@ def handler_for(agent_args, port):
                         except (OSError, ValueError):
                             code, payload = 503, {"error": "无法保存人工核实记录"}
                         else:
-                            launch.update({
-                                "status": "interrupted_acknowledged",
-                                "execution_unknown": False,
-                                "recovery_required": False,
-                                "acknowledged_at": acknowledged_at,
-                                "updated_at": acknowledged_at,
-                            })
+                            # Other unresolved launch manifests may still exist.
+                            restored = restore_launch_state(log_dir)
+                            launch.clear()
+                            launch.update(restored)
                             code, payload = 200, dict(launch)
                 elif action == "stop":
                     if not running or target != launch.get("launch_id"):
@@ -1062,10 +1064,23 @@ if __name__ == "__main__":
     for name in ("state_root", "config", "registry"):
         if value := getattr(args, name):
             agent_args.extend(["--" + name.replace("_", "-"), value])
-    with ThreadingHTTPServer(("127.0.0.1", args.port),
-                             handler_for(agent_args, args.port)) as server:
-        print(f"Open http://127.0.0.1:{args.port}/", flush=True)
-        try:
-            server.serve_forever()
-        except KeyboardInterrupt:
-            pass
+    state_root = (expand_path(args.state_root).resolve()
+                  if args.state_root else default_state_root())
+    # One workbench process per state root, regardless of listening port.
+    # Do not acquire agent.lock here: the child CLI owns that lock.
+    service_lock = state_root / "state" / "workbench-service.lock"
+    try:
+        if service_lock.parent.is_symlink() or service_lock.is_symlink():
+            raise ValueError("工作台服务锁路径不能是符号链接")
+        with SingleWriterLock(service_lock):
+            with ThreadingHTTPServer(("127.0.0.1", args.port),
+                                     handler_for(agent_args, args.port)) as server:
+                print(f"Open http://127.0.0.1:{args.port}/", flush=True)
+                try:
+                    server.serve_forever()
+                except KeyboardInterrupt:
+                    pass
+    except (WriterLockError, OSError, ValueError) as exc:
+        print(f"工作台无法启动：{type(exc).__name__}；请检查端口、状态目录及已有服务进程",
+              file=sys.stderr)
+        sys.exit(1)
